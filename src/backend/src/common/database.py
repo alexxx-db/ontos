@@ -767,37 +767,40 @@ def init_db() -> None:
         head_revision = script.get_current_head()
         logger.info(f"Alembic Head Revision: {head_revision}")
 
-        # Create a connection for Alembic context
+        # Get current database revision - use separate connection to avoid lock contention
+        # IMPORTANT: Must close this connection before doing upgrades to prevent deadlock
+        # when the upgrade tries to write to alembic_version while we still hold a read lock
+        logger.info("Getting current database revision...")
         with engine.connect() as connection:
-            logger.info("Getting current database revision...")
             db_revision = get_current_db_revision(connection, alembic_cfg)
-            logger.info(f"Current Database Revision: {db_revision}")
+        # Connection is now closed, safe to proceed with upgrades
+        logger.info(f"Current Database Revision: {db_revision}")
 
-            # Handle migrations based on database state
-            if db_revision is None:
-                # Fresh database - will use create_all() + stamp later
-                logger.info("Fresh database detected (no Alembic version table). Will initialize with create_all() and stamp.")
-            elif db_revision != head_revision:
-                # Existing database needs migration
-                logger.info(f"Database revision '{db_revision}' differs from head revision '{head_revision}'.")
-                logger.info("Attempting Alembic upgrade to head...")
-                try:
-                    target_schema = settings.POSTGRES_DB_SCHEMA or 'public'
-                    # Use begin() for explicit transaction control - prevents nested transaction issues
-                    # with Lakebase/PostgreSQL that can cause hangs
-                    with _engine.begin() as connection:
-                        # Set search_path to ensure migrations run in correct schema
-                        connection.execute(text(f'SET search_path TO "{target_schema}"'))
-                        # Pass connection to Alembic - don't commit before, let begin() handle it
-                        alembic_cfg.attributes['connection'] = connection
-                        alembic_command.upgrade(alembic_cfg, "head")
-                    # Transaction commits automatically when exiting begin() block
-                    logger.info("✓ Alembic upgrade to head COMPLETED.")
-                except Exception as alembic_err:
-                    logger.critical("Alembic upgrade failed! Manual intervention may be required.", exc_info=True)
-                    raise RuntimeError("Failed to upgrade database schema.") from alembic_err
-            else:
-                logger.info("✓ Database schema is up to date according to Alembic.")
+        # Handle migrations based on database state
+        if db_revision is None:
+            # Fresh database - will use create_all() + stamp later
+            logger.info("Fresh database detected (no Alembic version table). Will initialize with create_all() and stamp.")
+        elif db_revision != head_revision:
+            # Existing database needs migration
+            logger.info(f"Database revision '{db_revision}' differs from head revision '{head_revision}'.")
+            logger.info("Attempting Alembic upgrade to head...")
+            try:
+                target_schema = settings.POSTGRES_DB_SCHEMA or 'public'
+                # Use begin() for explicit transaction control - prevents nested transaction issues
+                # with Lakebase/PostgreSQL that can cause hangs
+                with _engine.begin() as connection:
+                    # Set search_path to ensure migrations run in correct schema
+                    connection.execute(text(f'SET search_path TO "{target_schema}"'))
+                    # Pass connection to Alembic - don't commit before, let begin() handle it
+                    alembic_cfg.attributes['connection'] = connection
+                    alembic_command.upgrade(alembic_cfg, "head")
+                # Transaction commits automatically when exiting begin() block
+                logger.info("✓ Alembic upgrade to head COMPLETED.")
+            except Exception as alembic_err:
+                logger.critical("Alembic upgrade failed! Manual intervention may be required.", exc_info=True)
+                raise RuntimeError("Failed to upgrade database schema.") from alembic_err
+        else:
+            logger.info("✓ Database schema is up to date according to Alembic.")
 
         # Ensure all tables defined in Base metadata exist
         logger.info("Verifying/creating tables based on SQLAlchemy models...")

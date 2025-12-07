@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Bot, User, Loader2, AlertCircle, Trash2, MessageSquare, Plus, ChevronDown, Sparkles, X } from 'lucide-react';
+import { Send, Bot, User, Loader2, AlertCircle, Trash2, MessageSquare, Plus, ChevronDown, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
@@ -30,9 +30,6 @@ import type {
   LLMSearchStatus,
   SessionSummary,
 } from '@/types/llm-search';
-
-// Storage key for dismissing the disclaimer banner
-const DISCLAIMER_DISMISSED_KEY = 'llm_search_disclaimer_dismissed';
 
 
 // ============================================================================
@@ -290,10 +287,6 @@ export default function LLMSearch() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showConsentDialog, setShowConsentDialog] = useState(false);
-  const [disclaimerDismissed, setDisclaimerDismissed] = useState(() => {
-    // Check localStorage on initial render
-    return localStorage.getItem(DISCLAIMER_DISMISSED_KEY) === 'true';
-  });
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -305,15 +298,6 @@ export default function LLMSearch() {
     endpoint: status?.endpoint ?? null,
     system_prompt: null,
     disclaimer_text: status?.disclaimer ?? '',
-  };
-  
-  // Check if user has already given consent
-  const hasConsent = hasLLMConsent(llmConfig);
-  
-  // Handle dismissing the disclaimer banner
-  const handleDismissDisclaimer = () => {
-    localStorage.setItem(DISCLAIMER_DISMISSED_KEY, 'true');
-    setDisclaimerDismissed(true);
   };
 
   // Scroll to bottom when messages change
@@ -486,7 +470,6 @@ export default function LLMSearch() {
 
   // Handle consent accepted - continue with the pending message
   const handleConsentAccepted = () => {
-    setDisclaimerDismissed(true); // Also dismiss the banner
     // If there's input, send it after consent
     if (input.trim()) {
       // Small delay to let dialog close
@@ -528,27 +511,6 @@ export default function LLMSearch() {
             onNewSession={handleNewSession}
           />
         </div>
-        
-        {/* Dismissible Disclaimer Banner */}
-        {status?.disclaimer && !disclaimerDismissed && !hasConsent && (
-          <div className="mt-3 relative">
-            <Alert variant="default" className="bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 pr-10">
-              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
-              <AlertDescription className="text-sm text-amber-800 dark:text-amber-300">
-                {status.disclaimer}
-              </AlertDescription>
-            </Alert>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900"
-              onClick={handleDismissDisclaimer}
-            >
-              <X className="h-4 w-4" />
-              <span className="sr-only">Dismiss</span>
-            </Button>
-          </div>
-        )}
       </CardHeader>
 
       <Separator />

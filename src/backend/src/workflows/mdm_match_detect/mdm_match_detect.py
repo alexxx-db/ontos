@@ -275,8 +275,26 @@ def find_matches(
 ) -> Tuple[DataFrame, DataFrame]:
     """
     Find matching records between master and source datasets.
+    
+    Args:
+        column_mapping: Dict mapping source_column → master_column
+                       e.g., {'email_address': 'email', 'phone_number': 'phone'}
+    
     Returns: (matches_df, new_records_df)
     """
+    # Debug: print input info
+    print(f"\n  === find_matches Debug ===")
+    print(f"  Master columns: {master_df.columns}")
+    print(f"  Source columns: {source_df.columns}")
+    print(f"  Column mapping (source→master): {column_mapping}")
+    print(f"  Matching rules: {matching_rules}")
+    print(f"  Key column: {key_column}")
+    
+    # Create reverse mapping: master_column → source_column
+    # This lets us look up "which source column corresponds to this master field?"
+    master_to_source = {v: k for k, v in column_mapping.items()}
+    print(f"  Reverse mapping (master→source): {master_to_source}")
+    
     # Prefix columns to avoid conflicts
     for col in master_df.columns:
         master_df = master_df.withColumnRenamed(col, f"master_{col}")
@@ -288,15 +306,19 @@ def find_matches(
     # In production: use blocking strategies
     master_count = master_df.count()
     source_count = source_df.count()
+    print(f"  Master count: {master_count}, Source count: {source_count}")
     
     # Limit for prototype
     if master_count > 10000:
         master_df = master_df.limit(10000)
+        print(f"  Limited master to 10000 records")
     if source_count > 10000:
         source_df = source_df.limit(10000)
+        print(f"  Limited source to 10000 records")
     
     # Cross join for comparison (blocking should be used in production)
     combined = master_df.crossJoin(F.broadcast(source_df))
+    print(f"  Combined columns after cross join: {combined.columns}")
     
     # Apply matching rules
     rule_scores = []
@@ -309,9 +331,12 @@ def find_matches(
         weight = rule.get('weight', 1.0)
         algorithm = rule.get('algorithm', 'jaro_winkler')
         
-        # Map source fields using column mapping
+        # Matching rules specify MASTER field names
+        # Use reverse mapping to find corresponding SOURCE field names
         master_fields = fields
-        source_fields = [column_mapping.get(f, f) for f in fields]
+        source_fields = [master_to_source.get(f, f) for f in fields]
+        
+        print(f"\n  Rule '{rule_name}' ({rule_type}): master_fields={master_fields} → source_fields={source_fields}")
         
         score_col = f"score_{rule_name}"
         
@@ -320,20 +345,27 @@ def find_matches(
             for mf, sf in zip(master_fields, source_fields):
                 master_col = f"master_{mf}"
                 source_col = f"source_{sf}"
+                print(f"    Checking: {master_col} == {source_col}")
                 if master_col in combined.columns and source_col in combined.columns:
                     conditions.append(F.col(master_col) == F.col(source_col))
+                    print(f"    ✓ Both columns exist")
+                else:
+                    print(f"    ✗ Missing column(s): master_exists={master_col in combined.columns}, source_exists={source_col in combined.columns}")
             
             if conditions:
                 combined_cond = reduce(lambda a, b: a & b, conditions)
                 combined = combined.withColumn(score_col, F.when(combined_cond, F.lit(weight)).otherwise(F.lit(0.0)))
+                print(f"    Applied {len(conditions)} condition(s)")
             else:
                 combined = combined.withColumn(score_col, F.lit(0.0))
+                print(f"    No valid conditions, score=0")
         
-        elif rule_type == 'probabilistic':
+        elif rule_type in ('probabilistic', 'fuzzy'):
             # Apply fuzzy matching for first field pair
             if master_fields and source_fields:
                 master_col = f"master_{master_fields[0]}"
                 source_col = f"source_{source_fields[0]}"
+                print(f"    Fuzzy matching: {master_col} ~ {source_col}")
                 
                 if master_col in combined.columns and source_col in combined.columns:
                     from fuzzywuzzy import fuzz
@@ -345,10 +377,13 @@ def find_matches(
                         return fuzz.ratio(str(a).lower(), str(b).lower()) / 100.0
                     
                     combined = combined.withColumn(score_col, calc_fuzzy(F.col(master_col), F.col(source_col)) * F.lit(weight))
+                    print(f"    ✓ Applied fuzzy matching")
                 else:
                     combined = combined.withColumn(score_col, F.lit(0.0))
+                    print(f"    ✗ Missing column(s)")
             else:
                 combined = combined.withColumn(score_col, F.lit(0.0))
+                print(f"    ✗ No fields specified")
         
         rule_scores.append(score_col)
         rule_weights.append(weight)
@@ -358,12 +393,30 @@ def find_matches(
         total_weight = sum(rule_weights)
         score_sum = sum([F.col(s) for s in rule_scores])
         combined = combined.withColumn("confidence_score", score_sum / F.lit(total_weight))
+        print(f"\n  Calculated confidence_score from {len(rule_scores)} rules, total_weight={total_weight}")
     else:
         combined = combined.withColumn("confidence_score", F.lit(0.0))
+        print(f"\n  No rule scores, confidence_score=0")
     
     # Filter to potential matches (above minimum threshold)
     min_threshold = min((r.get('threshold', 0.7) for r in matching_rules), default=0.7)
+    print(f"  Minimum confidence threshold: {min_threshold}")
+    
+    # Debug: show distribution of scores before filtering
+    try:
+        score_stats = combined.agg(
+            F.count("*").alias("total_pairs"),
+            F.sum(F.when(F.col("confidence_score") > 0, 1).otherwise(0)).alias("non_zero_scores"),
+            F.max("confidence_score").alias("max_score"),
+            F.avg("confidence_score").alias("avg_score")
+        ).collect()[0]
+        print(f"  Score stats: total_pairs={score_stats['total_pairs']}, non_zero={score_stats['non_zero_scores']}, max={score_stats['max_score']}, avg={score_stats['avg_score']}")
+    except Exception as e:
+        print(f"  Could not compute score stats: {e}")
+    
     matches = combined.filter(F.col("confidence_score") >= min_threshold)
+    match_count = matches.count()
+    print(f"  Matches above threshold: {match_count}")
     
     # Identify matched fields
     @F.udf("array<string>")
@@ -560,11 +613,15 @@ def main():
 
         # Get matching rules from config
         matching_rules = config.get('matching_rules', [])
+        print(f"\nMatching rules from config: {matching_rules}")
         if not matching_rules:
             # Default rules if none specified
+            print("  No rules in config, using default exact match on 'id'")
             matching_rules = [
                 {"name": "default_exact", "type": "deterministic", "fields": ["id"], "weight": 1.0, "threshold": 0.7}
             ]
+        else:
+            print(f"  Found {len(matching_rules)} matching rule(s)")
 
         # Load source links
         source_link_id = args.source_link_id if args.source_link_id else None
@@ -592,9 +649,14 @@ def main():
             # Get column mapping and key column
             column_mapping = link.get('column_mapping', {})
             key_column = link.get('key_column', 'id')
+            
+            print(f"\n  Source link config:")
+            print(f"    Key column: {key_column}")
+            print(f"    Column mapping: {column_mapping}")
 
-            # Determine master key (assume same as source key or mapped)
+            # Determine master key (the source key maps to this master column)
             master_key = column_mapping.get(key_column, key_column)
+            print(f"    Master key (mapped): {master_key}")
 
             # Find matches
             matches, new_records = find_matches(

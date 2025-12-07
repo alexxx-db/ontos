@@ -23,6 +23,7 @@ import {
 import MdmConfigDialog from '@/components/mdm/mdm-config-dialog';
 import LinkSourceDialog from '@/components/mdm/link-source-dialog';
 import CreateReviewDialog from '@/components/mdm/create-review-dialog';
+import MatchingRulesEditor from '@/components/mdm/matching-rules-editor';
 import {
   MdmConfig,
   MdmSourceLink,
@@ -46,6 +47,7 @@ export default function MasterDataManagement() {
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
   const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
   const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+  const [isRulesEditorOpen, setIsRulesEditorOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
 
   const { get, post, delete: deleteApi } = useApi();
@@ -512,10 +514,19 @@ export default function MasterDataManagement() {
                     {/* Matching Rules Tab */}
                     <TabsContent value="rules" className="space-y-4">
                       <div>
-                        <h4 className="font-medium mb-3 flex items-center gap-2">
-                          <Settings2 className="h-4 w-4" />
-                          Matching Rules
-                        </h4>
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-medium flex items-center gap-2">
+                            <Settings2 className="h-4 w-4" />
+                            Matching Rules
+                          </h4>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => setIsRulesEditorOpen(true)}
+                          >
+                            Edit Rules
+                          </Button>
+                        </div>
                         {selectedConfig.matching_rules?.length > 0 ? (
                           <div className="space-y-2">
                             {selectedConfig.matching_rules.map((rule, idx) => (
@@ -832,6 +843,25 @@ export default function MasterDataManagement() {
             setIsReviewDialogOpen(false);
             navigate(`/data-asset-reviews/${reviewId}`);
           }}
+        />
+      )}
+
+      {selectedConfig && (
+        <MatchingRulesEditor
+          isOpen={isRulesEditorOpen}
+          onClose={() => setIsRulesEditorOpen(false)}
+          onSuccess={() => {
+            fetchConfigs();
+            // Refresh selectedConfig with new rules
+            if (selectedConfig) {
+              get<MdmConfig>(`/api/mdm/configs/${selectedConfig.id}`).then((response) => {
+                if (response.data) {
+                  setSelectedConfig(response.data);
+                }
+              });
+            }
+          }}
+          config={selectedConfig}
         />
       )}
     </div>

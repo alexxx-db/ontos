@@ -22,16 +22,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Info } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
-import { MdmEntityType, MdmConfigCreate } from '@/types/mdm';
+import { MdmEntityType, MdmConfigCreate, MatchingRule, SurvivorshipRule } from '@/types/mdm';
 
 interface DataContract {
   id: string;
   name: string;
   status: string;
+  customProperties?: Record<string, any>;
 }
 
 const formSchema = z.object({
@@ -49,10 +51,56 @@ interface MdmConfigDialogProps {
   onSuccess: () => void;
 }
 
+// Helper to parse rules from contract customProperties
+function parseContractMdmRules(customProps: Record<string, any> | undefined): {
+  matchingRules: MatchingRule[];
+  survivorshipRules: SurvivorshipRule[];
+} {
+  if (!customProps) return { matchingRules: [], survivorshipRules: [] };
+
+  let matchingRules: MatchingRule[] = [];
+  let survivorshipRules: SurvivorshipRule[] = [];
+
+  // Parse mdmMatchingRules
+  let rawMatchingRules = customProps.mdmMatchingRules;
+  if (typeof rawMatchingRules === 'string') {
+    try { rawMatchingRules = JSON.parse(rawMatchingRules); } catch { rawMatchingRules = []; }
+  }
+  if (Array.isArray(rawMatchingRules)) {
+    matchingRules = rawMatchingRules.map((r: any) => ({
+      name: r.name || 'unnamed_rule',
+      type: r.type === 'exact' ? 'deterministic' : r.type === 'fuzzy' ? 'probabilistic' : r.type,
+      fields: r.fields || [],
+      weight: r.weight || 1.0,
+      threshold: r.threshold || 0.7,
+      algorithm: r.algorithm,
+    }));
+  }
+
+  // Parse mdmSurvivorshipRules
+  let rawSurvivorshipRules = customProps.mdmSurvivorshipRules;
+  if (typeof rawSurvivorshipRules === 'string') {
+    try { rawSurvivorshipRules = JSON.parse(rawSurvivorshipRules); } catch { rawSurvivorshipRules = []; }
+  }
+  if (Array.isArray(rawSurvivorshipRules)) {
+    survivorshipRules = rawSurvivorshipRules.map((r: any) => ({
+      field: r.field || '',
+      strategy: r.strategy || 'most_recent',
+      priority: r.priority,
+    }));
+  }
+
+  return { matchingRules, survivorshipRules };
+}
+
 export default function MdmConfigDialog({ isOpen, onClose, onSuccess }: MdmConfigDialogProps) {
   const [contracts, setContracts] = useState<DataContract[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingContract, setLoadingContract] = useState(false);
+  const [matchingRules, setMatchingRules] = useState<MatchingRule[]>([]);
+  const [survivorshipRules, setSurvivorshipRules] = useState<SurvivorshipRule[]>([]);
+  const [rulesSource, setRulesSource] = useState<'contract' | 'default' | 'empty'>('empty');
 
   const { get, post } = useApi();
   const { toast } = useToast();
@@ -67,12 +115,24 @@ export default function MdmConfigDialog({ isOpen, onClose, onSuccess }: MdmConfi
     },
   });
 
+  const selectedContractId = form.watch('master_contract_id');
+
   useEffect(() => {
     if (isOpen) {
       fetchContracts();
       form.reset();
+      setMatchingRules([]);
+      setSurvivorshipRules([]);
+      setRulesSource('empty');
     }
   }, [isOpen]);
+
+  // When contract is selected, fetch its customProperties for MDM rules
+  useEffect(() => {
+    if (selectedContractId) {
+      fetchContractRules(selectedContractId);
+    }
+  }, [selectedContractId]);
 
   const fetchContracts = async () => {
     setLoading(true);
@@ -90,6 +150,41 @@ export default function MdmConfigDialog({ isOpen, onClose, onSuccess }: MdmConfi
     }
   };
 
+  const fetchContractRules = async (contractId: string) => {
+    setLoadingContract(true);
+    try {
+      const response = await get<DataContract>(`/api/data-contracts/${contractId}`);
+      if (response.data) {
+        const { matchingRules: mr, survivorshipRules: sr } = parseContractMdmRules(response.data.customProperties);
+        
+        if (mr.length > 0 || sr.length > 0) {
+          setMatchingRules(mr);
+          setSurvivorshipRules(sr);
+          setRulesSource('contract');
+          toast({
+            title: 'Rules Loaded',
+            description: `Loaded ${mr.length} matching and ${sr.length} survivorship rules from contract.`,
+          });
+        } else {
+          // Use sensible defaults if contract has no MDM rules
+          setMatchingRules([
+            { name: 'email_match', type: 'deterministic', fields: ['email'], weight: 1.0, threshold: 1.0 },
+            { name: 'name_fuzzy', type: 'probabilistic', fields: ['customer_name'], weight: 0.8, threshold: 0.8, algorithm: 'jaro_winkler' },
+          ]);
+          setSurvivorshipRules([
+            { field: 'email', strategy: 'most_trusted' },
+            { field: 'customer_name', strategy: 'most_recent' },
+          ]);
+          setRulesSource('default');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching contract:', err);
+    } finally {
+      setLoadingContract(false);
+    }
+  };
+
   const onSubmit = async (values: FormValues) => {
     setSubmitting(true);
     try {
@@ -98,34 +193,8 @@ export default function MdmConfigDialog({ isOpen, onClose, onSuccess }: MdmConfi
         description: values.description || undefined,
         entity_type: values.entity_type,
         master_contract_id: values.master_contract_id,
-        // Default matching rules for prototype
-        matching_rules: [
-          {
-            name: 'exact_id',
-            type: 'deterministic' as any,
-            fields: ['id'],
-            weight: 1.0,
-            threshold: 1.0,
-          },
-          {
-            name: 'fuzzy_name',
-            type: 'probabilistic' as any,
-            fields: ['name'],
-            weight: 0.8,
-            threshold: 0.8,
-            algorithm: 'jaro_winkler',
-          },
-        ],
-        survivorship_rules: [
-          {
-            field: 'name',
-            strategy: 'most_complete' as any,
-          },
-          {
-            field: 'email',
-            strategy: 'most_recent' as any,
-          },
-        ],
+        matching_rules: matchingRules,
+        survivorship_rules: survivorshipRules,
       };
 
       const response = await post('/api/mdm/configs', data);
@@ -232,6 +301,47 @@ export default function MdmConfigDialog({ isOpen, onClose, onSuccess }: MdmConfi
               </p>
             )}
           </div>
+
+          {/* Rules Preview */}
+          {selectedContractId && (
+            <div className="space-y-2 pt-2 border-t">
+              {loadingContract ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading rules from contract...
+                </div>
+              ) : (
+                <>
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      {rulesSource === 'contract' ? (
+                        <>Loaded {matchingRules.length} matching rules and {survivorshipRules.length} survivorship rules from contract's customProperties.</>
+                      ) : rulesSource === 'default' ? (
+                        <>Contract has no MDM rules defined. Using sensible defaults. You can edit them after creation.</>
+                      ) : null}
+                    </AlertDescription>
+                  </Alert>
+                  
+                  {matchingRules.length > 0 && (
+                    <div className="text-sm space-y-1">
+                      <p className="font-medium">Matching Rules:</p>
+                      <ul className="list-disc list-inside text-muted-foreground pl-2">
+                        {matchingRules.slice(0, 3).map((rule, i) => (
+                          <li key={i}>
+                            {rule.name}: {rule.fields.join(', ')} ({rule.type})
+                          </li>
+                        ))}
+                        {matchingRules.length > 3 && (
+                          <li className="text-xs">...and {matchingRules.length - 3} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>

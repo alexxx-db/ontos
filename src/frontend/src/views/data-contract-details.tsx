@@ -1568,103 +1568,6 @@ export default function DataContractDetails() {
         </Card>
       )}
 
-      {/* Linked Data Products Section */}
-      {shouldShowLinkedProducts() && (
-        <Card>
-          <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-xl flex items-center gap-2">
-                <Shapes className="h-5 w-5 text-primary" />
-                Linked Data Products ({linkedProducts.length})
-              </CardTitle>
-              <CardDescription>Data Products using this contract for output ports</CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIsLinkProductDialogOpen(true)}
-                disabled={!contract || !['active', 'approved', 'certified'].includes((contract.status || '').toLowerCase())}
-              >
-                <Plus className="h-4 w-4 mr-1.5" />
-                Link to Existing Product
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => setIsCreateProductDialogOpen(true)}
-                disabled={!contract || !['active', 'approved', 'certified'].includes((contract.status || '').toLowerCase())}
-              >
-                <Plus className="h-4 w-4 mr-1.5" />
-                Create Data Product
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loadingProducts ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
-          ) : linkedProducts.length === 0 ? (
-            <div className="text-center py-12 border-2 border-dashed border-muted-foreground/25 rounded-lg">
-              <Shapes className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-              <div className="text-muted-foreground mb-2">No linked data products yet</div>
-              <div className="text-sm text-muted-foreground mb-4">
-                Create a data product that uses this contract to govern an output port
-              </div>
-              {contract && ['active', 'approved', 'certified'].includes((contract.status || '').toLowerCase()) ? (
-                <Button onClick={() => setIsCreateProductDialogOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create Data Product
-                </Button>
-              ) : (
-                <div className="text-sm text-muted-foreground italic">
-                  Contract must be in 'active', 'approved', or 'certified' status
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {linkedProducts.map((product) => {
-                // Find output ports that use this contract
-                const linkedPorts = product.outputPorts?.filter(port => port.contractId === contractId) || [];
-                return (
-                  <div
-                    key={product.id}
-                    className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                    onClick={() => navigate(`/data-products/${product.id}`)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="font-medium text-base">{product.name || 'Unnamed Product'}</div>
-                        {product.description?.purpose && (
-                          <p className="text-sm text-muted-foreground mt-1">{product.description.purpose}</p>
-                        )}
-                        <div className="flex items-center gap-3 mt-2">
-                          <Badge variant="outline" className="text-xs">
-                            v{product.version}
-                          </Badge>
-                          <Badge variant="secondary" className="text-xs">
-                            {product.status}
-                          </Badge>
-                        </div>
-                        {linkedPorts.length > 0 && (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            Output Port{linkedPorts.length > 1 ? 's' : ''}: {linkedPorts.map(port => `${port.name} (v${port.version})`).join(', ')}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      )}
-
       {/* Schemas Section */}
       <Card>
         <CardHeader>
@@ -2122,6 +2025,103 @@ export default function DataContractDetails() {
           }
         </CardContent>
       </Card>
+
+      {/* Linked Data Products Section */}
+      {shouldShowLinkedProducts() && (
+        <Card>
+          <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-xl flex items-center gap-2">
+                <Shapes className="h-5 w-5 text-primary" />
+                Linked Data Products ({linkedProducts.length})
+              </CardTitle>
+              <CardDescription>Data Products using this contract for output ports</CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setIsLinkProductDialogOpen(true)}
+                disabled={!contract || !['active', 'approved', 'certified'].includes((contract.status || '').toLowerCase())}
+              >
+                <Plus className="h-4 w-4 mr-1.5" />
+                Link to Existing Product
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setIsCreateProductDialogOpen(true)}
+                disabled={!contract || !['active', 'approved', 'certified'].includes((contract.status || '').toLowerCase())}
+              >
+                <Plus className="h-4 w-4 mr-1.5" />
+                Create Data Product
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingProducts ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : linkedProducts.length === 0 ? (
+            <div className="text-center py-12 border-2 border-dashed border-muted-foreground/25 rounded-lg">
+              <Shapes className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+              <div className="text-muted-foreground mb-2">No linked data products yet</div>
+              <div className="text-sm text-muted-foreground mb-4">
+                Create a data product that uses this contract to govern an output port
+              </div>
+              {contract && ['active', 'approved', 'certified'].includes((contract.status || '').toLowerCase()) ? (
+                <Button onClick={() => setIsCreateProductDialogOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Data Product
+                </Button>
+              ) : (
+                <div className="text-sm text-muted-foreground italic">
+                  Contract must be in 'active', 'approved', or 'certified' status
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {linkedProducts.map((product) => {
+                // Find output ports that use this contract
+                const linkedPorts = product.outputPorts?.filter(port => port.contractId === contractId) || [];
+                return (
+                  <div
+                    key={product.id}
+                    className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => navigate(`/data-products/${product.id}`)}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="font-medium text-base">{product.name || 'Unnamed Product'}</div>
+                        {product.description?.purpose && (
+                          <p className="text-sm text-muted-foreground mt-1">{product.description.purpose}</p>
+                        )}
+                        <div className="flex items-center gap-3 mt-2">
+                          <Badge variant="outline" className="text-xs">
+                            v{product.version}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            {product.status}
+                          </Badge>
+                        </div>
+                        {linkedPorts.length > 0 && (
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Output Port{linkedPorts.length > 1 ? 's' : ''}: {linkedPorts.map(port => `${port.name} (v${port.version})`).join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      )}
 
       {/* Quality Rules Section */}
       {shouldShowSection('quality-rules') && (

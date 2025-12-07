@@ -34,10 +34,15 @@ from src.models.data_products import (
     Team,
     TeamMember,
     GenieSpaceRequest,
-    NewVersionRequest
+    NewVersionRequest,
+    Subscription,
+    SubscriptionCreate,
+    SubscriptionResponse,
+    SubscriberInfo,
+    SubscribersListResponse
 )
 from src.models.users import UserInfo
-from src.repositories.data_products_repository import data_product_repo
+from src.repositories.data_products_repository import data_product_repo, subscription_repo
 from src.repositories.teams_repository import team_repo
 from src.repositories.genie_spaces_repository import genie_space_repo
 from src.models.genie_spaces import GenieSpaceCreate
@@ -405,6 +410,14 @@ class DataProductsManager(SearchableAsset):
             logger.info(
                 f"Product {product_id} status transitioned: {old_status} → {new_status_lower}"
                 + (f" by {current_user}" if current_user else "")
+            )
+            
+            # Notify subscribers about important status changes
+            self._notify_subscribers_of_status_change(
+                product_id=product_id,
+                product_name=product_db.name or product_id,
+                old_status=old_status,
+                new_status=new_status_lower
             )
             
             return self._load_product_with_tags(product_db)
@@ -1699,3 +1712,464 @@ class DataProductsManager(SearchableAsset):
         if product_api:
             return product_api.model_dump(by_alias=True)
         return {}
+
+    # ==================== Subscription Methods ====================
+
+    def subscribe(
+        self,
+        product_id: str,
+        subscriber_email: str,
+        reason: Optional[str] = None,
+        db: Optional[Session] = None
+    ) -> SubscriptionResponse:
+        """
+        Subscribe a user to a data product.
+        
+        Args:
+            product_id: ID of the product to subscribe to
+            subscriber_email: Email of the subscriber
+            reason: Optional reason for subscribing
+            db: Optional database session
+            
+        Returns:
+            SubscriptionResponse with subscription details
+            
+        Raises:
+            ValueError: If product not found or not in subscribable status
+        """
+        db_session = db if db is not None else self._db
+        logger.info(f"User {subscriber_email} subscribing to product {product_id}")
+        
+        try:
+            # Validate product exists and is subscribable
+            product = self.get_product(product_id)
+            if not product:
+                raise ValueError(f"Product {product_id} not found")
+            
+            # Check if product is in a subscribable status
+            subscribable_statuses = ['active', 'certified']
+            if product.status and product.status.lower() not in subscribable_statuses:
+                raise ValueError(
+                    f"Cannot subscribe to product in status '{product.status}'. "
+                    f"Product must be in one of: {', '.join(subscribable_statuses)}"
+                )
+            
+            # Check if already subscribed
+            existing = subscription_repo.get_by_product_and_user(
+                db_session,
+                product_id=product_id,
+                subscriber_email=subscriber_email
+            )
+            
+            if existing:
+                logger.info(f"User {subscriber_email} already subscribed to product {product_id}")
+                return SubscriptionResponse(
+                    subscribed=True,
+                    subscription=Subscription.model_validate(existing)
+                )
+            
+            # Create subscription
+            subscription_db = subscription_repo.create(
+                db_session,
+                product_id=product_id,
+                subscriber_email=subscriber_email,
+                reason=reason
+            )
+            
+            # Log to change log for audit
+            self._log_subscription_change(
+                db_session,
+                product_id=product_id,
+                subscriber_email=subscriber_email,
+                action="SUBSCRIBE",
+                reason=reason
+            )
+            
+            db_session.commit()
+            
+            logger.info(f"User {subscriber_email} subscribed to product {product_id}")
+            return SubscriptionResponse(
+                subscribed=True,
+                subscription=Subscription.model_validate(subscription_db)
+            )
+            
+        except ValueError as e:
+            logger.error(f"Validation error subscribing to product {product_id}: {e}")
+            raise
+        except SQLAlchemyError as e:
+            logger.error(f"Database error subscribing to product {product_id}: {e}")
+            db_session.rollback()
+            raise
+
+    def unsubscribe(
+        self,
+        product_id: str,
+        subscriber_email: str,
+        db: Optional[Session] = None
+    ) -> SubscriptionResponse:
+        """
+        Unsubscribe a user from a data product.
+        
+        Args:
+            product_id: ID of the product to unsubscribe from
+            subscriber_email: Email of the subscriber
+            db: Optional database session
+            
+        Returns:
+            SubscriptionResponse indicating unsubscribed
+        """
+        db_session = db if db is not None else self._db
+        logger.info(f"User {subscriber_email} unsubscribing from product {product_id}")
+        
+        try:
+            deleted = subscription_repo.delete_by_product_and_user(
+                db_session,
+                product_id=product_id,
+                subscriber_email=subscriber_email
+            )
+            
+            if deleted:
+                # Log to change log for audit
+                self._log_subscription_change(
+                    db_session,
+                    product_id=product_id,
+                    subscriber_email=subscriber_email,
+                    action="UNSUBSCRIBE"
+                )
+                db_session.commit()
+                logger.info(f"User {subscriber_email} unsubscribed from product {product_id}")
+            else:
+                logger.info(f"User {subscriber_email} was not subscribed to product {product_id}")
+            
+            return SubscriptionResponse(subscribed=False, subscription=None)
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Database error unsubscribing from product {product_id}: {e}")
+            db_session.rollback()
+            raise
+
+    def get_subscription_status(
+        self,
+        product_id: str,
+        subscriber_email: str,
+        db: Optional[Session] = None
+    ) -> SubscriptionResponse:
+        """
+        Check if a user is subscribed to a product.
+        
+        Args:
+            product_id: ID of the product
+            subscriber_email: Email of the user
+            db: Optional database session
+            
+        Returns:
+            SubscriptionResponse with subscription status
+        """
+        db_session = db if db is not None else self._db
+        
+        subscription = subscription_repo.get_by_product_and_user(
+            db_session,
+            product_id=product_id,
+            subscriber_email=subscriber_email
+        )
+        
+        if subscription:
+            return SubscriptionResponse(
+                subscribed=True,
+                subscription=Subscription.model_validate(subscription)
+            )
+        return SubscriptionResponse(subscribed=False, subscription=None)
+
+    def get_subscribers(
+        self,
+        product_id: str,
+        skip: int = 0,
+        limit: int = 100,
+        db: Optional[Session] = None
+    ) -> SubscribersListResponse:
+        """
+        Get all subscribers for a product.
+        
+        Args:
+            product_id: ID of the product
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            db: Optional database session
+            
+        Returns:
+            SubscribersListResponse with subscriber information
+        """
+        db_session = db if db is not None else self._db
+        logger.debug(f"Fetching subscribers for product {product_id}")
+        
+        subscriptions = subscription_repo.get_subscribers_for_product(
+            db_session,
+            product_id=product_id,
+            skip=skip,
+            limit=limit
+        )
+        
+        count = subscription_repo.count_subscribers_for_product(
+            db_session,
+            product_id=product_id
+        )
+        
+        subscribers = [
+            SubscriberInfo(
+                email=sub.subscriber_email,
+                subscribed_at=sub.subscribed_at,
+                reason=sub.subscription_reason
+            )
+            for sub in subscriptions
+        ]
+        
+        return SubscribersListResponse(
+            product_id=product_id,
+            subscriber_count=count,
+            subscribers=subscribers
+        )
+
+    def get_user_subscriptions(
+        self,
+        subscriber_email: str,
+        skip: int = 0,
+        limit: int = 100,
+        db: Optional[Session] = None
+    ) -> List[DataProductApi]:
+        """
+        Get all products a user is subscribed to.
+        
+        Args:
+            subscriber_email: Email of the subscriber
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            db: Optional database session
+            
+        Returns:
+            List of DataProduct API models the user is subscribed to
+        """
+        db_session = db if db is not None else self._db
+        logger.debug(f"Fetching subscriptions for user {subscriber_email}")
+        
+        # Get product IDs the user is subscribed to
+        product_ids = subscription_repo.get_product_ids_for_user(
+            db_session,
+            subscriber_email=subscriber_email
+        )
+        
+        if not product_ids:
+            return []
+        
+        # Fetch the actual products with pagination
+        products = []
+        for pid in product_ids[skip:skip + limit]:
+            product = self.get_product(pid)
+            if product:
+                products.append(product)
+        
+        return products
+
+    def get_subscriber_count(self, product_id: str, db: Optional[Session] = None) -> int:
+        """Get the number of subscribers for a product."""
+        db_session = db if db is not None else self._db
+        return subscription_repo.count_subscribers_for_product(
+            db_session,
+            product_id=product_id
+        )
+
+    def notify_subscribers(
+        self,
+        product_id: str,
+        title: str,
+        description: str,
+        notification_type: str = "INFO",
+        link: Optional[str] = None,
+        db: Optional[Session] = None
+    ) -> int:
+        """
+        Send a notification to all subscribers of a product.
+        
+        Args:
+            product_id: ID of the product
+            title: Notification title
+            description: Notification description
+            notification_type: Type of notification (INFO, WARNING, ACTION_REQUIRED)
+            link: Optional link to include
+            db: Optional database session
+            
+        Returns:
+            Number of notifications sent
+        """
+        if not self._notifications_manager:
+            logger.warning("NotificationsManager not available, cannot notify subscribers")
+            return 0
+        
+        db_session = db if db is not None else self._db
+        
+        # Get all subscriber emails
+        subscriber_emails = subscription_repo.get_subscriber_emails_for_product(
+            db_session,
+            product_id=product_id
+        )
+        
+        if not subscriber_emails:
+            logger.debug(f"No subscribers to notify for product {product_id}")
+            return 0
+        
+        from src.models.notifications import NotificationType, Notification
+        
+        # Map string to enum
+        type_map = {
+            "INFO": NotificationType.INFO,
+            "WARNING": NotificationType.WARNING,
+            "ACTION_REQUIRED": NotificationType.ACTION_REQUIRED,
+            "SUCCESS": NotificationType.SUCCESS,
+            "ERROR": NotificationType.ERROR
+        }
+        notif_type = type_map.get(notification_type.upper(), NotificationType.INFO)
+        
+        notifications_sent = 0
+        for email in subscriber_emails:
+            try:
+                notification = Notification(
+                    id=str(uuid.uuid4()),
+                    created_at=datetime.utcnow(),
+                    type=notif_type,
+                    title=title,
+                    description=description,
+                    recipient=email,
+                    link=link or f"/data-products/{product_id}",
+                    can_delete=True
+                )
+                self._notifications_manager.create_notification(
+                    notification=notification,
+                    db=db_session
+                )
+                notifications_sent += 1
+            except Exception as e:
+                logger.error(f"Failed to send notification to {email}: {e}")
+        
+        logger.info(f"Sent {notifications_sent} notifications for product {product_id}")
+        return notifications_sent
+
+    def _log_subscription_change(
+        self,
+        db: Session,
+        product_id: str,
+        subscriber_email: str,
+        action: str,
+        reason: Optional[str] = None
+    ) -> None:
+        """
+        Log subscription changes to the change log for audit purposes.
+        
+        Args:
+            db: Database session
+            product_id: ID of the product
+            subscriber_email: Email of the subscriber
+            action: Action type (SUBSCRIBE or UNSUBSCRIBE)
+            reason: Optional reason for the action
+        """
+        try:
+            from src.controller.change_log_manager import change_log_manager
+            import json
+            
+            details = {
+                "subscriber_email": subscriber_email,
+                "action": action,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            if reason:
+                details["reason"] = reason
+            
+            change_log_manager.log_change(
+                db,
+                entity_type="data_product",
+                entity_id=product_id,
+                action=action,
+                username=subscriber_email,
+                details_json=json.dumps(details)
+            )
+            logger.debug(f"Logged subscription change: {action} for product {product_id}")
+        except Exception as e:
+            # Don't fail the subscription operation if logging fails
+            logger.error(f"Failed to log subscription change: {e}")
+
+    def _notify_subscribers_of_status_change(
+        self,
+        product_id: str,
+        product_name: str,
+        old_status: str,
+        new_status: str
+    ) -> None:
+        """
+        Notify subscribers when a product's status changes to a notable state.
+        
+        Subscribers are notified for:
+        - Deprecation (deprecated status)
+        - Retirement (retired status)
+        - Activation (active status from non-active)
+        - New certification (certified status)
+        
+        Args:
+            product_id: ID of the product
+            product_name: Name of the product
+            old_status: Previous status
+            new_status: New status
+        """
+        # Define which status changes warrant notifications
+        notification_configs = {
+            'deprecated': {
+                'title': f"Product '{product_name}' has been deprecated",
+                'description': (
+                    f"The data product '{product_name}' has been marked as deprecated. "
+                    "Please plan to migrate to an alternative product or contact the owner for more information."
+                ),
+                'notification_type': 'WARNING'
+            },
+            'retired': {
+                'title': f"Product '{product_name}' has been retired",
+                'description': (
+                    f"The data product '{product_name}' has been retired and is no longer available. "
+                    "If you were using this product, please migrate to an alternative immediately."
+                ),
+                'notification_type': 'ACTION_REQUIRED'
+            },
+            'active': {
+                'title': f"Product '{product_name}' is now active",
+                'description': (
+                    f"The data product '{product_name}' has been activated and is now available for use."
+                ),
+                'notification_type': 'INFO'
+            },
+            'certified': {
+                'title': f"Product '{product_name}' has been certified",
+                'description': (
+                    f"The data product '{product_name}' has achieved certified status, "
+                    "indicating it meets all quality and compliance requirements."
+                ),
+                'notification_type': 'SUCCESS'
+            }
+        }
+        
+        # Check if this status change warrants notification
+        config = notification_configs.get(new_status)
+        if not config:
+            logger.debug(f"No notification needed for status change to {new_status}")
+            return
+        
+        try:
+            count = self.notify_subscribers(
+                product_id=product_id,
+                title=config['title'],
+                description=config['description'],
+                notification_type=config['notification_type'],
+                link=f"/data-products/{product_id}"
+            )
+            logger.info(
+                f"Notified {count} subscribers about product {product_id} status change "
+                f"({old_status} → {new_status})"
+            )
+        except Exception as e:
+            # Don't fail the status transition if notification fails
+            logger.error(f"Failed to notify subscribers of status change: {e}")

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Database, BoxSelect, Star, AlertCircle, Info } from 'lucide-react';
+import { Loader2, Database, BoxSelect, Star, AlertCircle, Info, Bell } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
 import { useDomains } from '@/hooks/use-domains';
@@ -32,6 +32,11 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
   const [productsError, setProductsError] = useState<string | null>(null);
   const [infoProductId, setInfoProductId] = useState<string | null>(null);
   const [infoProductTitle, setInfoProductTitle] = useState<string | undefined>(undefined);
+  
+  // Subscribed products state
+  const [subscribedProducts, setSubscribedProducts] = useState<DataProduct[]>([]);
+  const [subscribedLoading, setSubscribedLoading] = useState<boolean>(false);
+  const [subscribedError, setSubscribedError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -51,6 +56,34 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
       }
     };
     loadProducts();
+  }, []);
+
+  // Fetch user's subscribed products
+  useEffect(() => {
+    const loadSubscribedProducts = async () => {
+      try {
+        setSubscribedLoading(true);
+        const resp = await fetch('/api/data-products/my-subscriptions');
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            // Not authenticated, silently skip
+            setSubscribedProducts([]);
+            return;
+          }
+          throw new Error(`HTTP error! status: ${resp.status}`);
+        }
+        const data = await resp.json();
+        setSubscribedProducts(Array.isArray(data) ? data : []);
+        setSubscribedError(null);
+      } catch (e: any) {
+        console.warn('Failed to fetch subscribed products:', e);
+        setSubscribedError(null); // Don't show error, just hide section
+        setSubscribedProducts([]);
+      } finally {
+        setSubscribedLoading(false);
+      }
+    };
+    loadSubscribedProducts();
   }, []);
 
   // Choose a sensible default domain (prefer a domain named "Core")
@@ -206,6 +239,65 @@ export default function DiscoverySection({ maxItems = 12 }: DiscoverySectionProp
           </div>
         )}
       </div>
+
+      {/* My Subscriptions Section */}
+      {!subscribedLoading && subscribedProducts.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="h-5 w-5 text-primary" />
+            <span className="font-medium">My Subscriptions ({subscribedProducts.length})</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {subscribedProducts.slice(0, 4).map(p => {
+              const rawDomain = (p?.domain as any);
+              const domainStr = rawDomain != null ? String(rawDomain) : '';
+              const resolvedById = getDomainName(domainStr);
+              const resolvedByName = !resolvedById && domainStr
+                ? (domains.find(d => d.name.toLowerCase() === domainStr.toLowerCase())?.name || null)
+                : null;
+              const domainLabel = resolvedById || resolvedByName || (domainStr || null);
+              const description = p.description?.purpose || p.description?.usage || '';
+              const owner = p.team?.members?.[0]?.username || p.team?.name || t('discoverySection.unknown');
+
+              return (
+                <div key={p.id || p.name} className="group">
+                  <Card className="transition-shadow group-hover:shadow-md h-full border-primary/20 bg-primary/5">
+                    <CardHeader>
+                      <div className="flex items-center gap-2">
+                        <Bell className="h-4 w-4 text-primary" />
+                        <CardTitle className="truncate flex-1 text-base">
+                          <Link to={p.id ? `/data-products/${p.id}` : '/data-products'} className="hover:underline">
+                            {p.name || t('discoverySection.untitled')}
+                          </Link>
+                        </CardTitle>
+                      </div>
+                      {description ? (
+                        <CardDescription className="line-clamp-2">{description}</CardDescription>
+                      ) : null}
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-xs text-muted-foreground mb-1 truncate" title={domainLabel || undefined}>
+                        {t('discoverySection.domain')}: {domainLabel || t('discoverySection.unknown')}
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span className="truncate max-w-[60%]">{t('discoverySection.owner')}: {owner}</span>
+                        <span>{p.status || t('discoverySection.status')}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              );
+            })}
+          </div>
+          {subscribedProducts.length > 4 && (
+            <div className="text-center mt-3">
+              <Link to="/data-products" className="text-sm text-primary hover:underline">
+                View all {subscribedProducts.length} subscribed products →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <div className="flex items-center gap-2 mb-3"><Star className="h-5 w-5 text-primary" /><span className="font-medium">{t('discoverySection.popularProducts')}</span></div>

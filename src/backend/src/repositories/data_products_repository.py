@@ -39,7 +39,8 @@ from src.db_models.data_products import (
     DataProductTeamDb,
     DataProductTeamMemberDb,
     SBOMDb,
-    InputContractDb
+    InputContractDb,
+    DataProductSubscriptionDb
 )
 from src.common.logging import get_logger
 
@@ -637,5 +638,150 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
             raise
 
 
-# Create a single instance of the repository for use
+# ============================================================================
+# Subscription Repository
+# ============================================================================
+
+class DataProductSubscriptionRepository:
+    """Repository for Data Product Subscription CRUD operations."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def create(
+        self,
+        db: Session,
+        *,
+        product_id: str,
+        subscriber_email: str,
+        reason: Optional[str] = None
+    ) -> DataProductSubscriptionDb:
+        """Create a new subscription."""
+        from uuid import uuid4
+        logger.debug(f"Creating subscription for {subscriber_email} to product {product_id}")
+        try:
+            db_obj = self.model(
+                id=str(uuid4()),
+                product_id=product_id,
+                subscriber_email=subscriber_email,
+                subscription_reason=reason
+            )
+            db.add(db_obj)
+            db.flush()
+            db.refresh(db_obj)
+            logger.info(f"Created subscription: {db_obj.id}")
+            return db_obj
+        except Exception as e:
+            logger.error(f"Error creating subscription: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def get(self, db: Session, id: str) -> Optional[DataProductSubscriptionDb]:
+        """Get a subscription by ID."""
+        return db.query(self.model).filter(self.model.id == id).first()
+
+    def get_by_product_and_user(
+        self,
+        db: Session,
+        *,
+        product_id: str,
+        subscriber_email: str
+    ) -> Optional[DataProductSubscriptionDb]:
+        """Get a subscription by product ID and subscriber email."""
+        return db.query(self.model).filter(
+            self.model.product_id == product_id,
+            self.model.subscriber_email == subscriber_email
+        ).first()
+
+    def get_subscribers_for_product(
+        self,
+        db: Session,
+        *,
+        product_id: str,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[DataProductSubscriptionDb]:
+        """Get all subscribers for a product."""
+        logger.debug(f"Fetching subscribers for product {product_id}")
+        return db.query(self.model).filter(
+            self.model.product_id == product_id
+        ).offset(skip).limit(limit).all()
+
+    def count_subscribers_for_product(self, db: Session, *, product_id: str) -> int:
+        """Count subscribers for a product."""
+        return db.query(self.model).filter(
+            self.model.product_id == product_id
+        ).count()
+
+    def get_subscriptions_for_user(
+        self,
+        db: Session,
+        *,
+        subscriber_email: str,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[DataProductSubscriptionDb]:
+        """Get all subscriptions for a user."""
+        logger.debug(f"Fetching subscriptions for user {subscriber_email}")
+        return db.query(self.model).filter(
+            self.model.subscriber_email == subscriber_email
+        ).offset(skip).limit(limit).all()
+
+    def get_product_ids_for_user(self, db: Session, *, subscriber_email: str) -> List[str]:
+        """Get all product IDs a user is subscribed to."""
+        subscriptions = db.query(self.model.product_id).filter(
+            self.model.subscriber_email == subscriber_email
+        ).all()
+        return [s[0] for s in subscriptions]
+
+    def delete(self, db: Session, *, id: str) -> bool:
+        """Delete a subscription by ID."""
+        logger.debug(f"Deleting subscription {id}")
+        try:
+            obj = db.query(self.model).filter(self.model.id == id).first()
+            if obj:
+                db.delete(obj)
+                db.flush()
+                logger.info(f"Deleted subscription {id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting subscription {id}: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def delete_by_product_and_user(
+        self,
+        db: Session,
+        *,
+        product_id: str,
+        subscriber_email: str
+    ) -> bool:
+        """Delete a subscription by product ID and subscriber email."""
+        logger.debug(f"Deleting subscription for {subscriber_email} from product {product_id}")
+        try:
+            obj = self.get_by_product_and_user(
+                db, product_id=product_id, subscriber_email=subscriber_email
+            )
+            if obj:
+                db.delete(obj)
+                db.flush()
+                logger.info(f"Deleted subscription for {subscriber_email} from product {product_id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting subscription: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def get_subscriber_emails_for_product(self, db: Session, *, product_id: str) -> List[str]:
+        """Get all subscriber emails for a product (for notifications)."""
+        subscriptions = db.query(self.model.subscriber_email).filter(
+            self.model.product_id == product_id
+        ).all()
+        return [s[0] for s in subscriptions]
+
+
+# Create singleton instances of the repositories for use
 data_product_repo = DataProductRepository(DataProductDb)
+subscription_repo = DataProductSubscriptionRepository(DataProductSubscriptionDb)

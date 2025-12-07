@@ -7,7 +7,7 @@ Schema: https://github.com/bitol-io/open-data-product-standard/blob/main/schema/
 All models follow the ODPS v1.0.0 structure with Databricks-specific extensions where needed.
 """
 
-from sqlalchemy import Column, String, DateTime, Text, Boolean, func, ForeignKey, Date
+from sqlalchemy import Column, String, DateTime, Text, Boolean, func, ForeignKey, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 from uuid import uuid4
 
@@ -324,3 +324,36 @@ class DataProductTeamMemberDb(Base):
 
     def __repr__(self):
         return f"<DataProductTeamMemberDb(username='{self.username}', role='{self.role}')>"
+
+
+# ============================================================================
+# Data Product Subscriptions
+# ============================================================================
+
+class DataProductSubscriptionDb(Base):
+    """
+    Data Product Subscription - Tracks consumer subscriptions to data products.
+    
+    Subscriptions enable:
+    - Consumer discovery of subscribed products
+    - ITSM notifications for product changes (deprecation, new versions, compliance violations)
+    - Audit trail of who is consuming which products
+    """
+    __tablename__ = 'data_product_subscriptions'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    product_id = Column(String, ForeignKey('data_products.id', ondelete='CASCADE'), nullable=False, index=True)
+    subscriber_email = Column(String, nullable=False, index=True)
+    subscribed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    subscription_reason = Column(Text, nullable=True)  # Optional: why they subscribed
+
+    # Relationship to product
+    product = relationship("DataProductDb", backref="subscriptions")
+
+    # Unique constraint: one subscription per user per product
+    __table_args__ = (
+        UniqueConstraint('product_id', 'subscriber_email', name='uq_product_subscriber'),
+    )
+
+    def __repr__(self):
+        return f"<DataProductSubscriptionDb(product_id='{self.product_id}', subscriber='{self.subscriber_email}')>"

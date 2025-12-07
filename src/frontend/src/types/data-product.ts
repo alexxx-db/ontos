@@ -260,3 +260,41 @@ export interface MetastoreTableInfo {
 export interface DataProductFormData extends Partial<DataProduct> {
   // Additional form-specific fields if needed
 }
+
+// ============================================================================
+// Subscription Types
+// ============================================================================
+
+export interface Subscription {
+  id: string;
+  product_id: string;
+  subscriber_email: string;
+  subscribed_at: string;  // ISO date string
+  subscription_reason?: string;
+}
+
+export interface SubscriptionCreate {
+  reason?: string;
+}
+
+export interface SubscriptionResponse {
+  subscribed: boolean;
+  subscription?: Subscription;
+}
+
+export interface SubscriberInfo {
+  email: string;
+  subscribed_at: string;  // ISO date string
+  reason?: string;
+}
+
+export interface SubscribersListResponse {
+  product_id: string;
+  subscriber_count: number;
+  subscribers: SubscriberInfo[];
+}
+
+export interface SubscriberCountResponse {
+  product_id: string;
+  subscriber_count: number;
+}

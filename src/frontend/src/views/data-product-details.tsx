@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { DataProduct, InputPort, OutputPort, ManagementPort, TeamMember, Support } from '@/types/data-product';
+import { DataProduct, InputPort, OutputPort, ManagementPort, TeamMember, Support, SubscriptionResponse, SubscribersListResponse } from '@/types/data-product';
 import DataProductCreateDialog from '@/components/data-products/data-product-create-dialog';
 import InputPortFormDialog from '@/components/data-products/input-port-form-dialog';
 import OutputPortFormDialog from '@/components/data-products/output-port-form-dialog';
@@ -12,7 +12,7 @@ import ImportTeamMembersDialog from '@/components/data-contracts/import-team-mem
 import { useApi } from '@/hooks/use-api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Loader2, Pencil, Trash2, AlertCircle, Sparkles, CopyPlus, ArrowLeft, Package, KeyRound, Plus, FileText, Download } from 'lucide-react';
+import { Loader2, Pencil, Trash2, AlertCircle, Sparkles, CopyPlus, ArrowLeft, Package, KeyRound, Plus, FileText, Download, Bell, BellOff, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import TagChip from '@/components/ui/tag-chip';
@@ -110,6 +110,11 @@ export default function DataProductDetails() {
   // Owner team state
   const [ownerTeamName, setOwnerTeamName] = useState<string>('');
   const [projectName, setProjectName] = useState<string>('');
+
+  // Subscription state
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionResponse | null>(null);
+  const [subscribers, setSubscribers] = useState<SubscribersListResponse | null>(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
 
   // Permissions
   const featureId = 'data-products';
@@ -225,6 +230,28 @@ export default function DataProductDetails() {
         await fetchContractNames(productData.outputPorts);
       }
 
+      // Fetch subscription status for current user
+      try {
+        const subscriptionResp = await get<SubscriptionResponse>(`/api/data-products/${productId}/subscription`);
+        if (subscriptionResp.data) {
+          setSubscriptionStatus(subscriptionResp.data);
+        }
+      } catch (subErr) {
+        console.warn('Failed to fetch subscription status:', subErr);
+      }
+
+      // Fetch subscribers (for owners/admins)
+      if (canWrite || canAdmin) {
+        try {
+          const subscribersResp = await get<SubscribersListResponse>(`/api/data-products/${productId}/subscribers`);
+          if (subscribersResp.data) {
+            setSubscribers(subscribersResp.data);
+          }
+        } catch (subErr) {
+          console.warn('Failed to fetch subscribers:', subErr);
+        }
+      }
+
       // ODPS v1.0.0: name is at root level
       setDynamicTitle(productData.name || 'Unnamed Product');
     } catch (err) {
@@ -267,6 +294,58 @@ export default function DataProductDetails() {
       toast({ title: 'Error', description: `Failed to delete: ${errorMessage}`, variant: 'destructive' });
     }
   };
+
+  // Subscription handlers
+  const handleSubscribe = async () => {
+    if (!productId) return;
+    setSubscriptionLoading(true);
+    try {
+      const response = await post<SubscriptionResponse>(`/api/data-products/${productId}/subscribe`, {});
+      if (response.data) {
+        setSubscriptionStatus(response.data);
+        toast({ title: 'Subscribed', description: 'You will now receive notifications about this product.' });
+        // Refresh subscribers count
+        if (canWrite || canAdmin) {
+          const subscribersResp = await get<SubscribersListResponse>(`/api/data-products/${productId}/subscribers`);
+          if (subscribersResp.data) {
+            setSubscribers(subscribersResp.data);
+          }
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to subscribe';
+      toast({ title: 'Error', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
+
+  const handleUnsubscribe = async () => {
+    if (!productId) return;
+    setSubscriptionLoading(true);
+    try {
+      const response = await deleteApi<SubscriptionResponse>(`/api/data-products/${productId}/subscribe`);
+      if (response.data) {
+        setSubscriptionStatus(response.data);
+        toast({ title: 'Unsubscribed', description: 'You will no longer receive notifications about this product.' });
+        // Refresh subscribers count
+        if (canWrite || canAdmin) {
+          const subscribersResp = await get<SubscribersListResponse>(`/api/data-products/${productId}/subscribers`);
+          if (subscribersResp.data) {
+            setSubscribers(subscribersResp.data);
+          }
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to unsubscribe';
+      toast({ title: 'Error', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
+
+  // Check if product is subscribable (active or certified)
+  const isSubscribable = product?.status && ['active', 'certified'].includes(product.status.toLowerCase());
 
   // Helper function to update product with 409 handling
   const updateProduct = async (updatedProduct: DataProduct, forceUpdate: boolean = false) => {
@@ -854,6 +933,38 @@ export default function DataProductDetails() {
           <Button variant="outline" onClick={() => setIsImportExportDialogOpen(true)} size="sm">
             <Download className="mr-2 h-4 w-4" /> Export ODPS
           </Button>
+          {/* Subscribe/Unsubscribe Button */}
+          {isSubscribable && (
+            subscriptionStatus?.subscribed ? (
+              <Button
+                variant="outline"
+                onClick={handleUnsubscribe}
+                disabled={subscriptionLoading}
+                size="sm"
+              >
+                {subscriptionLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <BellOff className="mr-2 h-4 w-4" />
+                )}
+                Unsubscribe
+              </Button>
+            ) : (
+              <Button
+                variant="default"
+                onClick={handleSubscribe}
+                disabled={subscriptionLoading}
+                size="sm"
+              >
+                {subscriptionLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Bell className="mr-2 h-4 w-4" />
+                )}
+                Subscribe
+              </Button>
+            )
+          )}
           <Button variant="outline" onClick={handleEdit} disabled={!canWrite} size="sm">
             <Pencil className="mr-2 h-4 w-4" /> Edit
           </Button>
@@ -1304,6 +1415,45 @@ export default function DataProductDetails() {
           )}
         </CardContent>
       </Card>
+
+      {/* Subscribers Section (only visible to owners/admins) */}
+      {(canWrite || canAdmin) && subscribers && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              <span>Subscribers ({subscribers.subscriber_count})</span>
+            </CardTitle>
+            <CardDescription>
+              Users subscribed to this product will receive notifications about status changes, compliance issues, and new versions.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {subscribers.subscribers.length > 0 ? (
+              <div className="space-y-2">
+                {subscribers.subscribers.map((subscriber, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Bell className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <span className="text-sm font-medium">{subscriber.email}</span>
+                        {subscriber.reason && (
+                          <p className="text-xs text-muted-foreground">{subscriber.reason}</p>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {formatDate(subscriber.subscribed_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No subscribers yet</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Metadata Panel */}
       <EntityMetadataPanel entityId={productId!} entityType="data_product" />

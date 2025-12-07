@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import TagChip from '@/components/ui/tag-chip';
-import { Plus, Pencil, Trash2, AlertCircle, Database, ChevronDown, Upload, Loader2, Sparkles, KeyRound, Table as TableIcon, Workflow } from 'lucide-react';
+import { Plus, Pencil, Trash2, AlertCircle, Database, ChevronDown, Upload, Loader2, Sparkles, KeyRound, Table as TableIcon, Workflow, Bell, BellOff } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ViewModeToggle } from '@/components/common/view-mode-toggle';
 import {
@@ -66,6 +66,11 @@ export default function DataProducts() {
   // const [productTypes, setProductTypes] = useState<string[]>([]);
 
   const [viewMode, setViewMode] = useState<'table' | 'graph'>('table');
+
+  // Subscription filter state
+  const [showMySubscriptions, setShowMySubscriptions] = useState(false);
+  const [mySubscribedProductIds, setMySubscribedProductIds] = useState<Set<string>>(new Set());
+  const [subscriptionsLoading, setSubscriptionsLoading] = useState(false);
 
   const api = useApi();
   const { get, post, delete: deleteApi } = api;
@@ -154,6 +159,36 @@ export default function DataProducts() {
         setDynamicTitle(null);
     };
   }, [get, canRead, permissionsLoading, setStaticSegments, setDynamicTitle, hasProjectContext, currentProject]);
+
+  // Fetch user's subscriptions
+  useEffect(() => {
+    const fetchMySubscriptions = async () => {
+      if (!canRead) return;
+      try {
+        const response = await get<DataProduct[]>('/api/data-products/my-subscriptions');
+        if (response.data && Array.isArray(response.data)) {
+          setMySubscribedProductIds(new Set(response.data.map(p => p.id)));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch subscriptions:', err);
+      }
+    };
+    
+    if (!permissionsLoading && canRead) {
+      fetchMySubscriptions();
+    }
+  }, [get, canRead, permissionsLoading]);
+
+  // Toggle subscription filter
+  const handleToggleMySubscriptions = () => {
+    setShowMySubscriptions(!showMySubscriptions);
+  };
+
+  // Filtered products based on subscription filter
+  const displayedProducts = useMemo(() => {
+    if (!showMySubscriptions) return products;
+    return products.filter(p => mySubscribedProductIds.has(p.id));
+  }, [products, showMySubscriptions, mySubscribedProductIds]);
 
   // Function to refetch products list
   const fetchProducts = async () => {
@@ -583,11 +618,25 @@ export default function DataProducts() {
           {viewMode === 'table' ? (
             <DataTable
               columns={columns}
-              data={products}
+              data={displayedProducts}
               searchColumn="info.title"
               storageKey="data-products-sort"
               toolbarActions={
                 <>
+                  {/* My Subscriptions Filter Toggle */}
+                  <Button
+                    onClick={handleToggleMySubscriptions}
+                    className="gap-2 h-9"
+                    variant={showMySubscriptions ? "default" : "outline"}
+                    title={showMySubscriptions ? "Show all products" : "Show only my subscriptions"}
+                  >
+                    {showMySubscriptions ? (
+                      <Bell className="h-4 w-4" />
+                    ) : (
+                      <BellOff className="h-4 w-4" />
+                    )}
+                    {showMySubscriptions ? `My Subscriptions (${mySubscribedProductIds.size})` : 'My Subscriptions'}
+                  </Button>
                   {/* Create Button - Conditionally enabled */}
                   <Button
                       onClick={() => handleOpenCreateDialog()}
@@ -670,7 +719,7 @@ export default function DataProducts() {
           />
           ) : (
             <DataProductGraphView 
-                products={products} 
+                products={displayedProducts} 
                 viewMode={viewMode}
                 setViewMode={setViewMode}
                 navigate={navigate}

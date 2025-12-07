@@ -10,7 +10,14 @@ import uuid
 from sqlalchemy.orm import Session
 
 from src.controller.data_products_manager import DataProductsManager
-from src.models.data_products import DataProduct, GenieSpaceRequest, NewVersionRequest
+from src.models.data_products import (
+    DataProduct,
+    GenieSpaceRequest,
+    NewVersionRequest,
+    SubscriptionCreate,
+    SubscriptionResponse,
+    SubscribersListResponse
+)
 from src.models.users import UserInfo
 from databricks.sdk.errors import PermissionDenied
 
@@ -550,6 +557,28 @@ async def get_published_products(
         error_msg = f"Error retrieving published data products: {e!s}"
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
+
+
+# NOTE: Static routes must be defined BEFORE dynamic {product_id} routes
+@router.get('/data-products/my-subscriptions', response_model=List[DataProduct])
+async def get_my_subscriptions(
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    skip: int = 0,
+    limit: int = 100
+):
+    """Get all data products the current user is subscribed to."""
+    if not current_user or not current_user.username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    return manager.get_user_subscriptions(
+        subscriber_email=current_user.username,
+        skip=skip,
+        limit=limit,
+        db=db
+    )
+
 
 @router.post("/data-products/upload", response_model=List[DataProduct], status_code=201)
 async def upload_data_products(
@@ -1212,6 +1241,147 @@ async def get_team_members_for_import(
             success=success,
             details={"product_id": product_id, "team_id": team_id, "member_count": len(members)}
         )
+
+# ==================== Subscription Endpoints ====================
+
+@router.post('/data-products/{product_id}/subscribe', response_model=SubscriptionResponse)
+async def subscribe_to_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    subscription_data: Optional[SubscriptionCreate] = Body(default=None),
+    manager: DataProductsManager = Depends(get_data_products_manager)
+):
+    """Subscribe the current user to a data product.
+    
+    Users can subscribe to active or certified products to receive notifications
+    about status changes, compliance violations, and new versions.
+    """
+    success = False
+    try:
+        if not current_user or not current_user.username:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        reason = subscription_data.reason if subscription_data else None
+        result = manager.subscribe(
+            product_id=product_id,
+            subscriber_email=current_user.username,
+            reason=reason,
+            db=db
+        )
+        
+        success = True
+        return result
+        
+    except ValueError as e:
+        logger.error("Validation error subscribing to product %s: %s", product_id, e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Error subscribing to product %s: %s", product_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to subscribe to product")
+    finally:
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='SUBSCRIBE',
+            success=success,
+            details={"product_id": product_id}
+        )
+
+
+@router.delete('/data-products/{product_id}/subscribe', response_model=SubscriptionResponse)
+async def unsubscribe_from_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataProductsManager = Depends(get_data_products_manager)
+):
+    """Unsubscribe the current user from a data product."""
+    success = False
+    try:
+        if not current_user or not current_user.username:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        result = manager.unsubscribe(
+            product_id=product_id,
+            subscriber_email=current_user.username,
+            db=db
+        )
+        
+        success = True
+        return result
+        
+    except Exception as e:
+        logger.error("Error unsubscribing from product %s: %s", product_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unsubscribe from product")
+    finally:
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='UNSUBSCRIBE',
+            success=success,
+            details={"product_id": product_id}
+        )
+
+
+@router.get('/data-products/{product_id}/subscription', response_model=SubscriptionResponse)
+async def get_subscription_status(
+    product_id: str,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: DataProductsManager = Depends(get_data_products_manager)
+):
+    """Check if the current user is subscribed to a data product."""
+    if not current_user or not current_user.username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    return manager.get_subscription_status(
+        product_id=product_id,
+        subscriber_email=current_user.username,
+        db=db
+    )
+
+
+@router.get('/data-products/{product_id}/subscribers', response_model=SubscribersListResponse)
+async def get_product_subscribers(
+    product_id: str,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    skip: int = 0,
+    limit: int = 100,
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_WRITE))
+):
+    """Get all subscribers for a data product.
+    
+    Only product owners and administrators can view the full subscriber list.
+    """
+    return manager.get_subscribers(
+        product_id=product_id,
+        skip=skip,
+        limit=limit,
+        db=db
+    )
+
+
+@router.get('/data-products/{product_id}/subscriber-count')
+async def get_subscriber_count(
+    product_id: str,
+    db: DBSessionDep,
+    manager: DataProductsManager = Depends(get_data_products_manager)
+):
+    """Get the number of subscribers for a data product."""
+    count = manager.get_subscriber_count(product_id=product_id, db=db)
+    return {"product_id": product_id, "subscriber_count": count}
+
 
 def register_routes(app):
     app.include_router(router)

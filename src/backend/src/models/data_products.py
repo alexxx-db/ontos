@@ -437,3 +437,45 @@ class DataProductUpdate(BaseModel):
         "from_attributes": True,
         "populate_by_name": True
     }
+
+
+# ============================================================================
+# Subscription Models
+# ============================================================================
+
+class SubscriptionCreate(BaseModel):
+    """Request model for creating a subscription."""
+    reason: Optional[str] = Field(None, description="Optional reason for subscribing")
+
+
+class Subscription(BaseModel):
+    """Subscription model representing a user's subscription to a data product."""
+    id: str = Field(..., description="Unique subscription ID")
+    product_id: str = Field(..., description="ID of the subscribed product")
+    subscriber_email: str = Field(..., description="Email of the subscriber")
+    subscribed_at: datetime = Field(..., description="When the subscription was created")
+    subscription_reason: Optional[str] = Field(None, description="Optional reason for subscribing")
+
+    model_config = {"from_attributes": True}
+
+
+class SubscriptionResponse(BaseModel):
+    """Response model for subscription operations."""
+    subscribed: bool = Field(..., description="Whether the user is currently subscribed")
+    subscription: Optional[Subscription] = Field(None, description="Subscription details if subscribed")
+
+
+class SubscriberInfo(BaseModel):
+    """Information about a subscriber (for listing subscribers)."""
+    email: str = Field(..., description="Subscriber's email address")
+    subscribed_at: datetime = Field(..., description="When they subscribed")
+    reason: Optional[str] = Field(None, description="Their subscription reason")
+
+    model_config = {"from_attributes": True}
+
+
+class SubscribersListResponse(BaseModel):
+    """Response model for listing subscribers."""
+    product_id: str = Field(..., description="Product ID")
+    subscriber_count: int = Field(..., description="Total number of subscribers")
+    subscribers: List[SubscriberInfo] = Field(default_factory=list, description="List of subscribers")

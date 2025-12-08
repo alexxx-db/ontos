@@ -47,10 +47,13 @@ You have access to the following tools:
 
 5. **execute_analytics_query** - Execute a read-only SQL SELECT query against Databricks tables. Use this for aggregations, joins, and data analysis.
 
+6. **explore_catalog_schema** - List all tables and views in a Unity Catalog schema with their columns. Use this to understand what data assets exist and suggest semantic models or data products.
+
 ## Guidelines
 
 - Always search for relevant data products or glossary terms before attempting analytics queries
 - When executing analytics queries, first get the table schema to understand available columns
+- Use explore_catalog_schema to discover tables in a database before suggesting semantic models
 - Explain your reasoning and cite the data sources you used
 - If you don't have access to certain data or a query fails, explain why and suggest alternatives
 - Format responses with clear sections, tables, and bullet points for readability
@@ -189,6 +192,31 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["sql", "explanation"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "explore_catalog_schema",
+            "description": "List all tables and views in a Unity Catalog schema, including their columns and types. Use this to understand what data assets exist in a database/schema and suggest semantic models or data products.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "catalog": {
+                        "type": "string",
+                        "description": "Catalog name (e.g., 'demo_cat', 'main')"
+                    },
+                    "schema": {
+                        "type": "string",
+                        "description": "Schema/database name (e.g., 'demo_db', 'default')"
+                    },
+                    "include_columns": {
+                        "type": "boolean",
+                        "description": "If true, include column details for each table (default: true)"
+                    }
+                },
+                "required": ["catalog", "schema"]
             }
         }
     }
@@ -574,6 +602,9 @@ class LLMSearchManager:
         elif tool_name == "execute_analytics_query":
             return await self._tool_execute_analytics_query(user_token=user_token, **args)
         
+        elif tool_name == "explore_catalog_schema":
+            return await self._tool_explore_catalog_schema(user_token=user_token, **args)
+        
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
     
@@ -884,4 +915,78 @@ class LLMSearchManager:
         except Exception as e:
             logger.error(f"Error executing analytics query: {e}")
             return {"error": str(e)}
+
+    async def _tool_explore_catalog_schema(
+        self,
+        catalog: str,
+        schema: str,
+        include_columns: bool = True,
+        user_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Explore all tables and views in a Unity Catalog schema."""
+        if not self._ws_client:
+            return {"error": "Workspace client not available"}
+        
+        try:
+            logger.info(f"Exploring schema: {catalog}.{schema}")
+            
+            # List tables in the schema
+            tables_iterator = self._ws_client.tables.list(
+                catalog_name=catalog,
+                schema_name=schema
+            )
+            tables_list = list(tables_iterator)
+            
+            if not tables_list:
+                return {
+                    "catalog": catalog,
+                    "schema": schema,
+                    "table_count": 0,
+                    "tables": [],
+                    "message": f"No tables found in {catalog}.{schema}"
+                }
+            
+            tables = []
+            for table in tables_list:
+                table_info = {
+                    "name": table.name,
+                    "full_name": table.full_name,
+                    "table_type": str(table.table_type).replace("TableType.", "") if table.table_type else None,
+                    "comment": table.comment,
+                }
+                
+                # Get detailed column info if requested
+                if include_columns:
+                    try:
+                        # Get full table details including columns
+                        table_details = self._ws_client.tables.get(full_name_arg=table.full_name)
+                        if table_details.columns:
+                            table_info["columns"] = [
+                                {
+                                    "name": col.name,
+                                    "type": col.type_text,
+                                    "comment": col.comment,
+                                    "nullable": col.nullable
+                                }
+                                for col in table_details.columns
+                            ]
+                            table_info["column_count"] = len(table_details.columns)
+                    except Exception as col_err:
+                        logger.warning(f"Could not get columns for {table.full_name}: {col_err}")
+                        table_info["columns"] = []
+                        table_info["column_error"] = str(col_err)
+                
+                tables.append(table_info)
+            
+            return {
+                "catalog": catalog,
+                "schema": schema,
+                "table_count": len(tables),
+                "tables": tables,
+                "message": f"Found {len(tables)} tables/views in {catalog}.{schema}"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error exploring schema {catalog}.{schema}: {e}")
+            return {"error": str(e), "catalog": catalog, "schema": schema}
 

@@ -11,6 +11,7 @@ interface TreeDataItem {
   selected?: boolean
   expanded?: boolean
   onExpand?: () => void
+  onCollapse?: () => void
   loading?: boolean
   hasChildren: boolean
 }
@@ -29,23 +30,51 @@ export function TreeView({
   className,
 }: TreeViewProps) {
   const [expandedItems, setExpandedItems] = React.useState<Set<string>>(new Set())
+  // Track items explicitly collapsed by user to override parent's expanded prop
+  const [collapsedItems, setCollapsedItems] = React.useState<Set<string>>(new Set())
   const [selectedItemId, setSelectedItemId] = React.useState<string | undefined>(initialSelectedItemId)
 
   const handleToggle = (item: TreeDataItem) => {
     if (item.loading) return;
 
-    setExpandedItems((prev) => {
-      const next = new Set(prev);
-      if (next.has(item.id)) {
+    // Check if currently expanded (considering both internal state, collapsed override, and parent prop)
+    const isCurrentlyExpanded = expandedItems.has(item.id) || 
+      (item.expanded && !collapsedItems.has(item.id));
+    
+    if (isCurrentlyExpanded) {
+      // Collapsing
+      setExpandedItems((prev) => {
+        const next = new Set(prev);
         next.delete(item.id);
-      } else {
+        return next;
+      });
+      // Mark as explicitly collapsed to override parent's expanded prop
+      setCollapsedItems((prev) => {
+        const next = new Set(prev);
         next.add(item.id);
-        if (item.onExpand) {
-          item.onExpand();
-        }
+        return next;
+      });
+      // Notify parent of collapse so it can sync its state
+      if (item.onCollapse) {
+        item.onCollapse();
       }
-      return next;
-    });
+    } else {
+      // Expanding
+      setExpandedItems((prev) => {
+        const next = new Set(prev);
+        next.add(item.id);
+        return next;
+      });
+      // Remove from collapsed set since user is expanding
+      setCollapsedItems((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+      if (item.onExpand) {
+        item.onExpand();
+      }
+    }
   };
 
   const handleSelect = (item: TreeDataItem) => {
@@ -60,7 +89,9 @@ export function TreeView({
 
   const renderItem = (item: TreeDataItem, level: number = 0) => {
     const hasChildren = item.hasChildren || (item.children && item.children.length > 0);
-    const isExpanded = expandedItems.has(item.id) || item.expanded;
+    // Item is expanded if: in internal expanded set, OR parent says expanded AND not explicitly collapsed
+    const isExpanded = expandedItems.has(item.id) || 
+      (item.expanded && !collapsedItems.has(item.id));
     const isSelected = selectedItemId === item.id;
 
     return (

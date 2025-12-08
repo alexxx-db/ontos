@@ -53,7 +53,7 @@ def is_user_admin(user_groups: Optional[List[str]], settings: Settings) -> bool:
 
 # Local Dev Mock User (keep here for the dependency function)
 LOCAL_DEV_USER = UserInfo(
-    email="unknown@dev.local",
+    email="localdev@example.com",  # Use example.com which is reserved for documentation
     username="localdev",
     user="Local Developer",
     ip="127.0.0.1",

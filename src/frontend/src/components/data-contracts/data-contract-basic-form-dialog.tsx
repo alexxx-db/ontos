@@ -140,7 +140,7 @@ export default function DataContractBasicFormDialog({ isOpen, onOpenChange, onSu
     if (!initialFormValues) return false
     
     // Normalize tags for comparison
-    const normalizeTag = (tag: any) => typeof tag === 'string' ? tag : (tag.tag_id || tag.fully_qualified_name || tag.tag_name || tag)
+    const normalizeTag = (tag: any) => typeof tag === 'string' ? tag : (tag.fully_qualified_name || tag.tag_id || tag.tag_name || tag)
     const currentTagsNormalized = tags.map(normalizeTag).sort().join(',')
     const initialTagsNormalized = initialFormValues.tags.map(normalizeTag).sort().join(',')
     
@@ -186,10 +186,12 @@ export default function DataContractBasicFormDialog({ isOpen, onOpenChange, onSu
     
     setIsSubmitting(true)
     try {
-      // Normalize tags to tag IDs (strings) for backend compatibility
+      // Normalize tags to FQNs (strings) for backend compatibility
+      // Use fully_qualified_name so backend can look up existing tags by FQN
       const normalizedTags = tags.map((tag: any) => {
         if (typeof tag === 'string') return tag;
-        return tag.tag_id || tag.fully_qualified_name || tag.tag_name || tag;
+        // Prefer fully_qualified_name for existing tags, fallback to tag_id object
+        return tag.fully_qualified_name || { tag_id: tag.tag_id, assigned_value: tag.assigned_value };
       });
 
       const payload: DataContractCreate = {

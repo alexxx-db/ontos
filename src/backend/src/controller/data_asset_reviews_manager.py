@@ -310,6 +310,30 @@ class DataAssetReviewManager(SearchableAsset): # Inherit from SearchableAsset
             logger.error(f"Unexpected error updating asset {asset_id} status: {e}")
             raise
 
+    def update_asset_status_by_id(self, asset_id: str, status: ReviewedAssetStatus, db: Optional[Session] = None) -> bool:
+        """Update the status of a reviewed asset by ID only.
+        
+        This is a simplified method for syncing status from external sources
+        (e.g., MDM match candidate updates).
+        
+        Args:
+            asset_id: The reviewed asset ID
+            status: The new status
+            db: Optional database session. If not provided, uses the manager's internal session.
+            
+        Returns:
+            True if asset was found and updated, False otherwise
+        """
+        db_session = db if db is not None else self._db
+        try:
+            return self._repo.update_asset_status_by_id(db_session, asset_id, status)
+        except SQLAlchemyError as e:
+            logger.error(f"Database error updating asset {asset_id} status to {status}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error updating asset {asset_id} status to {status}: {e}")
+            raise
+
     def delete_review_request(self, request_id: str) -> bool:
         """Deletes a review request and its associated assets."""
         try:

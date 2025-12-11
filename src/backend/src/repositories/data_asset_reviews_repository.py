@@ -121,6 +121,32 @@ class DataAssetReviewRepository(CRUDBase[DataAssetReviewRequestDb, DataAssetRevi
         db.refresh(db_asset_obj)
         return db_asset_obj
 
+    def update_asset_status_by_id(self, db: Session, asset_id: str, status: ReviewedAssetStatus) -> bool:
+        """Update the status of a reviewed asset by ID.
+        
+        Args:
+            db: Database session
+            asset_id: The reviewed asset ID
+            status: The new status
+            
+        Returns:
+            True if asset was found and updated, False otherwise
+        """
+        logger.debug(f"Updating status for ReviewedAsset (DB) id: {asset_id} to {status.value}")
+        try:
+            asset = db.query(ReviewedAssetDb).filter(ReviewedAssetDb.id == asset_id).first()
+            if asset:
+                asset.status = status.value
+                # updated_at is handled by onupdate trigger
+                db.flush()
+                return True
+            logger.warning(f"ReviewedAsset with id {asset_id} not found")
+            return False
+        except Exception as e:
+            logger.error(f"Database error updating ReviewedAsset id {asset_id}: {e}", exc_info=True)
+            db.rollback()
+            raise
+
 
 # Create a single instance of the repository
 data_asset_review_repo = DataAssetReviewRepository(DataAssetReviewRequestDb) 

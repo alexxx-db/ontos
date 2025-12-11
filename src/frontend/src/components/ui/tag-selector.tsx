@@ -123,14 +123,14 @@ const TagSelector: React.FC<TagSelectorProps> = ({
     if (maxTags && value.length >= maxTags) return;
 
     if (typeof tag === 'string') {
-      // Simple string tag
+      // Simple string tag (FQN)
       if (!isTagSelected(tag)) {
         onChange([...value, tag]);
       }
     } else {
-      // Rich tag object - use tag ID for backend
+      // Rich tag object - use fully_qualified_name for display and backend lookup
       if (!isTagSelected(tag.fully_qualified_name)) {
-        onChange([...value, tag.id]);
+        onChange([...value, tag.fully_qualified_name]);
       }
     }
 
@@ -209,74 +209,79 @@ const TagSelector: React.FC<TagSelectorProps> = ({
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-full p-0" align="start">
-          <Command>
+          <Command shouldFilter={false}>
             <CommandInput
               placeholder="Search tags..."
               value={searchValue}
               onValueChange={setSearchValue}
             />
-            <CommandList>
-              {loading ? (
-                <CommandEmpty>Loading tags...</CommandEmpty>
-              ) : (
-                <>
-                  {filteredTags.length === 0 && !effectiveAllowCreate && (
-                    <CommandEmpty>No tags found.</CommandEmpty>
-                  )}
+            <div 
+              className="max-h-60 overflow-y-auto"
+              onWheel={(e) => e.stopPropagation()}
+            >
+              <CommandList>
+                {loading ? (
+                  <CommandEmpty>Loading tags...</CommandEmpty>
+                ) : (
+                  <>
+                    {filteredTags.length === 0 && !effectiveAllowCreate && (
+                      <CommandEmpty>No tags found.</CommandEmpty>
+                    )}
 
-                  {filteredTags.length === 0 && effectiveAllowCreate && searchValue && !exactMatch && (
-                    <CommandGroup>
-                      <CommandItem onSelect={handleCreateTag}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Create "{searchValue}"
-                      </CommandItem>
-                    </CommandGroup>
-                  )}
-
-                  {filteredTags.length > 0 && (
-                    <CommandGroup>
-                      {filteredTags.map((tag) => (
-                        <CommandItem
-                          key={tag.id}
-                          value={tag.fully_qualified_name}
-                          onSelect={() => addTag(tag)}
-                          disabled={isTagSelected(tag.fully_qualified_name)}
-                        >
-                          <Check
-                            className={cn(
-                              'mr-2 h-4 w-4',
-                              isTagSelected(tag.fully_qualified_name) ? 'opacity-100' : 'opacity-0'
-                            )}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium truncate">{tag.fully_qualified_name}</span>
-                              <Badge variant="secondary" className="text-xs">
-                                {tag.status}
-                              </Badge>
-                            </div>
-                            {tag.description && (
-                              <div className="text-sm text-muted-foreground truncate">
-                                {tag.description}
-                              </div>
-                            )}
-                          </div>
+                    {filteredTags.length === 0 && effectiveAllowCreate && searchValue && !exactMatch && (
+                      <CommandGroup>
+                        <CommandItem onSelect={handleCreateTag}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          Create "{searchValue}"
                         </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  )}
+                      </CommandGroup>
+                    )}
 
-                  {effectiveAllowCreate && searchValue && !exactMatch && filteredTags.length > 0 && (
-                    <CommandGroup>
-                      <CommandItem onSelect={handleCreateTag}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Create "{searchValue}"
-                      </CommandItem>
-                    </CommandGroup>
-                  )}
-                </>
-              )}
-            </CommandList>
+                    {filteredTags.length > 0 && (
+                      <CommandGroup>
+                        {filteredTags.map((tag) => (
+                          <CommandItem
+                            key={tag.id}
+                            value={tag.fully_qualified_name}
+                            onSelect={() => addTag(tag)}
+                            disabled={isTagSelected(tag.fully_qualified_name)}
+                          >
+                            <Check
+                              className={cn(
+                                'mr-2 h-4 w-4',
+                                isTagSelected(tag.fully_qualified_name) ? 'opacity-100' : 'opacity-0'
+                              )}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium truncate">{tag.fully_qualified_name}</span>
+                                <Badge variant="secondary" className="text-xs">
+                                  {tag.status}
+                                </Badge>
+                              </div>
+                              {tag.description && (
+                                <div className="text-sm text-muted-foreground truncate">
+                                  {tag.description}
+                                </div>
+                              )}
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    )}
+
+                    {effectiveAllowCreate && searchValue && !exactMatch && filteredTags.length > 0 && (
+                      <CommandGroup>
+                        <CommandItem onSelect={handleCreateTag}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          Create "{searchValue}"
+                        </CommandItem>
+                      </CommandGroup>
+                    )}
+                  </>
+                )}
+              </CommandList>
+            </div>
           </Command>
         </PopoverContent>
       </Popover>

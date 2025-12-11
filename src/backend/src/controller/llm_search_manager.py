@@ -737,12 +737,12 @@ class LLMSearchManager:
         else:
             session = self._session_store.create(self._db, user_id)
         
-        # Add user message to database
+        # Add user message to database (also updates in-memory cache)
         self._session_store.add_message(
             self._db, session.id, MessageRole.USER, content=user_message
         )
-        # Also update in-memory session for LLM context
-        session.add_user_message(user_message)
+        # Re-fetch session from cache to ensure we have updated messages
+        session = self._session_store.get(self._db, session.id)
         
         # Process with LLM
         try:
@@ -793,10 +793,16 @@ class LLMSearchManager:
         total_tool_calls = 0
         sources: List[Dict[str, Any]] = []
         max_iterations = 10  # Prevent infinite loops (increased for complex multi-tool queries)
+        session_id = session.id  # Save session ID for re-fetching
         
         for iteration in range(max_iterations):
+            # Re-fetch session from cache to ensure we have latest messages
+            current_session = self._session_store.get(self._db, session_id)
+            if not current_session:
+                raise RuntimeError(f"Session {session_id} not found in cache")
+            
             # Build messages for LLM
-            messages = session.get_messages_for_llm(SYSTEM_PROMPT)
+            messages = current_session.get_messages_for_llm(SYSTEM_PROMPT)
             
             # Call LLM
             try:
@@ -826,13 +832,11 @@ class LLMSearchManager:
                     )
                     for tc in assistant_message.tool_calls
                 ]
-                # Persist tool call message to database
+                # Persist tool call message to database (also updates in-memory cache)
                 self._session_store.add_message(
-                    self._db, session.id, MessageRole.ASSISTANT,
+                    self._db, session_id, MessageRole.ASSISTANT,
                     content=None, tool_calls=tool_calls
                 )
-                # Also update in-memory session for LLM context
-                session.add_assistant_message(None, tool_calls)
                 
                 # Execute each tool call
                 for tc in assistant_message.tool_calls:
@@ -871,13 +875,11 @@ class LLMSearchManager:
                             "error": str(e)
                         })
                     
-                    # Persist tool result to database
+                    # Persist tool result to database (also updates in-memory cache)
                     self._session_store.add_message(
-                        self._db, session.id, MessageRole.TOOL,
+                        self._db, session_id, MessageRole.TOOL,
                         content=json.dumps(result), tool_call_id=tc.id
                     )
-                    # Also update in-memory session for LLM context
-                    session.add_tool_result(tc.id, result)
             else:
                 # No tool calls - return the response
                 return assistant_message.content or "", total_tool_calls, sources

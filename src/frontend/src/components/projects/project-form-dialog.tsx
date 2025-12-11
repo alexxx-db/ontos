@@ -128,13 +128,14 @@ export function ProjectFormDialog({
   };
 
   // Normalize tags for backend submission (supports both string and AssignedTag)
-  const normalizeTagsForSubmission = (tags: any[]): string[] => {
+  // Use fully_qualified_name so backend can look up existing tags by FQN
+  const normalizeTagsForSubmission = (tags: any[]): (string | { tag_id: string; assigned_value?: string })[] => {
     if (!tags || tags.length === 0) return [];
 
     return tags.map((tag) => {
       if (typeof tag === 'string') return tag;
-      if (typeof tag === 'object' && tag.id) return tag.id;
-      return tag.tag_id || tag.fully_qualified_name || tag.name || tag;
+      // Prefer fully_qualified_name for existing tags, fallback to tag_id object
+      return tag.fully_qualified_name || { tag_id: tag.tag_id || tag.id, assigned_value: tag.assigned_value };
     });
   };
 

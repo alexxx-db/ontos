@@ -46,6 +46,7 @@ from src.models.mdm import (
     MdmMatchCandidateStatus,
     MdmMatchType,
 )
+from src.models.data_asset_reviews import ReviewedAssetStatus
 logger = get_logger(__name__)
 
 
@@ -345,6 +346,25 @@ class MdmManager:
         )
 
         if updated:
+            # Sync linked ReviewedAsset status if linked to a review
+            if updated.reviewed_asset_id and self._reviews_manager:
+                new_asset_status = None
+                if data.status.value == 'approved':
+                    new_asset_status = ReviewedAssetStatus.APPROVED
+                elif data.status.value == 'rejected':
+                    new_asset_status = ReviewedAssetStatus.REJECTED
+                
+                if new_asset_status:
+                    try:
+                        self._reviews_manager.update_asset_status_by_id(
+                            updated.reviewed_asset_id,
+                            new_asset_status,
+                            db=self._db
+                        )
+                        logger.debug(f"Synced ReviewedAsset {updated.reviewed_asset_id} status to {new_asset_status.value}")
+                    except Exception as e:
+                        logger.warning(f"Failed to sync ReviewedAsset status for {updated.reviewed_asset_id}: {e}")
+            
             return self._match_candidate_to_api(updated)
         return None
 
@@ -410,6 +430,67 @@ class MdmManager:
             candidate_count=len(candidates),
             message=f"Created review request with {len(candidates)} match candidates"
         )
+
+    def sync_review_asset_statuses(self, run_id: str) -> Dict[str, int]:
+        """Sync ReviewedAsset statuses with MDM candidate statuses for a run.
+        
+        This is useful to fix out-of-sync data from before the auto-sync was implemented.
+        
+        Returns:
+            Dict with counts of synced approved, rejected, and skipped items
+        """
+        if not self._reviews_manager:
+            raise ValueError("Reviews manager not available")
+        
+        run = mdm_match_run_repo.get(db=self._db, run_id=run_id)
+        if not run:
+            raise ValueError(f"Match run {run_id} not found")
+        
+        # Get all candidates with linked review assets
+        all_candidates = mdm_match_candidate_repo.get_by_run(db=self._db, run_id=run_id)
+        
+        synced_approved = 0
+        synced_rejected = 0
+        skipped = 0
+        
+        for candidate in all_candidates:
+            if not candidate.reviewed_asset_id:
+                skipped += 1
+                continue
+            
+            new_status = None
+            if candidate.status == 'approved':
+                new_status = ReviewedAssetStatus.APPROVED
+            elif candidate.status == 'rejected':
+                new_status = ReviewedAssetStatus.REJECTED
+            else:
+                skipped += 1
+                continue
+            
+            try:
+                success = self._reviews_manager.update_asset_status_by_id(
+                    candidate.reviewed_asset_id,
+                    new_status,
+                    db=self._db
+                )
+                if success:
+                    if candidate.status == 'approved':
+                        synced_approved += 1
+                    else:
+                        synced_rejected += 1
+                    logger.debug(f"Synced asset {candidate.reviewed_asset_id} to {new_status.value}")
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.warning(f"Failed to sync asset {candidate.reviewed_asset_id}: {e}")
+                skipped += 1
+        
+        logger.info(f"Sync complete for run {run_id}: {synced_approved} approved, {synced_rejected} rejected, {skipped} skipped")
+        return {
+            "synced_approved": synced_approved,
+            "synced_rejected": synced_rejected,
+            "skipped": skipped
+        }
 
     # ==================== Merge Operations ====================
 

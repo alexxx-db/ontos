@@ -599,6 +599,30 @@ async def create_review_for_run(
         )
 
 
+@router.post("/runs/{run_id}/sync-review-statuses")
+async def sync_review_statuses(
+    run_id: str,
+    manager: MdmManager = MdmManagerDep,
+    _: bool = Depends(PermissionChecker(MDM_FEATURE_ID, FeatureAccessLevel.READ_WRITE))
+):
+    """Sync ReviewedAsset statuses with MDM candidate statuses.
+    
+    This fixes out-of-sync data from before auto-sync was implemented.
+    """
+    try:
+        result = manager.sync_review_asset_statuses(run_id)
+        return {
+            "success": True,
+            "run_id": run_id,
+            **result
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Error syncing review statuses for run {run_id}")
+        raise HTTPException(status_code=500, detail="Failed to sync review statuses")
+
+
 # ==================== Merge Endpoints ====================
 
 @router.post("/runs/{run_id}/merge-approved", response_model=MdmMergeResponse)

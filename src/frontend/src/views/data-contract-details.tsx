@@ -159,6 +159,23 @@ const createSchemaPropertyColumns = (
   },
 ]
 
+const formatDate = (dateString: string | undefined): string => {
+  if (!dateString) return 'N/A';
+  try {
+    return new Date(dateString).toLocaleString();
+  } catch (e) {
+    return 'Invalid Date';
+  }
+};
+
+const getStatusColor = (status: string | undefined): 'default' | 'secondary' | 'destructive' | 'outline' => {
+  const lowerStatus = status?.toLowerCase() || '';
+  if (lowerStatus === 'active' || lowerStatus === 'approved' || lowerStatus === 'certified') return 'default';
+  if (lowerStatus === 'draft' || lowerStatus === 'proposed') return 'secondary';
+  if (lowerStatus === 'retired' || lowerStatus === 'deprecated' || lowerStatus === 'rejected') return 'outline';
+  return 'default';
+};
+
 export default function DataContractDetails() {
   const { contractId } = useParams<{ contractId: string }>()
   const navigate = useNavigate()
@@ -1413,7 +1430,9 @@ export default function DataContractDetails() {
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground min-w-[4rem]">Status:</Label>
               <div className="flex items-center gap-1.5">
-                <Badge variant="secondary" className="text-xs">{contract.status}</Badge>
+                <Badge variant={getStatusColor(contract.status)} className="text-xs">
+                  {contract.status || 'N/A'}
+                </Badge>
                 {contract.published && (
                   <Badge variant="default" className="bg-green-600 text-xs">Published</Badge>
                 )}
@@ -1421,7 +1440,7 @@ export default function DataContractDetails() {
             </div>
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
-              <Badge variant="outline" className="text-xs">{contract.version}</Badge>
+              <Badge variant="outline" className="text-xs">{contract.version || 'N/A'}</Badge>
             </div>
             {/* Hide Domain if empty in minimal mode */}
             {(viewMode !== 'minimal' || contract.domainId || contract.domain) && (
@@ -1486,20 +1505,24 @@ export default function DataContractDetails() {
             )}
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
-              <Badge variant="outline" className="text-xs">{contract.apiVersion}</Badge>
+              {contract.apiVersion ? (
+                <Badge variant="outline" className="text-xs">{contract.apiVersion}</Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">N/A</span>
+              )}
             </div>
             {/* Hide Created if empty in minimal mode */}
             {(viewMode !== 'minimal' || contract.created) && (
               <div className="flex items-center gap-2">
                 <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
-                <span className="text-xs text-muted-foreground truncate">{contract.created || 'N/A'}</span>
+                <span className="text-xs text-muted-foreground truncate">{formatDate(contract.created)}</span>
               </div>
             )}
             {/* Hide Updated if empty in minimal mode */}
             {(viewMode !== 'minimal' || contract.updated) && (
               <div className="flex items-center gap-2">
                 <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
-                <span className="text-xs text-muted-foreground truncate">{contract.updated || 'N/A'}</span>
+                <span className="text-xs text-muted-foreground truncate">{formatDate(contract.updated)}</span>
               </div>
             )}
           </div>

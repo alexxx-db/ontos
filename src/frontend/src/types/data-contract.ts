@@ -6,6 +6,7 @@ export type DataContractListItem = {
   status: string
   published?: boolean // Marketplace publication status
   owner_team_id?: string // UUID of the owning team
+  tags?: any[] // Tags assigned to the contract
   created?: string
   updated?: string
 }

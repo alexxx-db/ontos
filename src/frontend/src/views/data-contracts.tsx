@@ -6,6 +6,7 @@ import { useDomains } from '@/hooks/use-domains'
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import TagChip from '@/components/ui/tag-chip';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Plus, Pencil, Trash2, AlertCircle, Upload, ChevronDown, Loader2, KeyRound, HelpCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -16,6 +17,7 @@ import { useToast } from "@/hooks/use-toast"
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { useProjectContext } from '@/stores/project-store';
 import { DataTable } from '@/components/ui/data-table';
+import { RelativeDate } from '@/components/common/relative-date';
 
 export default function DataContracts() {
   const { toast } = useToast();
@@ -28,11 +30,36 @@ export default function DataContracts() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [odcsPaste, setOdcsPaste] = useState<string>('')
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({});
 
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
   const { currentProject, hasProjectContext } = useProjectContext();
   const navigate = useNavigate();
+
+  // Fetch team names for owner display
+  const fetchTeamNames = async (contractsList: DataContractListItem[]) => {
+    const teamIds = [...new Set(contractsList.map(c => c.owner_team_id).filter(Boolean))] as string[];
+    const names: Record<string, string> = {};
+    
+    for (const teamId of teamIds) {
+      if (!teamNames[teamId]) {
+        try {
+          const response = await fetch(`/api/teams/${teamId}`);
+          if (response.ok) {
+            const data = await response.json();
+            names[teamId] = data.name || teamId;
+          }
+        } catch (e) {
+          console.warn('Failed to fetch team:', teamId, e);
+        }
+      }
+    }
+    
+    if (Object.keys(names).length > 0) {
+      setTeamNames(prev => ({ ...prev, ...names }));
+    }
+  };
 
   useEffect(() => {
     fetchContracts();
@@ -68,6 +95,11 @@ export default function DataContracts() {
       const data = await response.json();
       setContracts(data);
       setError(null);
+      
+      // Fetch team names for owner display
+      if (data && data.length > 0) {
+        fetchTeamNames(data);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch contracts');
     } finally {
@@ -286,6 +318,25 @@ export default function DataContracts() {
       },
     },
     {
+      accessorKey: "owner_team_id",
+      header: ({ column }) => {
+        return (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Owner
+            <ChevronDown className="ml-2 h-4 w-4" />
+          </Button>
+        );
+      },
+      cell: ({ row }) => {
+        const teamId = row.original.owner_team_id;
+        const teamName = teamId ? teamNames[teamId] : undefined;
+        return <div>{teamName || teamId || 'N/A'}</div>;
+      },
+    },
+    {
       accessorKey: "version",
       header: ({ column }) => {
         return (
@@ -298,7 +349,7 @@ export default function DataContracts() {
           </Button>
         );
       },
-      cell: ({ row }) => <div>{row.getValue("version")}</div>,
+      cell: ({ row }) => <Badge variant="secondary">{row.getValue("version")}</Badge>,
     },
     {
       accessorKey: "status",
@@ -320,6 +371,21 @@ export default function DataContracts() {
       ),
     },
     {
+      accessorKey: "tags",
+      header: "Tags",
+      cell: ({ row }) => {
+        const tags = row.original.tags || [];
+        return (
+          <div className="flex flex-wrap gap-1">
+            {tags.map((tag, index) => (
+              <TagChip key={index} tag={tag} size="sm" />
+            ))}
+          </div>
+        );
+      },
+      enableSorting: false,
+    },
+    {
       accessorKey: "created",
       header: ({ column }) => {
         return (
@@ -332,9 +398,7 @@ export default function DataContracts() {
           </Button>
         );
       },
-      cell: ({ row }) => (
-        <div>{new Date(row.getValue("created")).toLocaleDateString()}</div>
-      ),
+      cell: ({ row }) => row.original.created ? <RelativeDate date={row.original.created} /> : 'N/A',
     },
     {
       accessorKey: "updated",
@@ -349,9 +413,7 @@ export default function DataContracts() {
           </Button>
         );
       },
-      cell: ({ row }) => (
-        <div>{new Date(row.getValue("updated")).toLocaleDateString()}</div>
-      ),
+      cell: ({ row }) => row.original.updated ? <RelativeDate date={row.original.updated} /> : 'N/A',
     },
     {
       id: "actions",

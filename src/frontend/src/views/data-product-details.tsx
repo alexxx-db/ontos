@@ -783,9 +783,9 @@ export default function DataProductDetails() {
       const updatedPorts = [...(product.outputPorts || [])];
       updatedPorts[portIndex] = { ...updatedPorts[portIndex], contractId: undefined };
       
-      // Normalize tags to string array (backend expects strings, not tag objects)
+      // Normalize tags to FQN strings or tag_id objects for backend compatibility
       const normalizedTags = product.tags?.map((tag: any) => 
-        typeof tag === 'string' ? tag : tag.tag_id || tag.name || tag
+        typeof tag === 'string' ? tag : (tag.fully_qualified_name || { tag_id: tag.tag_id, assigned_value: tag.assigned_value })
       );
       
       const res = await fetch(`/api/data-products/${productId}`, {

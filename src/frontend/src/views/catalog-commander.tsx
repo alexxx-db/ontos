@@ -372,23 +372,6 @@ const CatalogCommander: React.FC = () => {
     });
   };
 
-  if (isLoading) {
-    return (
-      <div className="container py-6 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen">
-        <div className="text-red-500 mb-4">{error}</div>
-        <Button onClick={fetchCatalogs}>Retry</Button>
-      </div>
-    );
-  }
-
   return (
     <div className="py-6">
       <h1 className="text-3xl font-bold mb-6 flex items-center gap-2">
@@ -549,13 +532,26 @@ const CatalogCommander: React.FC = () => {
               </Button>
             </div>
             <div className="flex-1 min-h-0 overflow-auto border rounded-md bg-muted/20">
-              <div className="min-w-max text-sm [&_button]:!py-0.5 [&_button]:!my-0 [&_ul]:!space-y-0 [&_ul]:!gap-0 [&_li]:!my-0 [&_li]:!py-0">
-                <TreeView
-                  data={renderTree(sourceItems, true)}
-                  className="p-1 !space-y-0 !gap-0"
-                  onSelectChange={(item) => handleItemSelect(item as unknown as CatalogItem)}
-                />
-              </div>
+              {isLoading ? (
+                <div className="flex items-center justify-center h-full min-h-[200px]">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : error ? (
+                <div className="flex flex-col items-center justify-center h-full min-h-[200px] p-4">
+                  <div className="text-destructive text-sm mb-3">{error}</div>
+                  <Button size="sm" variant="outline" onClick={() => fetchCatalogs()}>
+                    Retry
+                  </Button>
+                </div>
+              ) : (
+                <div className="min-w-max text-sm [&_button]:!py-0.5 [&_button]:!my-0 [&_ul]:!space-y-0 [&_ul]:!gap-0 [&_li]:!my-0 [&_li]:!py-0">
+                  <TreeView
+                    data={renderTree(sourceItems, true)}
+                    className="p-1 !space-y-0 !gap-0"
+                    onSelectChange={(item) => handleItemSelect(item as unknown as CatalogItem)}
+                  />
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -655,13 +651,26 @@ const CatalogCommander: React.FC = () => {
                       </Button>
                     </div>
                     <div className="flex-1 min-h-0 overflow-auto border rounded-md bg-muted/20">
-                      <div className="min-w-max text-sm [&_button]:!py-0.5 [&_button]:!my-0 [&_ul]:!space-y-0 [&_ul]:!gap-0 [&_li]:!my-0 [&_li]:!py-0">
-                        <TreeView
-                          data={renderTree(targetItems, false)}
-                          className="p-1 !space-y-0 !gap-0"
-                          onSelectChange={(item) => handleItemSelect(item as unknown as CatalogItem)}
-                        />
-                      </div>
+                      {isLoading ? (
+                        <div className="flex items-center justify-center h-full min-h-[200px]">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : error ? (
+                        <div className="flex flex-col items-center justify-center h-full min-h-[200px] p-4">
+                          <div className="text-destructive text-sm mb-3">{error}</div>
+                          <Button size="sm" variant="outline" onClick={() => fetchCatalogs()}>
+                            Retry
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="min-w-max text-sm [&_button]:!py-0.5 [&_button]:!my-0 [&_ul]:!space-y-0 [&_ul]:!gap-0 [&_li]:!my-0 [&_li]:!py-0">
+                          <TreeView
+                            data={renderTree(targetItems, false)}
+                            className="p-1 !space-y-0 !gap-0"
+                            onSelectChange={(item) => handleItemSelect(item as unknown as CatalogItem)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

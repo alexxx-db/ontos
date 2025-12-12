@@ -254,6 +254,9 @@ export default function DataContractDetails() {
   const [isCustomPropertyFormOpen, setIsCustomPropertyFormOpen] = useState(false)
   const [editingCustomPropertyKey, setEditingCustomPropertyKey] = useState<string | null>(null)
 
+  // Schema inference state
+  const [isInferringSchema, setIsInferringSchema] = useState(false)
+
   // DQX Profiling states
   const [isDqxSchemaSelectOpen, setIsDqxSchemaSelectOpen] = useState(false)
   const [isDqxSuggestionsOpen, setIsDqxSuggestionsOpen] = useState(false)
@@ -1153,6 +1156,7 @@ export default function DataContractDetails() {
     const datasetPath = table.full_name
     const logicalName = datasetPath.split('.').pop() || datasetPath
 
+    setIsInferringSchema(true)
     try {
       // Fetch columns from Unity Catalog
       const res = await fetch(`/api/catalogs/dataset/${encodeURIComponent(datasetPath)}`)
@@ -1197,6 +1201,8 @@ export default function DataContractDetails() {
         description: e instanceof Error ? e.message : 'Could not fetch dataset metadata', 
         variant: 'destructive' 
       })
+    } finally {
+      setIsInferringSchema(false)
     }
   }
 
@@ -1609,9 +1615,9 @@ export default function DataContractDetails() {
                 <Sparkles className="h-4 w-4 mr-1.5" />
                 Profile with DQX
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setIsDatasetLookupOpen(true)}>
-                <Database className="h-4 w-4 mr-1.5" />
-                Infer from Unity Catalog
+              <Button size="sm" variant="outline" onClick={() => setIsDatasetLookupOpen(true)} disabled={isInferringSchema}>
+                {isInferringSchema ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Database className="h-4 w-4 mr-1.5" />}
+                {isInferringSchema ? 'Inferring...' : 'Infer from Unity Catalog'}
               </Button>
               <Button size="sm" onClick={() => { setEditingSchemaIndex(null); setIsSchemaFormOpen(true); }}>
                 <Plus className="h-4 w-4 mr-1.5" />
@@ -1648,14 +1654,22 @@ export default function DataContractDetails() {
               </AlertDescription>
             </Alert>
           )}
+          {isInferringSchema && (
+            <Alert className="mb-4">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <AlertDescription>
+                Inferring schema from Unity Catalog... This may take a moment.
+              </AlertDescription>
+            </Alert>
+          )}
           {!contract.schema || contract.schema.length === 0 ? (
             <div className="text-center py-12 border-2 border-dashed border-muted-foreground/25 rounded-lg">
               <div className="text-muted-foreground mb-2">No schemas defined yet</div>
               <div className="text-sm text-muted-foreground mb-4">Define the structure of your data by adding schemas</div>
               <div className="flex gap-3 justify-center">
-                <Button variant="outline" onClick={() => setIsDatasetLookupOpen(true)}>
-                  <Database className="h-4 w-4 mr-2" />
-                  Infer from Unity Catalog
+                <Button variant="outline" onClick={() => setIsDatasetLookupOpen(true)} disabled={isInferringSchema}>
+                  {isInferringSchema ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Database className="h-4 w-4 mr-2" />}
+                  {isInferringSchema ? 'Inferring Schema...' : 'Infer from Unity Catalog'}
                 </Button>
                 <Button onClick={() => { setEditingSchemaIndex(null); setIsSchemaFormOpen(true); }}>
                   <Plus className="h-4 w-4 mr-2" />

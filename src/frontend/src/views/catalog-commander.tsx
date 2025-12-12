@@ -338,15 +338,25 @@ const CatalogCommander: React.FC = () => {
     }
   };
 
-  const renderTree = (items: CatalogItem[], isSource: boolean): TreeViewItem[] => {
-    return items.map(item => {
+  // Apply filter only at the top level; once navigating deeper, show all children unfiltered
+  const renderTree = (items: CatalogItem[], isSource: boolean, bypassFilter: boolean = false): TreeViewItem[] => {
+    const filteredItems = items.filter((item) => {
+      if (bypassFilter) return true;
+      const q = searchInput.trim().toLowerCase();
+      if (!q) return true;
+      if (expandedNodes.has(item.id)) return true; // Keep expanded nodes visible
+      return item.name.toLowerCase().includes(q);
+    });
+
+    return filteredItems.map(item => {
       const hasChildren = item.hasChildren || (item.children && item.children.length > 0);
       
       const treeItem = {
         id: item.id,
         name: item.name,
         icon: getIcon(item.type),
-        children: item.children ? renderTree(item.children, isSource) : [],
+        // When a query is active, bypass filter for children (show unfiltered)
+        children: item.children ? renderTree(item.children, isSource, Boolean(searchInput.trim())) : [],
         onClick: () => {
           handleItemSelect(item);
         },

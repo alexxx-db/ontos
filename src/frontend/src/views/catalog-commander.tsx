@@ -18,7 +18,9 @@ import {
   PanelRightOpen,
   Copy,
   GitCompare,
-  RefreshCw
+  RefreshCw,
+  Sparkles,
+  Send
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +38,11 @@ import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { CommentTimeline } from '@/components/comments/comment-timeline';
 import { cn } from '@/lib/utils';
 import EntityMetadataPanel from '@/components/metadata/entity-metadata-panel';
+import { Textarea } from '@/components/ui/textarea';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { useToast } from '@/hooks/use-toast';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface CatalogItem {
   id: string;
@@ -78,7 +85,7 @@ interface Estate {
   is_enabled: boolean;
 }
 
-type RightPanelMode = 'hidden' | 'dual-tree' | 'info' | 'comments';
+type RightPanelMode = 'hidden' | 'ask' | 'dual-tree' | 'info' | 'comments';
 
 const CatalogCommander: React.FC = () => {
   const [searchInput, setSearchInput] = useState('');
@@ -98,7 +105,16 @@ const CatalogCommander: React.FC = () => {
   const [estates, setEstates] = useState<Estate[]>([]);
   const [selectedSourceEstate, setSelectedSourceEstate] = useState<string>('');
   const [selectedTargetEstate, setSelectedTargetEstate] = useState<string>('');
-  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('info');
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('ask');
+  
+  // Ask Ontos chat state
+  const [askInput, setAskInput] = useState('');
+  const [askMessages, setAskMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>>([]);
+  const [askLoading, setAskLoading] = useState(false);
+  const [askSessionId, setAskSessionId] = useState<string | undefined>();
+  const askMessagesEndRef = React.useRef<HTMLDivElement>(null);
+  const askInputRef = React.useRef<HTMLTextAreaElement>(null);
+  const { toast } = useToast();
 
   // Draggable divider state - default to 420px, load from localStorage
   const [leftPaneWidth, setLeftPaneWidth] = useState<number>(() => {
@@ -283,6 +299,83 @@ const CatalogCommander: React.FC = () => {
     fetchCatalogs(forceRefresh);
   };
 
+  // Handle Ask Ontos chat with catalog context
+  const handleAskSend = async () => {
+    const messageContent = askInput.trim();
+    if (!messageContent || askLoading) return;
+
+    const selectedNode = getSelectedNodeDetails();
+    
+    // Build context message that includes selected item info
+    let contextualMessage = messageContent;
+    if (selectedNode) {
+      const contextPrefix = `[Context: I'm looking at a ${selectedNode.type} named "${selectedNode.name}" with full path "${selectedNode.id}". Please consider this context when answering.]\n\n`;
+      contextualMessage = contextPrefix + messageContent;
+    }
+
+    // Add user message to display (without context prefix for cleaner UI)
+    setAskMessages(prev => [...prev, {
+      role: 'user',
+      content: messageContent,
+      timestamp: new Date().toISOString()
+    }]);
+    setAskInput('');
+    setAskLoading(true);
+
+    try {
+      const response = await fetch('/api/llm-search/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: contextualMessage, session_id: askSessionId }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Chat request failed' }));
+        throw new Error(error.detail || 'Chat request failed');
+      }
+
+      const data = await response.json();
+      setAskSessionId(data.session_id);
+      
+      // Add assistant response
+      setAskMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.message.content || 'No response',
+        timestamp: data.message.timestamp || new Date().toISOString()
+      }]);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive',
+      });
+      // Remove the user message on error
+      setAskMessages(prev => prev.slice(0, -1));
+    } finally {
+      setAskLoading(false);
+      askInputRef.current?.focus();
+    }
+  };
+
+  const handleAskKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAskSend();
+    }
+  };
+
+  const handleNewAskSession = () => {
+    setAskSessionId(undefined);
+    setAskMessages([]);
+    askInputRef.current?.focus();
+  };
+
+  // Scroll to bottom when ask messages change
+  useEffect(() => {
+    askMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [askMessages]);
+
   const handleItemSelect = (item: CatalogItem) => {
     setSelectedItems([item]);
     setSelectedObjectInfo({ id: item.id });
@@ -427,6 +520,18 @@ const CatalogCommander: React.FC = () => {
         {/* Right Panel Mode Toggle */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 border rounded-lg p-1 bg-muted/30">
+            <Button
+              variant={rightPanelMode === 'ask' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setRightPanelMode(rightPanelMode === 'ask' ? 'hidden' : 'ask')}
+              className={cn(
+                "h-8 px-3",
+                rightPanelMode === 'ask' && "shadow-sm"
+              )}
+            >
+              <Sparkles className="h-4 w-4 mr-1.5" />
+              Ask Ontos
+            </Button>
             <Button
               variant={rightPanelMode === 'info' ? 'secondary' : 'ghost'}
               size="sm"
@@ -675,6 +780,153 @@ const CatalogCommander: React.FC = () => {
                   </CardContent>
                 </Card>
               </>
+            )}
+
+            {/* Ask Ontos Panel */}
+            {rightPanelMode === 'ask' && (
+              <Card className="flex-1 flex flex-col h-full min-w-0 shadow-sm border-border/50">
+                <CardHeader className="flex-none pb-3 border-b">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                        <Sparkles className="w-3 h-3 text-white" />
+                      </div>
+                      Ask Ontos
+                    </CardTitle>
+                    {askMessages.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleNewAskSession}
+                        className="h-7 text-xs"
+                      >
+                        New Chat
+                      </Button>
+                    )}
+                  </div>
+                  {getSelectedNodeDetails() && (
+                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                      <span>Asking about: <span className="font-medium">{getSelectedNodeDetails()?.name}</span></span>
+                      <Badge variant="outline" className="text-xs">
+                        {getSelectedNodeDetails()?.type}
+                      </Badge>
+                    </div>
+                  )}
+                </CardHeader>
+                <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
+                  {/* Messages Area */}
+                  <ScrollArea className="flex-1 p-4">
+                    {askMessages.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center space-y-4 py-8">
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-violet-500/20 to-purple-600/20 flex items-center justify-center">
+                          <Sparkles className="w-6 h-6 text-violet-500" />
+                        </div>
+                        <div className="space-y-2">
+                          <h3 className="text-sm font-medium">Ask about this catalog item</h3>
+                          <p className="text-xs text-muted-foreground max-w-[200px]">
+                            {getSelectedNodeDetails() 
+                              ? `Ask questions about "${getSelectedNodeDetails()?.name}"`
+                              : 'Select an item to ask questions about it'}
+                          </p>
+                        </div>
+                        {getSelectedNodeDetails() && (
+                          <div className="flex flex-wrap gap-1.5 justify-center">
+                            {['What columns does this have?', 'Who owns this?', 'How is this used?'].map((q, i) => (
+                              <Button
+                                key={i}
+                                variant="outline"
+                                size="sm"
+                                className="text-xs h-7"
+                                onClick={() => setAskInput(q)}
+                              >
+                                {q}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {askMessages.map((msg, idx) => (
+                          <div key={idx} className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                            <div className={`
+                              flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center
+                              ${msg.role === 'user' 
+                                ? 'bg-sky-500 dark:bg-sky-600 text-white' 
+                                : 'bg-gradient-to-br from-violet-500 to-purple-600 text-white'
+                              }
+                            `}>
+                              {msg.role === 'user' 
+                                ? <span className="text-[10px] font-medium">U</span>
+                                : <Sparkles className="w-3 h-3" />
+                              }
+                            </div>
+                            <div className={`
+                              flex-1 max-w-[85%] rounded-lg px-3 py-2 text-sm
+                              ${msg.role === 'user' 
+                                ? 'bg-sky-100 dark:bg-sky-900/50 text-sky-900 dark:text-sky-100' 
+                                : 'bg-muted'
+                              }
+                            `}>
+                              {msg.role === 'user' ? (
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                              ) : (
+                                <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {msg.content}
+                                  </ReactMarkdown>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {askLoading && (
+                          <div className="flex gap-2">
+                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                              <Sparkles className="w-3 h-3 text-white" />
+                            </div>
+                            <div className="bg-muted rounded-lg px-3 py-2 flex items-center gap-2">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span className="text-xs text-muted-foreground">Thinking...</span>
+                            </div>
+                          </div>
+                        )}
+                        <div ref={askMessagesEndRef} />
+                      </div>
+                    )}
+                  </ScrollArea>
+                  
+                  {/* Input Area */}
+                  <div className="p-3 border-t">
+                    <div className="flex gap-2">
+                      <Textarea
+                        ref={askInputRef}
+                        value={askInput}
+                        onChange={(e) => setAskInput(e.target.value)}
+                        onKeyDown={handleAskKeyDown}
+                        placeholder={getSelectedNodeDetails() 
+                          ? `Ask about ${getSelectedNodeDetails()?.name}...`
+                          : 'Select an item first...'
+                        }
+                        className="min-h-[36px] max-h-24 resize-none text-sm"
+                        disabled={askLoading || !getSelectedNodeDetails()}
+                      />
+                      <Button
+                        onClick={handleAskSend}
+                        disabled={!askInput.trim() || askLoading || !getSelectedNodeDetails()}
+                        size="icon"
+                        className="h-9 w-9 shrink-0"
+                      >
+                        {askLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* Info Panel */}

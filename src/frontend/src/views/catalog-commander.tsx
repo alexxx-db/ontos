@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { TreeView } from '@/components/ui/tree-view';
 import {
   Folder,
@@ -88,6 +89,7 @@ interface Estate {
 type RightPanelMode = 'hidden' | 'ask' | 'dual-tree' | 'info' | 'comments';
 
 const CatalogCommander: React.FC = () => {
+  const { t } = useTranslation('catalog-commander');
   const [searchInput, setSearchInput] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedItems, setSelectedItems] = useState<CatalogItem[]>([]);
@@ -254,7 +256,7 @@ const CatalogCommander: React.FC = () => {
     fetchCatalogs();
     fetchEstates();
     setStaticSegments([]);
-    setDynamicTitle('Catalog Commander');
+    setDynamicTitle(t('title'));
 
     return () => {
         setStaticSegments([]);
@@ -346,7 +348,7 @@ const CatalogCommander: React.FC = () => {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
       toast({
-        title: 'Error',
+        title: t('errors.error'),
         description: errorMessage,
         variant: 'destructive',
       });
@@ -468,7 +470,7 @@ const CatalogCommander: React.FC = () => {
   return (
     <div className="py-6">
       <h1 className="text-3xl font-bold mb-6 flex items-center gap-2">
-        <FolderKanban className="w-8 h-8" /> Catalog Commander
+        <FolderKanban className="w-8 h-8" /> {t('title')}
       </h1>
 
       {/* Action Toolbar */}
@@ -482,7 +484,7 @@ const CatalogCommander: React.FC = () => {
             className="h-9"
           >
             <Eye className="h-4 w-4 mr-2" />
-            View Data
+            {t('actions.viewData')}
           </Button>
           {canPerformWriteActions && (
             <>
@@ -493,7 +495,7 @@ const CatalogCommander: React.FC = () => {
                 className="h-9"
               >
                 <ArrowRight className="h-4 w-4 mr-2" />
-                Move
+                {t('actions.move')}
               </Button>
               <Button
                 onClick={() => handleOperation('delete')}
@@ -502,7 +504,7 @@ const CatalogCommander: React.FC = () => {
                 className="h-9 text-destructive hover:text-destructive hover:bg-destructive/10"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Delete
+                {t('actions.delete')}
               </Button>
               <Button
                 onClick={() => handleOperation('rename')}
@@ -511,7 +513,7 @@ const CatalogCommander: React.FC = () => {
                 className="h-9"
               >
                 <Pencil className="h-4 w-4 mr-2" />
-                Rename
+                {t('actions.rename')}
               </Button>
             </>
           )}
@@ -530,7 +532,7 @@ const CatalogCommander: React.FC = () => {
               )}
             >
               <Sparkles className="h-4 w-4 mr-1.5" />
-              Ask Ontos
+              {t('askOntos')}
             </Button>
             <Button
               variant={rightPanelMode === 'info' ? 'secondary' : 'ghost'}
@@ -542,7 +544,7 @@ const CatalogCommander: React.FC = () => {
               )}
             >
               <Info className="h-4 w-4 mr-1.5" />
-              Info
+              {t('actions.info')}
             </Button>
             {canPerformWriteActions && (
               <Button
@@ -555,7 +557,7 @@ const CatalogCommander: React.FC = () => {
                 )}
               >
                 <GitCompare className="h-4 w-4 mr-1.5" />
-                Operations
+                {t('actions.operations')}
               </Button>
             )}
             <Button
@@ -568,7 +570,7 @@ const CatalogCommander: React.FC = () => {
               )}
             >
               <MessageSquare className="h-4 w-4 mr-1.5" />
-              Comments
+              {t('actions.comments')}
             </Button>
           </div>
           {rightPanelMode !== 'hidden' && (
@@ -592,18 +594,18 @@ const CatalogCommander: React.FC = () => {
           style={{ width: `${leftPaneWidth}px` }}
         >
           <CardHeader className="flex-none pb-3 border-b">
-            <CardTitle className="text-lg font-semibold">Catalog Browser</CardTitle>
+            <CardTitle className="text-lg font-semibold">{t('catalogBrowser')}</CardTitle>
           </CardHeader>
           <CardContent className="flex-1 flex flex-col h-full min-h-0 p-4 space-y-3">
             {estates.length > 1 && (
               <div className="space-y-2 flex-none">
-                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Metastore</Label>
+                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('labels.metastore')}</Label>
                 <Select
                   value={selectedSourceEstate}
                   onValueChange={setSelectedSourceEstate}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select Estate" />
+                    <SelectValue placeholder={t('labels.selectEstate')} />
                   </SelectTrigger>
                   <SelectContent>
                     {estates.map(estate => (
@@ -620,7 +622,7 @@ const CatalogCommander: React.FC = () => {
             )}
             <div className="flex gap-2 flex-none">
               <Input
-                placeholder="Filter catalogs..."
+                placeholder={t('labels.filterCatalogs')}
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className="h-9 flex-1"
@@ -631,7 +633,7 @@ const CatalogCommander: React.FC = () => {
                 className="h-9 w-9 flex-shrink-0"
                 onClick={handleRefresh}
                 disabled={isLoading}
-                title="Refresh (hold Shift for force refresh)"
+                title={t('tooltips.refresh')}
               >
                 <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
               </Button>
@@ -645,7 +647,7 @@ const CatalogCommander: React.FC = () => {
                 <div className="flex flex-col items-center justify-center h-full min-h-[200px] p-4">
                   <div className="text-destructive text-sm mb-3">{error}</div>
                   <Button size="sm" variant="outline" onClick={() => fetchCatalogs()}>
-                    Retry
+                    {t('actions.retry')}
                   </Button>
                 </div>
               ) : (
@@ -669,7 +671,7 @@ const CatalogCommander: React.FC = () => {
               isDragging && "bg-primary"
             )}
             onMouseDown={handleMouseDown}
-            title="Drag to resize"
+            title={t('tooltips.dragToResize')}
           />
         )}
 
@@ -685,7 +687,7 @@ const CatalogCommander: React.FC = () => {
                     variant="outline"
                     size="icon"
                     className="h-10 w-10 hover:bg-primary hover:text-primary-foreground transition-colors"
-                    title="Copy to target"
+                    title={t('tooltips.copyToTarget')}
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
@@ -694,7 +696,7 @@ const CatalogCommander: React.FC = () => {
                     variant="outline"
                     size="icon"
                     className="h-10 w-10 hover:bg-primary hover:text-primary-foreground transition-colors"
-                    title="Move to target"
+                    title={t('tooltips.moveToTarget')}
                   >
                     <ArrowRight className="h-4 w-4" />
                   </Button>
@@ -703,7 +705,7 @@ const CatalogCommander: React.FC = () => {
                     variant="outline"
                     size="icon"
                     className="h-10 w-10 hover:bg-primary hover:text-primary-foreground transition-colors"
-                    title="Move from target"
+                    title={t('tooltips.moveFromTarget')}
                   >
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
@@ -711,12 +713,12 @@ const CatalogCommander: React.FC = () => {
 
                 <Card className="flex-1 flex flex-col h-full min-w-0 shadow-sm border-border/50">
                   <CardHeader className="flex-none pb-3 border-b">
-                    <CardTitle className="text-lg font-semibold">Target</CardTitle>
+                    <CardTitle className="text-lg font-semibold">{t('target')}</CardTitle>
                   </CardHeader>
                   <CardContent className="flex-1 flex flex-col h-full min-h-0 p-4 space-y-3">
                     {estates.length > 1 && (
                       <div className="space-y-2 flex-none">
-                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Metastore</Label>
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('labels.metastore')}</Label>
                         <Select
                           value={selectedTargetEstate}
                           onValueChange={setSelectedTargetEstate}
@@ -739,7 +741,7 @@ const CatalogCommander: React.FC = () => {
                     )}
                     <div className="flex gap-2 flex-none">
                       <Input
-                        placeholder="Filter catalogs..."
+                        placeholder={t('labels.filterCatalogs')}
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
                         className="h-9 flex-1"
@@ -750,7 +752,7 @@ const CatalogCommander: React.FC = () => {
                         className="h-9 w-9 flex-shrink-0"
                         onClick={handleRefresh}
                         disabled={isLoading}
-                        title="Refresh (hold Shift for force refresh)"
+                        title={t('tooltips.refresh')}
                       >
                         <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
                       </Button>
@@ -791,7 +793,7 @@ const CatalogCommander: React.FC = () => {
                       <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
                         <Sparkles className="w-3 h-3 text-white" />
                       </div>
-                      Ask Ontos
+                      {t('askPanel.title')}
                     </CardTitle>
                     {askMessages.length > 0 && (
                       <Button
@@ -800,13 +802,13 @@ const CatalogCommander: React.FC = () => {
                         onClick={handleNewAskSession}
                         className="h-7 text-xs"
                       >
-                        New Chat
+                        {t('actions.newChat')}
                       </Button>
                     )}
                   </div>
                   {getSelectedNodeDetails() && (
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                      <span>Asking about: <span className="font-medium">{getSelectedNodeDetails()?.name}</span></span>
+                      <span>{t('askPanel.askingAbout')} <span className="font-medium">{getSelectedNodeDetails()?.name}</span></span>
                       <Badge variant="outline" className="text-xs">
                         {getSelectedNodeDetails()?.type}
                       </Badge>
@@ -822,16 +824,16 @@ const CatalogCommander: React.FC = () => {
                           <Sparkles className="w-6 h-6 text-violet-500" />
                         </div>
                         <div className="space-y-2">
-                          <h3 className="text-sm font-medium">Ask about this catalog item</h3>
+                          <h3 className="text-sm font-medium">{t('askPanel.askAboutItem')}</h3>
                           <p className="text-xs text-muted-foreground max-w-[200px]">
                             {getSelectedNodeDetails() 
-                              ? `Ask questions about "${getSelectedNodeDetails()?.name}"`
-                              : 'Select an item to ask questions about it'}
+                              ? t('askPanel.askQuestionsAbout', { name: getSelectedNodeDetails()?.name })
+                              : t('askPanel.selectItemFirst')}
                           </p>
                         </div>
                         {getSelectedNodeDetails() && (
                           <div className="flex flex-wrap gap-1.5 justify-center">
-                            {['What columns does this have?', 'Who owns this?', 'How is this used?'].map((q, i) => (
+                            {[t('askPanel.exampleQuestions.columns'), t('askPanel.exampleQuestions.owner'), t('askPanel.exampleQuestions.usage')].map((q, i) => (
                               <Button
                                 key={i}
                                 variant="outline"
@@ -887,7 +889,7 @@ const CatalogCommander: React.FC = () => {
                             </div>
                             <div className="bg-muted rounded-lg px-3 py-2 flex items-center gap-2">
                               <Loader2 className="w-3 h-3 animate-spin" />
-                              <span className="text-xs text-muted-foreground">Thinking...</span>
+                              <span className="text-xs text-muted-foreground">{t('askPanel.thinking')}</span>
                             </div>
                           </div>
                         )}
@@ -905,8 +907,8 @@ const CatalogCommander: React.FC = () => {
                         onChange={(e) => setAskInput(e.target.value)}
                         onKeyDown={handleAskKeyDown}
                         placeholder={getSelectedNodeDetails() 
-                          ? `Ask about ${getSelectedNodeDetails()?.name}...`
-                          : 'Select an item first...'
+                          ? t('askPanel.askAboutPlaceholder', { name: getSelectedNodeDetails()?.name })
+                          : t('askPanel.selectItemPlaceholder')
                         }
                         className="min-h-[36px] max-h-24 resize-none text-sm"
                         disabled={askLoading || !getSelectedNodeDetails()}
@@ -933,7 +935,7 @@ const CatalogCommander: React.FC = () => {
             {rightPanelMode === 'info' && (
               <Card className="flex-1 flex flex-col h-full min-w-0 shadow-sm border-border/50">
                 <CardHeader className="flex-none pb-3 border-b">
-                  <CardTitle className="text-lg font-semibold">Object Information</CardTitle>
+                  <CardTitle className="text-lg font-semibold">{t('objectInformation')}</CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 overflow-auto p-4">
                   {selectedObjectInfo ? (
@@ -943,7 +945,7 @@ const CatalogCommander: React.FC = () => {
                         <CardHeader className="pb-3">
                           <CardTitle className="text-sm font-medium flex items-center gap-2">
                             <Info className="h-4 w-4" />
-                            Basic Information
+                            {t('basicInformation')}
                           </CardTitle>
                         </CardHeader>
                         <CardContent>
@@ -952,26 +954,26 @@ const CatalogCommander: React.FC = () => {
                             return node ? (
                               <div className="space-y-3">
                                 <div className="grid grid-cols-3 gap-2 items-center">
-                                  <span className="text-sm text-muted-foreground">Name:</span>
+                                  <span className="text-sm text-muted-foreground">{t('labels.name')}</span>
                                   <span className="text-sm font-medium col-span-2">{node.name}</span>
                                 </div>
                                 <Separator />
                                 <div className="grid grid-cols-3 gap-2 items-center">
-                                  <span className="text-sm text-muted-foreground">Type:</span>
+                                  <span className="text-sm text-muted-foreground">{t('labels.type')}</span>
                                   <div className="col-span-2">
                                     <Badge variant="outline" className="font-mono">{node.type}</Badge>
                                   </div>
                                 </div>
                                 <Separator />
                                 <div className="grid grid-cols-3 gap-2">
-                                  <span className="text-sm text-muted-foreground">Full Path:</span>
+                                  <span className="text-sm text-muted-foreground">{t('labels.fullPath')}</span>
                                   <code className="text-xs bg-muted p-2 rounded border break-all col-span-2 font-mono">{node.id}</code>
                                 </div>
                                 {node.type === 'table' && (
                                   <>
                                     <Separator />
                                     <div className="flex items-center justify-between">
-                                      <span className="text-sm text-muted-foreground">Actions:</span>
+                                      <span className="text-sm text-muted-foreground">{t('labels.actions')}</span>
                                       <Button
                                         size="sm"
                                         variant="outline"
@@ -979,14 +981,14 @@ const CatalogCommander: React.FC = () => {
                                         className="h-8"
                                       >
                                         <Eye className="h-3 w-3 mr-1" />
-                                        View Data
+                                        {t('actions.viewData')}
                                       </Button>
                                     </div>
                                   </>
                                 )}
                               </div>
                             ) : (
-                              <p className="text-sm text-muted-foreground">Loading details...</p>
+                              <p className="text-sm text-muted-foreground">{t('messages.loadingDetails')}</p>
                             );
                           })()}
                         </CardContent>
@@ -1004,7 +1006,7 @@ const CatalogCommander: React.FC = () => {
                     <div className="flex items-center justify-center h-full">
                       <div className="text-center">
                         <Info className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                        <p className="text-sm text-muted-foreground">Select an object to view its information</p>
+                        <p className="text-sm text-muted-foreground">{t('messages.selectObjectToViewInfo')}</p>
                       </div>
                     </div>
                   )}
@@ -1018,7 +1020,7 @@ const CatalogCommander: React.FC = () => {
                 <CardHeader className="flex-none pb-3 border-b">
                   <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                     <MessageSquare className="h-5 w-5" />
-                    Comments & Activity
+                    {t('commentsAndActivity')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 overflow-hidden p-4">
@@ -1034,7 +1036,7 @@ const CatalogCommander: React.FC = () => {
                     <div className="flex items-center justify-center h-full">
                       <div className="text-center">
                         <MessageSquare className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                        <p className="text-sm text-muted-foreground">Select an object to view comments</p>
+                        <p className="text-sm text-muted-foreground">{t('messages.selectObjectToViewComments')}</p>
                       </div>
                     </div>
                   )}
@@ -1048,7 +1050,7 @@ const CatalogCommander: React.FC = () => {
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Dataset View: {selectedDataset}</DialogTitle>
+            <DialogTitle>{t('messages.datasetView', { name: selectedDataset })}</DialogTitle>
           </DialogHeader>
           {loadingData ? (
             <div className="flex items-center justify-center h-32">
@@ -1065,7 +1067,7 @@ const CatalogCommander: React.FC = () => {
               />
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No data available</p>
+            <p className="text-sm text-muted-foreground">{t('messages.noDataAvailable')}</p>
           )}
         </DialogContent>
       </Dialog>
@@ -1073,16 +1075,16 @@ const CatalogCommander: React.FC = () => {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirm Operation</DialogTitle>
+            <DialogTitle>{t('messages.confirmOperation')}</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             {selectedItems.length > 0
-              ? `Selected items: ${selectedItems.map(item => item.name).join(', ')}`
-              : 'No items selected'}
+              ? t('messages.selectedItems', { items: selectedItems.map(item => item.name).join(', ') })
+              : t('messages.noItemsSelected')}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-            <Button onClick={() => setIsDialogOpen(false)}>Confirm</Button>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>{t('actions.cancel')}</Button>
+            <Button onClick={() => setIsDialogOpen(false)}>{t('actions.confirm')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

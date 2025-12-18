@@ -799,7 +799,8 @@ def init_db() -> None:
                 # This ensures proper process isolation and cleanup.
                 import subprocess
                 import sys
-                
+                import shutil
+
                 # For Lakebase (OAuth mode), we need to pass the token to the subprocess
                 # via environment variable since the subprocess can't access our in-memory token
                 subprocess_env = os.environ.copy()
@@ -810,9 +811,60 @@ def init_db() -> None:
                     token = refresh_oauth_token(settings)
                     subprocess_env["ALEMBIC_DB_PASSWORD"] = token
                     logger.info("OAuth token passed to subprocess via environment variable")
-                
+
+                # Find Python executable reliably for containerized environments
+                python_executable = None
+
+                # Try sys.executable first if it exists and is absolute
+                if sys.executable and os.path.isabs(sys.executable) and os.path.exists(sys.executable):
+                    python_executable = sys.executable
+                    logger.info(f"Using sys.executable: {python_executable}")
+                else:
+                    # sys.executable is unreliable (relative path or doesn't exist)
+                    # Try to find venv Python relative to the current working directory or script location
+                    potential_venv_paths = [
+                        os.path.join(os.getcwd(), ".venv", "bin", "python3"),
+                        os.path.join(os.getcwd(), ".venv", "bin", "python"),
+                        os.path.join(os.getcwd(), "venv", "bin", "python3"),
+                        os.path.join(os.getcwd(), "venv", "bin", "python"),
+                        # Try relative to the backend src directory
+                        os.path.join(os.path.dirname(__file__), "..", "..", ".venv", "bin", "python3"),
+                        os.path.join(os.path.dirname(__file__), "..", "..", ".venv", "bin", "python"),
+                        # Try system Python as fallback
+                        "/usr/local/bin/python3",
+                        "/usr/bin/python3",
+                    ]
+
+                    for path in potential_venv_paths:
+                        abs_path = os.path.abspath(path)
+                        if os.path.exists(abs_path):
+                            python_executable = abs_path
+                            logger.info(f"Found Python executable at: {python_executable}")
+                            break
+
+                    # Last resort: try to find alembic executable directly
+                    if not python_executable:
+                        alembic_path = shutil.which("alembic")
+                        if alembic_path:
+                            logger.warning("Could not find Python executable, will try running alembic command directly")
+                            python_executable = None  # Will use alembic directly below
+                        else:
+                            raise RuntimeError(
+                                f"Could not find Python executable for Alembic subprocess. "
+                                f"sys.executable={sys.executable}, cwd={os.getcwd()}, "
+                                f"tried paths: {potential_venv_paths}"
+                            )
+
+                # Run alembic upgrade
+                if python_executable:
+                    cmd = [python_executable, "-m", "alembic", "upgrade", "head"]
+                else:
+                    # Use alembic command directly
+                    cmd = ["alembic", "upgrade", "head"]
+
+                logger.info(f"Running Alembic upgrade command: {' '.join(cmd)}")
                 result = subprocess.run(
-                    [sys.executable, "-m", "alembic", "upgrade", "head"],
+                    cmd,
                     cwd=os.path.dirname(alembic_script_location),  # Run from backend dir
                     capture_output=True,
                     text=True,

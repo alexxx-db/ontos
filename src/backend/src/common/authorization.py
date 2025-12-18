@@ -8,7 +8,6 @@ from src.common.features import FeatureAccessLevel
 from src.common.logging import get_logger
 from src.common.database import get_db
 # Import dependencies for user info and managers (adjust paths if needed)
-# from src.routes.user_routes import get_user_details_from_sdk # REMOVE this import
 # Import dependencies needed for the moved function
 from databricks.sdk.errors import NotFound
 from src.controller.users_manager import UsersManager
@@ -17,6 +16,8 @@ from src.common.config import get_settings, Settings
 from src.common.manager_dependencies import get_auth_manager, get_users_manager, get_settings_manager
 from src.controller.settings_manager import SettingsManager
 from src.models.settings import ApprovalEntity
+# Import OBO workspace client for current user lookup
+from src.common.workspace_client import get_obo_workspace_client
 
 logger = get_logger(__name__)
 
@@ -67,7 +68,11 @@ async def get_user_details_from_sdk(
 ) -> UserInfo:
     """
     Retrieves detailed user information via SDK using UsersManager, or mock data if local dev.
-    (Moved from user_routes.py to break circular import)
+    
+    For non-local environments, uses the OBO (On-Behalf-Of) client with current_user.me() API
+    which doesn't require Workspace Admin permissions (unlike users.list).
+    
+    Falls back to get_user_details_by_email if OBO token is not available.
     """
     # Check for local development environment or explicit mock flag
     if settings.ENV.upper().startswith("LOCAL") or getattr(settings, "MOCK_USER_DETAILS", False):
@@ -106,7 +111,28 @@ async def get_user_details_from_sdk(
         )
 
     # Logic for non-local environments
-    logger.debug("Non-local environment, proceeding with SDK lookup via UsersManager.")
+    real_ip = request.headers.get("X-Real-Ip")
+
+    # Try using OBO client with current_user.me() first (no admin permissions required)
+    obo_token = request.headers.get('x-forwarded-access-token')
+    if obo_token:
+        logger.debug("Using OBO token with current_user.me() for user lookup (no admin permissions required).")
+        try:
+            obo_client = get_obo_workspace_client(request, settings)
+            user_info_response = manager.get_current_user(obo_client=obo_client, real_ip=real_ip)
+            return user_info_response
+        except ValueError as e:
+            logger.error("Configuration error using OBO client: %s", e)
+            raise HTTPException(status_code=500, detail="Server configuration error")
+        except RuntimeError as e:
+            logger.error("Runtime error from get_current_user", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to retrieve user details")
+        except Exception as e:
+            logger.error("Unexpected error in get_current_user: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
+    # Fallback: Use get_user_details_by_email if no OBO token (requires admin permissions)
+    logger.debug("No OBO token available, falling back to get_user_details_by_email (requires admin permissions).")
     user_email = request.headers.get("X-Forwarded-Email")
     if not user_email:
         user_email = request.headers.get("X-Forwarded-User")
@@ -115,10 +141,8 @@ async def get_user_details_from_sdk(
         logger.error("Could not find user email in request headers (X-Forwarded-Email or X-Forwarded-User) for SDK lookup.")
         raise HTTPException(status_code=400, detail="User email not found in request headers for SDK lookup.")
 
-    real_ip = request.headers.get("X-Real-Ip")
-
     try:
-        # Call the manager method
+        # Call the manager method (fallback, requires admin permissions)
         user_info_response = manager.get_user_details_by_email(user_email=user_email, real_ip=real_ip)
         return user_info_response
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, Shield, UserPlus, Info } from 'lucide-react';
@@ -27,17 +27,14 @@ export default function RequestRoleSection({ maxItems = 6 }: RequestRoleSectionP
 
   if (isLoading) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <UserPlus className="h-5 w-5" />
-            {t('requestRoleSection.title', 'Request Application Access')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
+      <section className="mb-16">
+        <h2 className="text-2xl font-semibold mb-4">{t('requestRoleSection.title', 'Roles')}</h2>
+        <Card>
+          <CardContent className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </CardContent>
+        </Card>
+      </section>
     );
   }
 
@@ -46,26 +43,14 @@ export default function RequestRoleSection({ maxItems = 6 }: RequestRoleSectionP
   }
 
   return (
-    <>
-      <Card className="border-primary/20 bg-gradient-to-br from-background to-primary/5">
+    <section className="mb-16">
+      <h2 className="text-2xl font-semibold mb-4">{t('requestRoleSection.title', 'Roles')}</h2>
+
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-primary">
-            <UserPlus className="h-5 w-5" />
-            {t('requestRoleSection.title', 'Request Application Access')}
-          </CardTitle>
-          <CardDescription>
-            {t('requestRoleSection.description', 'You currently have no application roles assigned. Select a role below to request access and get started.')}
-          </CardDescription>
+          <CardTitle>{t('requestRoleSection.cardTitle', 'Available Roles')}</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Info Alert */}
-          <Alert className="mb-6 border-primary/30 bg-primary/5">
-            <Info className="h-4 w-4 text-primary" />
-            <AlertDescription className="text-sm">
-              {t('requestRoleSection.info', 'After submitting a request, an administrator will review it and you will be notified of the decision via the notification bell.')}
-            </AlertDescription>
-          </Alert>
-
           {/* Role Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayedRoles.map((role) => (
@@ -115,6 +100,14 @@ export default function RequestRoleSection({ maxItems = 6 }: RequestRoleSectionP
         </CardContent>
       </Card>
 
+      {/* Info Alert outside the card like other sections */}
+      <Alert variant="default" className="mt-4">
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          {t('requestRoleSection.info', 'After submitting a request, an administrator will review it and you will be notified of the decision via the notification bell.')}
+        </AlertDescription>
+      </Alert>
+
       {/* Request Dialog */}
       {selectedRole && (
         <RequestRoleAccessDialog
@@ -125,7 +118,7 @@ export default function RequestRoleSection({ maxItems = 6 }: RequestRoleSectionP
           roleDescription={selectedRole.description || undefined}
         />
       )}
-    </>
+    </section>
   );
 }
 

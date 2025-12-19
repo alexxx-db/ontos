@@ -55,7 +55,8 @@
     "contactAdmin": "Please contact an administrator to request access to the application."
   },
   "requestRoleSection": {
-    "title": "Request Application Access",
+    "title": "Roles",
+    "cardTitle": "Available Roles",
     "description": "You currently have no application roles assigned. Select a role below to request access and get started.",
     "info": "After submitting a request, an administrator will review it and you will be notified of the decision via the notification bell.",
     "noDescription": "No description available",

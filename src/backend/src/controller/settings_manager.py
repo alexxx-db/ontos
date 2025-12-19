@@ -519,9 +519,9 @@ class SettingsManager:
                     # Should we raise here to prevent startup? Probably yes.
                     raise RuntimeError(f"Failed to create default role {role_name}. Halting startup.") from e
             
-            # Commit once after all roles are potentially created within the calling transaction context
-            # No, the commit should happen in the startup task after all managers are init
-            # logger.info("Default role creation process finished.")
+            # Set up default role hierarchy after all roles are created
+            self._setup_default_role_hierarchy()
+            logger.info("Default role hierarchy configured.")
 
         except SQLAlchemyError as e:
             logger.error(f"Database error during default role check/creation: {e}", exc_info=True)
@@ -530,6 +530,100 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"Unexpected error during default role check/creation: {e}", exc_info=True)
             raise # Re-raise other unexpected errors
+
+    def _setup_default_role_hierarchy(self):
+        """Sets up the default role request/approval hierarchy.
+        
+        Default hierarchy:
+        - Data Consumer: Requestable by users with no role (__NO_ROLE__), approved by Admin, Data Steward
+        - Data Producer: Requestable by Data Consumer, approved by Admin, Data Governance Officer
+        - Data Steward: Requestable by Data Producer, approved by Admin, Data Governance Officer
+        - Data Governance Officer: Requestable by Data Steward, approved by Admin
+        - Security Officer: Requestable by Data Steward, approved by Admin
+        - Admin: Requestable by Data Governance Officer, approved by Admin (self-approval for existing admins)
+        """
+        try:
+            # Get all roles by name
+            roles_by_name = {}
+            for role in self.list_app_roles():
+                roles_by_name[role.name] = str(role.id)
+            
+            if not roles_by_name:
+                logger.warning("No roles found to set up hierarchy")
+                return
+            
+            admin_id = roles_by_name.get("Admin")
+            consumer_id = roles_by_name.get("Data Consumer")
+            producer_id = roles_by_name.get("Data Producer")
+            steward_id = roles_by_name.get("Data Steward")
+            dgo_id = roles_by_name.get("Data Governance Officer")
+            security_id = roles_by_name.get("Security Officer")
+            
+            # Define hierarchy: role_id -> (requestable_by_role_ids, approver_role_ids)
+            # Use NO_ROLE_SENTINEL for "no role required"
+            hierarchy = {}
+            
+            # Data Consumer: Requestable by users with no role, approved by Admin and Data Steward
+            if consumer_id:
+                requestable_by = [NO_ROLE_SENTINEL]
+                approvers = [admin_id] if admin_id else []
+                if steward_id:
+                    approvers.append(steward_id)
+                hierarchy[consumer_id] = (requestable_by, approvers)
+            
+            # Data Producer: Requestable by Data Consumer, approved by Admin and DGO
+            if producer_id:
+                requestable_by = [consumer_id] if consumer_id else []
+                approvers = [admin_id] if admin_id else []
+                if dgo_id:
+                    approvers.append(dgo_id)
+                hierarchy[producer_id] = (requestable_by, approvers)
+            
+            # Data Steward: Requestable by Data Producer, approved by Admin and DGO
+            if steward_id:
+                requestable_by = [producer_id] if producer_id else []
+                approvers = [admin_id] if admin_id else []
+                if dgo_id:
+                    approvers.append(dgo_id)
+                hierarchy[steward_id] = (requestable_by, approvers)
+            
+            # Data Governance Officer: Requestable by Data Steward, approved by Admin
+            if dgo_id:
+                requestable_by = [steward_id] if steward_id else []
+                approvers = [admin_id] if admin_id else []
+                hierarchy[dgo_id] = (requestable_by, approvers)
+            
+            # Security Officer: Requestable by Data Steward, approved by Admin
+            if security_id:
+                requestable_by = [steward_id] if steward_id else []
+                approvers = [admin_id] if admin_id else []
+                hierarchy[security_id] = (requestable_by, approvers)
+            
+            # Admin: Requestable by DGO, approved by Admin (existing admins can approve)
+            if admin_id:
+                requestable_by = [dgo_id] if dgo_id else []
+                approvers = [admin_id]
+                hierarchy[admin_id] = (requestable_by, approvers)
+            
+            # Apply hierarchy
+            for role_id, (requestable_by, approvers) in hierarchy.items():
+                # Filter out None values
+                requestable_by = [r for r in requestable_by if r]
+                approvers = [a for a in approvers if a]
+                
+                if requestable_by:
+                    role_hierarchy_repo.set_requestable_by_roles(self._db, role_id, requestable_by)
+                    logger.debug(f"Set requestable_by for role {role_id}: {requestable_by}")
+                
+                if approvers:
+                    role_hierarchy_repo.set_approver_roles(self._db, role_id, approvers)
+                    logger.debug(f"Set approvers for role {role_id}: {approvers}")
+            
+            logger.info(f"Default role hierarchy set up for {len(hierarchy)} roles")
+            
+        except Exception as e:
+            logger.error(f"Error setting up default role hierarchy: {e}", exc_info=True)
+            # Don't fail startup, just log the error
 
     def ensure_default_team_and_project(self):
         """Ensures default 'Admin Team' and 'Admin Project' exist for admin users."""

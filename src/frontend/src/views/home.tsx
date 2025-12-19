@@ -365,55 +365,58 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="mb-8">
-        <h2 className="text-2xl font-semibold mb-4">{t('home:overview.title')}</h2>
-         {permissionsLoading ? (
-              <div className="flex justify-center items-center h-24 col-span-full">
-                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      {/* Only show Overview when user has access */}
+      {hasAnyAccess && (
+        <div className="mb-8">
+          <h2 className="text-2xl font-semibold mb-4">{t('home:overview.title')}</h2>
+           {permissionsLoading ? (
+                <div className="flex justify-center items-center h-24 col-span-full">
+                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+           ) : filteredSummaryTiles.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              {filteredSummaryTiles.map((tile) => (
+                  <Link key={tile.title} to={tile.link} className="block group">
+                  <Card className="transition-colors h-full group-hover:bg-accent/50">
+                      <CardContent className="p-6 flex flex-col justify-between h-full">
+                      <div>
+                          <div className="flex items-center justify-between">
+                          <CardTitle className="text-sm font-medium">
+                              {tile.title}
+                          </CardTitle>
+                          <div className="h-4 w-4 text-muted-foreground">
+                              {tile.icon}
+                          </div>
+                          </div>
+                          {tile.loading ? (
+                          <div className="flex justify-center items-center h-16">
+                              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                          </div>
+                          ) : tile.error ? (
+                          <div className="text-center text-destructive mt-2">
+                              {t('home:overview.error')}
+                          </div>
+                          ) : (
+                          <div className="text-2xl font-bold mt-2">{tile.value}</div>
+                          )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                          {tile.description}
+                      </p>
+                      </CardContent>
+                  </Card>
+                  </Link>
+              ))}
               </div>
-         ) : filteredSummaryTiles.length > 0 ? (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {filteredSummaryTiles.map((tile) => (
-                <Link key={tile.title} to={tile.link} className="block group">
-                <Card className="transition-colors h-full group-hover:bg-accent/50">
-                    <CardContent className="p-6 flex flex-col justify-between h-full">
-                    <div>
-                        <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm font-medium">
-                            {tile.title}
-                        </CardTitle>
-                        <div className="h-4 w-4 text-muted-foreground">
-                            {tile.icon}
-                        </div>
-                        </div>
-                        {tile.loading ? (
-                        <div className="flex justify-center items-center h-16">
-                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                        </div>
-                        ) : tile.error ? (
-                        <div className="text-center text-destructive mt-2">
-                            {t('home:overview.error')}
-                        </div>
-                        ) : (
-                        <div className="text-2xl font-bold mt-2">{tile.value}</div>
-                        )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        {tile.description}
-                    </p>
-                    </CardContent>
-                </Card>
-                </Link>
-            ))}
-            </div>
-        ) : (
-             <p className="text-muted-foreground text-center col-span-full">
-                 {t('home:overview.noData')}
-             </p>
-         )}
-      </div>
+          ) : (
+               <p className="text-muted-foreground text-center col-span-full">
+                   {t('home:overview.noData')}
+               </p>
+           )}
+        </div>
+      )}
 
-      {isComplianceVisible && (
+      {hasAnyAccess && isComplianceVisible && (
           <div className="mb-8">
             <Card>
             <CardHeader>
@@ -499,8 +502,8 @@ export default function Home() {
           </Alert>
       )}
 
-      {/* Role-based main sections - respect role configuration order */}
-      {orderedSections.map(section => (
+      {/* Role-based main sections - respect role configuration order, only show when user has access */}
+      {hasAnyAccess && orderedSections.map(section => (
         section === HomeSection.REQUIRED_ACTIONS ? (
           <RequiredActionsSection key={section} />
         ) : section === HomeSection.DATA_CURATION ? (
@@ -510,10 +513,13 @@ export default function Home() {
         )
       ))}
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <QuickActions />
-        <RecentActivity />
-      </section>
+      {/* Quick Actions and Recent Activity - only show when user has access */}
+      {hasAnyAccess && (
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <QuickActions />
+          <RecentActivity />
+        </section>
+      )}
     </div>
   );
 }

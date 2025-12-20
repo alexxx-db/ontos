@@ -152,5 +152,46 @@
     "markReadButton": "Mark read",
     "readLabel": "Read",
     "alertMessage": "This list shows only action-required notifications assigned to your role(s)."
+  },
+  "marketplace": {
+    "welcome": "Hello",
+    "welcomeWithName": "Hello, {{name}}",
+    "tagline": "Welcome to the Data Marketplace. Discover, understand, and subscribe to data products.",
+    "searchPlaceholder": "What can we help you find today?",
+    "browseDataDomains": "Browse Data Domains",
+    "allDomains": "All Domains",
+    "loadingDomains": "Loading domains...",
+    "tabs": {
+      "explore": "Explore Data",
+      "subscriptions": "My Data"
+    },
+    "products": {
+      "available": "{{count}} product available",
+      "available_plural": "{{count}} products available",
+      "subscribed": "{{count}} subscribed product",
+      "subscribed_plural": "{{count}} subscribed products",
+      "noProducts": "No data products found.",
+      "adjustFilters": "Try adjusting your search or filter.",
+      "noSubscriptions": "You haven't subscribed to any data products yet.",
+      "browseToSubscribe": "Browse the Explore tab to find products to subscribe to.",
+      "exploreProducts": "Explore Data Products",
+      "owner": "Owner",
+      "unknown": "Unknown"
+    },
+    "modeToggle": {
+      "marketplace": "Marketplace",
+      "management": "Management"
+    },
+    "domainView": {
+      "pills": "List",
+      "graph": "Graph"
+    },
+    "exactMatchOnly": "Exact match only",
+    "selectDomainForGraph": "Select a domain to view its hierarchy.",
+    "domainInfo": {
+      "parentDomain": "Parent",
+      "childDomains": "{{count}} child domain",
+      "childDomains_plural": "{{count}} child domains"
+    }
   }
 }

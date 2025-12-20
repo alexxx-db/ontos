@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/ui/markdown-viewer';
 import { useEntityMetadata, DocumentItem, LinkItem, EntityKind } from '@/hooks/use-entity-metadata';
+import { Bell, Check, Loader2, ArrowLeft } from 'lucide-react';
 
 interface Props {
   entityType: EntityKind;
@@ -10,6 +12,11 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title?: string;
+  // Subscription support (optional)
+  onSubscribe?: () => void;
+  isSubscribed?: boolean;
+  subscriptionLoading?: boolean;
+  showBackButton?: boolean;
 }
 
 // Replace image references in markdown to target our document content endpoint.
@@ -62,7 +69,17 @@ function buildToc(markdown: string) {
   return headings;
 }
 
-export default function EntityInfoDialog({ entityType, entityId, open, onOpenChange, title }: Props) {
+export default function EntityInfoDialog({ 
+  entityType, 
+  entityId, 
+  open, 
+  onOpenChange, 
+  title,
+  onSubscribe,
+  isSubscribed,
+  subscriptionLoading,
+  showBackButton = false,
+}: Props) {
   const { richTexts, documents, links, loading, error } = useEntityMetadata(entityType, entityId || undefined);
 
   const concatenatedMarkdown = useMemo(() => {
@@ -74,79 +91,134 @@ export default function EntityInfoDialog({ entityType, entityId, open, onOpenCha
 
   const toc = useMemo(() => buildToc(concatenatedMarkdown), [concatenatedMarkdown]);
 
+  const showSubscribeFooter = onSubscribe !== undefined;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-5xl h-[80vh] overflow-y-auto p-0"
+        className="max-w-5xl h-[80vh] flex flex-col p-0"
         style={{ top: '2rem', transform: 'translateX(-50%) translateY(0)' }}
       >
-        <DialogHeader className="px-6 pt-3">
+        <DialogHeader className="px-6 pt-4 pb-2 flex-shrink-0">
           <DialogTitle className="flex items-center gap-3 text-xl">
+            {showBackButton && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-8 w-8 p-0"
+                onClick={() => onOpenChange(false)}
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
             <span className="font-semibold">{title || 'Entity Information'}</span>
+            {isSubscribed && (
+              <span className="inline-flex items-center gap-1 text-xs font-normal bg-primary/10 text-primary px-2 py-1 rounded-full">
+                <Bell className="h-3 w-3" />
+                Subscribed
+              </span>
+            )}
           </DialogTitle>
         </DialogHeader>
 
-        {loading ? (
-          <div className="text-muted-foreground">Loading...</div>
-        ) : error ? (
-          <div className="text-destructive">{error}</div>
-        ) : (
-          <div className="space-y-6 px-6 pb-6 [&>*:first-child]:mt-0">
-            {toc.length > 0 && (
-              <div className="rounded-lg border bg-muted/20 p-4">
-                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Table of contents</div>
-                <ul className="text-sm space-y-1">
-                  {toc.map((h, idx) => (
-                    <li key={idx}>
-                      <a href={`#${h.id}`} className="hover:underline inline-block" style={{ paddingLeft: `${(h.level - 1) * 12}px` }}>{h.text}</a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {concatenatedMarkdown ? (
-              <div className="max-w-none">
-                <MarkdownViewer markdown={concatenatedMarkdown} />
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No notes available.</div>
-            )}
-
-            <Separator />
-
-            <div>
-              <div className="text-base font-medium mb-2">Related Links</div>
-              {links.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No links.</div>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
-                      <tr className="text-left">
-                        <th className="py-2 px-3">Title</th>
-                        <th className="py-2 px-3">URL</th>
-                        <th className="py-2 px-3">Description</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {links.map((l: LinkItem) => (
-                        <tr key={l.id} className="border-t">
-                          <td className="py-2 px-3 whitespace-nowrap">{l.title}</td>
-                          <td className="py-2 px-3 max-w-[420px] truncate"><a className="text-primary hover:underline" href={l.url} target="_blank" rel="noreferrer">{l.url}</a></td>
-                          <td className="py-2 px-3 text-muted-foreground">{l.short_description || ''}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        <div className="flex-1 overflow-y-auto px-6">
+          {loading ? (
+            <div className="flex items-center justify-center h-32 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin mr-2" />
+              Loading...
+            </div>
+          ) : error ? (
+            <div className="text-destructive p-4">{error}</div>
+          ) : (
+            <div className="space-y-6 pb-6 [&>*:first-child]:mt-0">
+              {toc.length > 0 && (
+                <div className="rounded-lg border bg-muted/20 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Table of contents</div>
+                  <ul className="text-sm space-y-1">
+                    {toc.map((h, idx) => (
+                      <li key={idx}>
+                        <a href={`#${h.id}`} className="hover:underline inline-block" style={{ paddingLeft: `${(h.level - 1) * 12}px` }}>{h.text}</a>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
+
+              {concatenatedMarkdown ? (
+                <div className="max-w-none">
+                  <MarkdownViewer markdown={concatenatedMarkdown} />
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">No notes available.</div>
+              )}
+
+              <Separator />
+
+              <div>
+                <div className="text-base font-medium mb-2">Related Links</div>
+                {links.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No links.</div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr className="text-left">
+                          <th className="py-2 px-3">Title</th>
+                          <th className="py-2 px-3">URL</th>
+                          <th className="py-2 px-3">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {links.map((l: LinkItem) => (
+                          <tr key={l.id} className="border-t">
+                            <td className="py-2 px-3 whitespace-nowrap">{l.title}</td>
+                            <td className="py-2 px-3 max-w-[420px] truncate"><a className="text-primary hover:underline" href={l.url} target="_blank" rel="noreferrer">{l.url}</a></td>
+                            <td className="py-2 px-3 text-muted-foreground">{l.short_description || ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+
+        {showSubscribeFooter && (
+          <DialogFooter className="px-6 py-4 border-t flex-shrink-0 bg-background">
+            <Button
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Close
+            </Button>
+            {isSubscribed ? (
+              <Button variant="secondary" disabled>
+                <Check className="mr-2 h-4 w-4" />
+                Already Subscribed
+              </Button>
+            ) : (
+              <Button
+                onClick={onSubscribe}
+                disabled={subscriptionLoading}
+              >
+                {subscriptionLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <Bell className="mr-2 h-4 w-4" />
+                    Subscribe
+                  </>
+                )}
+              </Button>
+            )}
+          </DialogFooter>
         )}
       </DialogContent>
     </Dialog>
   );
 }
-
-

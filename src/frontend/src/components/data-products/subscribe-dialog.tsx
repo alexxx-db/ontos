@@ -19,6 +19,8 @@ interface SubscribeDialogProps {
   productId: string;
   productName: string;
   onSuccess?: () => void;
+  /** If true, subscribes to a dataset instead of a data product */
+  isDataset?: boolean;
 }
 
 export default function SubscribeDialog({
@@ -27,15 +29,21 @@ export default function SubscribeDialog({
   productId,
   productName,
   onSuccess,
+  isDataset = false,
 }: SubscribeDialogProps) {
   const { toast } = useToast();
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const entityType = isDataset ? 'Dataset' : 'Data Product';
+  const apiEndpoint = isDataset 
+    ? `/api/datasets/${productId}/subscribe`
+    : `/api/data-products/${productId}/subscribe`;
+
   const handleSubmit = async () => {
     setIsSubmitting(true);
     try {
-      const response = await fetch(`/api/data-products/${productId}/subscribe`, {
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: reason.trim() || undefined }),
@@ -79,7 +87,7 @@ export default function SubscribeDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5 text-primary" />
-            Subscribe to Data Product
+            Subscribe to {entityType}
           </DialogTitle>
           <DialogDescription>
             Subscribe to <span className="font-medium">{productName}</span> to receive notifications about updates, changes, and compliance status.

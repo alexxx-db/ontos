@@ -4,10 +4,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Database, Search, Bell, Bookmark, X, LayoutList, Network } from 'lucide-react';
+import { Loader2, Database, Search, Bell, Bookmark, X, LayoutList, Network, Package, Table2 } from 'lucide-react';
 import { useDomains } from '@/hooks/use-domains';
 import { type DataProduct } from '@/types/data-product';
 import { type DataDomain } from '@/types/data-domain';
+import { type DatasetListItem, DATASET_ENVIRONMENT_LABELS, DATASET_ENVIRONMENT_COLORS } from '@/types/dataset';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -18,6 +19,9 @@ import { cn } from '@/lib/utils';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
 import SubscribeDialog from '@/components/data-products/subscribe-dialog';
 import { DataDomainMiniGraph } from '@/components/data-domains/data-domain-mini-graph';
+
+// Asset type for marketplace browsing
+type MarketplaceAssetType = 'products' | 'datasets';
 
 interface MarketplaceViewProps {
   className?: string;
@@ -33,6 +37,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDomainId, setSelectedDomainId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'explore' | 'subscriptions'>('explore');
+  const [assetType, setAssetType] = useState<MarketplaceAssetType>('products');
   
   // Graph view state
   const [selectedDomainDetails, setSelectedDomainDetails] = useState<DataDomain | null>(null);
@@ -51,8 +56,22 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
   
   // Subscribed products state
   const [subscribedProducts, setSubscribedProducts] = useState<DataProduct[]>([]);
-  const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
+  const [subscribedProductIds, setSubscribedProductIds] = useState<Set<string>>(new Set());
   const [subscribedLoading, setSubscribedLoading] = useState(true);
+  
+  // Datasets state
+  const [allDatasets, setAllDatasets] = useState<DatasetListItem[]>([]);
+  const [datasetsLoading, setDatasetsLoading] = useState(false);
+  const [datasetsError, setDatasetsError] = useState<string | null>(null);
+  
+  // Subscribed datasets state
+  const [subscribedDatasets, setSubscribedDatasets] = useState<DatasetListItem[]>([]);
+  const [subscribedDatasetIds, setSubscribedDatasetIds] = useState<Set<string>>(new Set());
+  const [subscribedDatasetsLoading, setSubscribedDatasetsLoading] = useState(false);
+  
+  // Selected dataset for dialogs
+  const [selectedDataset, setSelectedDataset] = useState<DatasetListItem | null>(null);
+  const [datasetIsSubscribed, setDatasetIsSubscribed] = useState(false);
   
   // Dialog state
   const [selectedProduct, setSelectedProduct] = useState<DataProduct | null>(null);
@@ -90,7 +109,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
       if (!resp.ok) {
         if (resp.status === 401) {
           setSubscribedProducts([]);
-          setSubscribedIds(new Set());
+          setSubscribedProductIds(new Set());
           return;
         }
         throw new Error(`HTTP error! status: ${resp.status}`);
@@ -98,11 +117,11 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
       const data = await resp.json();
       const products = Array.isArray(data) ? data : [];
       setSubscribedProducts(products);
-      setSubscribedIds(new Set(products.map((p: DataProduct) => p.id).filter(Boolean)));
+      setSubscribedProductIds(new Set(products.map((p: DataProduct) => p.id).filter(Boolean)));
     } catch (e) {
       console.warn('Failed to fetch subscribed products:', e);
       setSubscribedProducts([]);
-      setSubscribedIds(new Set());
+      setSubscribedProductIds(new Set());
     } finally {
       setSubscribedLoading(false);
     }
@@ -111,6 +130,61 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
   useEffect(() => {
     loadSubscribedProducts();
   }, [loadSubscribedProducts]);
+
+  // Fetch published datasets (only when datasets tab is active)
+  useEffect(() => {
+    if (assetType !== 'datasets') return;
+    
+    const loadDatasets = async () => {
+      try {
+        setDatasetsLoading(true);
+        const resp = await fetch('/api/datasets/published');
+        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+        const data = await resp.json();
+        setAllDatasets(Array.isArray(data) ? data : []);
+        setDatasetsError(null);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : 'Failed to load datasets';
+        setDatasetsError(message);
+        setAllDatasets([]);
+      } finally {
+        setDatasetsLoading(false);
+      }
+    };
+    loadDatasets();
+  }, [assetType]);
+
+  // Fetch subscribed datasets
+  const loadSubscribedDatasets = useCallback(async () => {
+    try {
+      setSubscribedDatasetsLoading(true);
+      const resp = await fetch('/api/datasets/my-subscriptions');
+      if (!resp.ok) {
+        if (resp.status === 401) {
+          setSubscribedDatasets([]);
+          setSubscribedDatasetIds(new Set());
+          return;
+        }
+        throw new Error(`HTTP error! status: ${resp.status}`);
+      }
+      const data = await resp.json();
+      const datasets = Array.isArray(data) ? data : [];
+      setSubscribedDatasets(datasets);
+      setSubscribedDatasetIds(new Set(datasets.map((d: DatasetListItem) => d.id).filter(Boolean)));
+    } catch (e) {
+      console.warn('Failed to fetch subscribed datasets:', e);
+      setSubscribedDatasets([]);
+      setSubscribedDatasetIds(new Set());
+    } finally {
+      setSubscribedDatasetsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (assetType === 'datasets') {
+      loadSubscribedDatasets();
+    }
+  }, [assetType, loadSubscribedDatasets]);
 
   // Load domain details when in graph mode and domain is selected
   const loadDomainDetails = useCallback(async (domainId: string) => {
@@ -274,11 +348,39 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
     return filtered;
   }, [allProducts, selectedDomainId, searchQuery, matchSets]);
 
+  // Filter datasets based on search query (datasets don't have domain association)
+  const filteredDatasets = useMemo(() => {
+    let filtered = allDatasets;
+    
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(d => 
+        d.name?.toLowerCase().includes(query) ||
+        d.full_path?.toLowerCase().includes(query) ||
+        d.contract_name?.toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [allDatasets, searchQuery]);
+
   // Handle product card click
   const handleProductClick = async (product: DataProduct) => {
     setSelectedProduct(product);
+    setSelectedDataset(null);
     setCheckingSubscription(true);
-    setProductIsSubscribed(subscribedIds.has(product.id || ''));
+    setProductIsSubscribed(subscribedProductIds.has(product.id || ''));
+    setInfoDialogOpen(true);
+    setCheckingSubscription(false);
+  };
+
+  // Handle dataset card click
+  const handleDatasetClick = async (dataset: DatasetListItem) => {
+    setSelectedDataset(dataset);
+    setSelectedProduct(null);
+    setCheckingSubscription(true);
+    setDatasetIsSubscribed(subscribedDatasetIds.has(dataset.id || ''));
     setInfoDialogOpen(true);
     setCheckingSubscription(false);
   };
@@ -289,11 +391,33 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
     setSubscribeDialogOpen(true);
   };
 
-  // Handle successful subscription
-  const handleSubscriptionSuccess = () => {
+  // Handle successful product subscription
+  const handleProductSubscriptionSuccess = () => {
     loadSubscribedProducts();
     setSubscribeDialogOpen(false);
     setSelectedProduct(null);
+  };
+
+  // Handle successful dataset subscription
+  const handleDatasetSubscriptionSuccess = async () => {
+    // Call the dataset subscribe API
+    if (selectedDataset) {
+      try {
+        const resp = await fetch(`/api/datasets/${selectedDataset.id}/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: '' }),
+        });
+        if (resp.ok) {
+          loadSubscribedDatasets();
+          setDatasetIsSubscribed(true);
+        }
+      } catch (e) {
+        console.error('Failed to subscribe to dataset:', e);
+      }
+    }
+    setSubscribeDialogOpen(false);
+    setSelectedDataset(null);
   };
 
   // Get user's first name for greeting
@@ -336,7 +460,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <Database className="h-4 w-4 text-primary flex-shrink-0" />
+              <Package className="h-4 w-4 text-primary flex-shrink-0" />
               <CardTitle className="text-base truncate">{product.name || 'Untitled'}</CardTitle>
             </div>
             {isSubscribed && (
@@ -366,6 +490,58 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
     );
   };
 
+  // Render dataset card
+  const renderDatasetCard = (dataset: DatasetListItem, isSubscribed: boolean = false) => {
+    const envLabel = DATASET_ENVIRONMENT_LABELS[dataset.environment] || dataset.environment;
+    const envColorClass = DATASET_ENVIRONMENT_COLORS[dataset.environment] || '';
+
+    return (
+      <Card 
+        key={dataset.id} 
+        className={cn(
+          "cursor-pointer transition-all hover:shadow-md hover:border-primary/30",
+          isSubscribed && "border-primary/20 bg-primary/5"
+        )}
+        onClick={() => handleDatasetClick(dataset)}
+      >
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Table2 className="h-4 w-4 text-primary flex-shrink-0" />
+              <CardTitle className="text-base truncate">{dataset.name || 'Untitled'}</CardTitle>
+            </div>
+            {isSubscribed && (
+              <Bell className="h-4 w-4 text-primary flex-shrink-0" />
+            )}
+          </div>
+          <CardDescription className="line-clamp-2 text-sm font-mono text-xs">
+            {dataset.full_path || `${dataset.catalog_name}.${dataset.schema_name}.${dataset.object_name}`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge className={cn("text-xs", envColorClass)}>
+              {envLabel}
+            </Badge>
+            <Badge variant="outline" className="text-xs">
+              {dataset.asset_type}
+            </Badge>
+            {dataset.contract_name && (
+              <Badge variant="secondary" className="text-xs">
+                {dataset.contract_name}
+              </Badge>
+            )}
+          </div>
+          {dataset.owner_team_name && (
+            <div className="text-xs text-muted-foreground mt-2 truncate">
+              {t('marketplace.datasets.owner')}: {dataset.owner_team_name}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <div className={cn("space-y-6", className)}>
       {/* Welcome Header */}
@@ -380,29 +556,58 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
         </p>
       </div>
 
-      {/* Search Bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder={t('marketplace.searchPlaceholder')}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10 h-12 text-base"
-        />
-        {searchQuery && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-            onClick={() => setSearchQuery('')}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        )}
+      {/* Asset Type Toggle & Search Bar */}
+      <div className="space-y-3">
+        {/* Asset Type Toggle */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">{t('marketplace.browseAssetType')}</span>
+          <div className="inline-flex items-center gap-1 p-0.5 bg-muted rounded-md">
+            <Button
+              variant={assetType === 'products' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setAssetType('products')}
+              className="h-7 px-3 gap-1.5"
+            >
+              <Package className="h-3.5 w-3.5" />
+              {t('marketplace.assetTypes.products')}
+            </Button>
+            <Button
+              variant={assetType === 'datasets' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setAssetType('datasets')}
+              className="h-7 px-3 gap-1.5"
+            >
+              <Table2 className="h-3.5 w-3.5" />
+              {t('marketplace.assetTypes.datasets')}
+            </Button>
+          </div>
+        </div>
+
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder={assetType === 'products' ? t('marketplace.searchPlaceholder') : t('marketplace.searchDatasetsPlaceholder')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 h-12 text-base"
+          />
+          {searchQuery && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+              onClick={() => setSearchQuery('')}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* Domain Browser */}
+      {/* Domain Browser - only show for products */}
+      {assetType === 'products' && (
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-medium">{t('marketplace.browseDataDomains')}</div>
@@ -520,6 +725,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
           )
         )}
       </div>
+      )}
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'explore' | 'subscriptions')}>
@@ -531,94 +737,189 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
           <TabsTrigger value="subscriptions" className="gap-2">
             <Bookmark className="h-4 w-4" />
             {t('marketplace.tabs.subscriptions')}
-            {subscribedProducts.length > 0 && (
+            {assetType === 'products' && subscribedProducts.length > 0 && (
               <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
                 {subscribedProducts.length}
+              </Badge>
+            )}
+            {assetType === 'datasets' && subscribedDatasets.length > 0 && (
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                {subscribedDatasets.length}
               </Badge>
             )}
           </TabsTrigger>
         </TabsList>
 
-        {/* Explore Tab Content */}
-        <TabsContent value="explore" className="mt-4">
-          {productsLoading || matchesLoading ? (
-            <div className="flex items-center justify-center h-48">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : productsError ? (
-            <Alert variant="destructive">
-              <AlertDescription>{productsError}</AlertDescription>
-            </Alert>
-          ) : filteredProducts.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Database className="h-12 w-12 mx-auto mb-4 opacity-30" />
-              <p>{t('marketplace.products.noProducts')}</p>
-              {(searchQuery || selectedDomainId) && (
-                <p className="text-sm mt-1">{t('marketplace.products.adjustFilters')}</p>
-              )}
-            </div>
-          ) : (
-            <>
-              <div className="text-sm text-muted-foreground mb-4">
-                {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
+        {/* Explore Tab Content - Products */}
+        {assetType === 'products' && (
+          <TabsContent value="explore" className="mt-4">
+            {productsLoading || matchesLoading ? (
+              <div className="flex items-center justify-center h-48">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {filteredProducts.map(p => renderProductCard(p, subscribedIds.has(p.id || '')))}
+            ) : productsError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{productsError}</AlertDescription>
+              </Alert>
+            ) : filteredProducts.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Package className="h-12 w-12 mx-auto mb-4 opacity-30" />
+                <p>{t('marketplace.products.noProducts')}</p>
+                {(searchQuery || selectedDomainId) && (
+                  <p className="text-sm mt-1">{t('marketplace.products.adjustFilters')}</p>
+                )}
               </div>
-            </>
-          )}
-        </TabsContent>
+            ) : (
+              <>
+                <div className="text-sm text-muted-foreground mb-4">
+                  {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {filteredProducts.map(p => renderProductCard(p, subscribedProductIds.has(p.id || '')))}
+                </div>
+              </>
+            )}
+          </TabsContent>
+        )}
 
-        {/* My Data (Subscriptions) Tab Content */}
-        <TabsContent value="subscriptions" className="mt-4">
-          {subscribedLoading ? (
-            <div className="flex items-center justify-center h-48">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : subscribedProducts.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Bell className="h-12 w-12 mx-auto mb-4 opacity-30" />
-              <p>{t('marketplace.products.noSubscriptions')}</p>
-              <p className="text-sm mt-1">{t('marketplace.products.browseToSubscribe')}</p>
-              <Button 
-                variant="outline" 
-                className="mt-4"
-                onClick={() => setActiveTab('explore')}
-              >
-                <Search className="mr-2 h-4 w-4" />
-                {t('marketplace.products.exploreProducts')}
-              </Button>
-            </div>
-          ) : (
-            <>
-              <div className="text-sm text-muted-foreground mb-4">
-                {subscribedProducts.length} subscribed {subscribedProducts.length === 1 ? 'product' : 'products'}
+        {/* Explore Tab Content - Datasets */}
+        {assetType === 'datasets' && (
+          <TabsContent value="explore" className="mt-4">
+            {datasetsLoading ? (
+              <div className="flex items-center justify-center h-48">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {subscribedProducts.map(p => renderProductCard(p, true))}
+            ) : datasetsError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{datasetsError}</AlertDescription>
+              </Alert>
+            ) : filteredDatasets.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Table2 className="h-12 w-12 mx-auto mb-4 opacity-30" />
+                <p>{t('marketplace.datasets.noDatasets')}</p>
+                {searchQuery && (
+                  <p className="text-sm mt-1">{t('marketplace.datasets.adjustFilters')}</p>
+                )}
               </div>
-            </>
-          )}
-        </TabsContent>
+            ) : (
+              <>
+                <div className="text-sm text-muted-foreground mb-4">
+                  {filteredDatasets.length} {filteredDatasets.length === 1 ? 'dataset' : 'datasets'} available
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {filteredDatasets.map(d => renderDatasetCard(d, subscribedDatasetIds.has(d.id || '')))}
+                </div>
+              </>
+            )}
+          </TabsContent>
+        )}
+
+        {/* My Data (Subscriptions) Tab Content - Products */}
+        {assetType === 'products' && (
+          <TabsContent value="subscriptions" className="mt-4">
+            {subscribedLoading ? (
+              <div className="flex items-center justify-center h-48">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : subscribedProducts.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Bell className="h-12 w-12 mx-auto mb-4 opacity-30" />
+                <p>{t('marketplace.products.noSubscriptions')}</p>
+                <p className="text-sm mt-1">{t('marketplace.products.browseToSubscribe')}</p>
+                <Button 
+                  variant="outline" 
+                  className="mt-4"
+                  onClick={() => setActiveTab('explore')}
+                >
+                  <Search className="mr-2 h-4 w-4" />
+                  {t('marketplace.products.exploreProducts')}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="text-sm text-muted-foreground mb-4">
+                  {subscribedProducts.length} subscribed {subscribedProducts.length === 1 ? 'product' : 'products'}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {subscribedProducts.map(p => renderProductCard(p, true))}
+                </div>
+              </>
+            )}
+          </TabsContent>
+        )}
+
+        {/* My Data (Subscriptions) Tab Content - Datasets */}
+        {assetType === 'datasets' && (
+          <TabsContent value="subscriptions" className="mt-4">
+            {subscribedDatasetsLoading ? (
+              <div className="flex items-center justify-center h-48">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : subscribedDatasets.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Bell className="h-12 w-12 mx-auto mb-4 opacity-30" />
+                <p>{t('marketplace.datasets.noSubscriptions')}</p>
+                <p className="text-sm mt-1">{t('marketplace.datasets.browseToSubscribe')}</p>
+                <Button 
+                  variant="outline" 
+                  className="mt-4"
+                  onClick={() => setActiveTab('explore')}
+                >
+                  <Search className="mr-2 h-4 w-4" />
+                  {t('marketplace.datasets.exploreDatasets')}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="text-sm text-muted-foreground mb-4">
+                  {subscribedDatasets.length} subscribed {subscribedDatasets.length === 1 ? 'dataset' : 'datasets'}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {subscribedDatasets.map(d => renderDatasetCard(d, true))}
+                </div>
+              </>
+            )}
+          </TabsContent>
+        )}
       </Tabs>
 
-      {/* Info Dialog */}
-      <EntityInfoDialog
-        entityType="data_product"
-        entityId={selectedProduct?.id || null}
-        title={selectedProduct?.name}
-        open={infoDialogOpen}
-        onOpenChange={(open) => {
-          setInfoDialogOpen(open);
-          if (!open) setSelectedProduct(null);
-        }}
-        onSubscribe={handleSubscribeClick}
-        isSubscribed={productIsSubscribed}
-        subscriptionLoading={checkingSubscription}
-        showBackButton
-      />
+      {/* Info Dialog - Products */}
+      {selectedProduct && (
+        <EntityInfoDialog
+          entityType="data_product"
+          entityId={selectedProduct.id || null}
+          title={selectedProduct.name}
+          open={infoDialogOpen}
+          onOpenChange={(open) => {
+            setInfoDialogOpen(open);
+            if (!open) setSelectedProduct(null);
+          }}
+          onSubscribe={handleSubscribeClick}
+          isSubscribed={productIsSubscribed}
+          subscriptionLoading={checkingSubscription}
+          showBackButton
+        />
+      )}
 
-      {/* Subscribe Dialog */}
+      {/* Info Dialog - Datasets */}
+      {selectedDataset && (
+        <EntityInfoDialog
+          entityType="dataset"
+          entityId={selectedDataset.id || null}
+          title={selectedDataset.name}
+          open={infoDialogOpen}
+          onOpenChange={(open) => {
+            setInfoDialogOpen(open);
+            if (!open) setSelectedDataset(null);
+          }}
+          onSubscribe={handleSubscribeClick}
+          isSubscribed={datasetIsSubscribed}
+          subscriptionLoading={checkingSubscription}
+          showBackButton
+        />
+      )}
+
+      {/* Subscribe Dialog - Products */}
       {selectedProduct && (
         <SubscribeDialog
           open={subscribeDialogOpen}
@@ -628,7 +929,22 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
           }}
           productId={selectedProduct.id || ''}
           productName={selectedProduct.name || 'Unknown Product'}
-          onSuccess={handleSubscriptionSuccess}
+          onSuccess={handleProductSubscriptionSuccess}
+        />
+      )}
+
+      {/* Subscribe Dialog - Datasets */}
+      {selectedDataset && subscribeDialogOpen && (
+        <SubscribeDialog
+          open={subscribeDialogOpen}
+          onOpenChange={(open) => {
+            setSubscribeDialogOpen(open);
+            if (!open) setSelectedDataset(null);
+          }}
+          productId={selectedDataset.id || ''}
+          productName={selectedDataset.name || 'Unknown Dataset'}
+          onSuccess={handleDatasetSubscriptionSuccess}
+          isDataset
         />
       )}
     </div>

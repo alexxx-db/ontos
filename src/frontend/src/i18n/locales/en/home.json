@@ -156,8 +156,14 @@
   "marketplace": {
     "welcome": "Hello",
     "welcomeWithName": "Hello, {{name}}",
-    "tagline": "Welcome to the Data Marketplace. Discover, understand, and subscribe to data products.",
+    "tagline": "Welcome to the Data Marketplace. Discover, understand, and subscribe to data products and datasets.",
     "searchPlaceholder": "What can we help you find today?",
+    "searchDatasetsPlaceholder": "Search datasets by name, path, or contract...",
+    "browseAssetType": "Browse:",
+    "assetTypes": {
+      "products": "Data Products",
+      "datasets": "Datasets"
+    },
     "browseDataDomains": "Browse Data Domains",
     "allDomains": "All Domains",
     "loadingDomains": "Loading domains...",
@@ -177,6 +183,18 @@
       "exploreProducts": "Explore Data Products",
       "owner": "Owner",
       "unknown": "Unknown"
+    },
+    "datasets": {
+      "available": "{{count}} dataset available",
+      "available_plural": "{{count}} datasets available",
+      "subscribed": "{{count}} subscribed dataset",
+      "subscribed_plural": "{{count}} subscribed datasets",
+      "noDatasets": "No datasets found.",
+      "adjustFilters": "Try adjusting your search.",
+      "noSubscriptions": "You haven't subscribed to any datasets yet.",
+      "browseToSubscribe": "Browse the Explore tab to find datasets to subscribe to.",
+      "exploreDatasets": "Explore Datasets",
+      "owner": "Owner"
     },
     "modeToggle": {
       "marketplace": "Marketplace",

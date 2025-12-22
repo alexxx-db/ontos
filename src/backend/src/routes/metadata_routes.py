@@ -1,7 +1,7 @@
 from io import BytesIO
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Request
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Request, Query
 from fastapi.responses import StreamingResponse
 from fastapi import Response
 from sqlalchemy.orm import Session
@@ -11,12 +11,14 @@ from src.common.features import FeatureAccessLevel
 from src.common.authorization import PermissionChecker
 from src.common.logging import get_logger
 from src.common.file_security import sanitize_filename, sanitize_filename_for_header, is_safe_path_component
-from src.controller.metadata_manager import MetadataManager
+from src.controller.metadata_manager import MetadataManager, SHARED_ENTITY_ID
 from src.common.manager_dependencies import get_metadata_manager
 from src.models.metadata import (
     RichText, RichTextCreate, RichTextUpdate,
     Link, LinkCreate, LinkUpdate,
     Document, DocumentCreate,
+    MetadataAttachment, MetadataAttachmentCreate,
+    SharedAssetListResponse, MergedMetadataResponse,
 )
 from src.common.config import get_settings, Settings
 from src.common.workspace_client import get_workspace_client
@@ -258,6 +260,198 @@ async def delete_document(
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")
     return
+
+
+# =========================================================================
+# Shared Assets Endpoints
+# =========================================================================
+
+@router.get("/metadata/shared", response_model=SharedAssetListResponse)
+async def list_shared_assets(
+    entity_type: Optional[str] = Query(None, description="Filter by entity type"),
+    db: DBSessionDep = None,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
+):
+    """List all shared metadata assets."""
+    return manager.list_shared_assets(db, entity_type=entity_type)
+
+
+@router.post("/metadata/shared/rich-texts", response_model=RichText, status_code=status.HTTP_201_CREATED)
+async def create_shared_rich_text(
+    payload: RichTextCreate,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Create a new shared rich text asset."""
+    try:
+        return manager.create_shared_rich_text(db, data=payload, user_email=current_user.email)
+    except Exception as e:
+        logger.exception("Failed creating shared rich text")
+        raise HTTPException(status_code=500, detail="Failed to create shared rich text")
+
+
+@router.post("/metadata/shared/links", response_model=Link, status_code=status.HTTP_201_CREATED)
+async def create_shared_link(
+    payload: LinkCreate,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Create a new shared link asset."""
+    try:
+        return manager.create_shared_link(db, data=payload, user_email=current_user.email)
+    except Exception as e:
+        logger.exception("Failed creating shared link")
+        raise HTTPException(status_code=500, detail="Failed to create shared link")
+
+
+@router.post("/metadata/shared/documents", response_model=Document, status_code=status.HTTP_201_CREATED)
+async def upload_shared_document(
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    title: str = Body(...),
+    short_description: Optional[str] = Body(None),
+    level: int = Body(50),
+    inheritable: bool = Body(True),
+    file: UploadFile = File(...),
+    manager: MetadataManager = Depends(get_metadata_manager),
+    settings: Settings = Depends(get_settings),
+    ws: WorkspaceClient = Depends(get_workspace_client),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Upload a new shared document asset. Stored in shared folder."""
+    try:
+        # Use shared folder for shared documents
+        base_dir = "uploads/__shared__"
+        volume_fs_base = manager.ensure_volume_path(ws, settings, base_dir)
+
+        content = await file.read()
+        raw_filename = file.filename or "document.bin"
+        filename = sanitize_filename(raw_filename, default="document.bin")
+        content_type = file.content_type
+        size_bytes = len(content) if content else 0
+
+        dest_path = f"{volume_fs_base}/{base_dir}/{filename}"
+
+        try:
+            ws.files.create_directory(f"{volume_fs_base}/{base_dir}")
+        except Exception:
+            pass
+
+        ws.files.upload(dest_path, BytesIO(content))
+
+        payload = DocumentCreate(
+            entity_type="data_domain",  # Shared assets use a generic type
+            entity_id=SHARED_ENTITY_ID,
+            title=title,
+            short_description=short_description,
+            is_shared=True,
+            level=level,
+            inheritable=inheritable,
+        )
+        return manager.create_document_record(
+            db,
+            data=payload,
+            filename=filename,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            storage_path=dest_path,
+            user_email=current_user.email,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed uploading shared document")
+        raise HTTPException(status_code=500, detail="Failed to upload shared document")
+
+
+# =========================================================================
+# Metadata Attachments Endpoints
+# =========================================================================
+
+@router.post("/entities/{entity_type}/{entity_id}/attachments", response_model=MetadataAttachment, status_code=status.HTTP_201_CREATED)
+async def attach_shared_asset(
+    entity_type: str,
+    entity_id: str,
+    payload: MetadataAttachmentCreate,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Attach a shared metadata asset to an entity."""
+    try:
+        return manager.attach_shared_asset(
+            db, entity_type=entity_type, entity_id=entity_id,
+            data=payload, user_email=current_user.email
+        )
+    except Exception as e:
+        logger.exception("Failed attaching shared asset to %s/%s", entity_type, entity_id)
+        raise HTTPException(status_code=500, detail="Failed to attach shared asset")
+
+
+@router.get("/entities/{entity_type}/{entity_id}/attachments", response_model=List[MetadataAttachment])
+async def list_attachments(
+    entity_type: str,
+    entity_id: str,
+    db: DBSessionDep,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
+):
+    """List all shared asset attachments for an entity."""
+    return manager.list_attachments(db, entity_type=entity_type, entity_id=entity_id)
+
+
+@router.delete("/entities/{entity_type}/{entity_id}/attachments/{asset_type}/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def detach_shared_asset(
+    entity_type: str,
+    entity_id: str,
+    asset_type: str,
+    asset_id: str,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Detach a shared metadata asset from an entity."""
+    ok = manager.detach_shared_asset(
+        db, entity_type=entity_type, entity_id=entity_id,
+        asset_type=asset_type, asset_id=asset_id, user_email=current_user.email
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return
+
+
+# =========================================================================
+# Merged Metadata Endpoint (with inheritance)
+# =========================================================================
+
+@router.get("/entities/{entity_type}/{entity_id}/metadata/merged", response_model=MergedMetadataResponse)
+async def get_merged_metadata(
+    entity_type: str,
+    entity_id: str,
+    contract_ids: Optional[str] = Query(None, description="Comma-separated contract IDs for inheritance"),
+    max_level: int = Query(99, ge=0, le=999, description="Maximum inheritance level"),
+    db: DBSessionDep = None,
+    manager: MetadataManager = Depends(get_metadata_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
+):
+    """
+    Get merged metadata for an entity, including inherited metadata from contracts.
+    
+    For Data Products and Datasets, pass contract_ids to include inherited metadata.
+    Only metadata with level <= max_level and inheritable=True will be inherited.
+    """
+    contract_id_list = [cid.strip() for cid in contract_ids.split(",")] if contract_ids else None
+    return manager.get_merged_metadata(
+        db, entity_type=entity_type, entity_id=entity_id,
+        contract_ids=contract_id_list, max_level_inheritance=max_level
+    )
 
 
 def register_routes(app):

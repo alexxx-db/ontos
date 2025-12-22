@@ -48,6 +48,65 @@ def get_datasets_manager(db: DBSessionDep, ws_client: WorkspaceClientDep) -> Dat
 # List & Query Endpoints
 # =============================================================================
 
+# NOTE: Static routes must be defined BEFORE dynamic {dataset_id} routes
+
+@router.get("/datasets/published", response_model=List[DatasetListItem])
+async def get_published_datasets(
+    db: DBSessionDep,
+    ws_client: WorkspaceClientDep,
+    current_user: CurrentUserDep,
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
+    environment: Optional[str] = Query(None, description="Filter by environment (dev/staging/prod)"),
+    search: Optional[str] = Query(None, description="Search in name and description"),
+):
+    """
+    Get all published datasets.
+    
+    Returns datasets that have been marked as published and are available
+    for consumption. Useful for marketplace/discovery views.
+    """
+    logger.debug(f"Get published datasets request from user {current_user.username}")
+    
+    manager = get_datasets_manager(db, ws_client)
+    datasets = manager.list_datasets(
+        skip=skip,
+        limit=limit,
+        environment=environment,
+        published=True,
+        status="active",
+        search=search,
+    )
+    
+    return datasets
+
+
+@router.get("/datasets/my-subscriptions", response_model=List[DatasetListItem])
+async def get_my_dataset_subscriptions(
+    db: DBSessionDep,
+    ws_client: WorkspaceClientDep,
+    current_user: CurrentUserDep,
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """
+    Get all datasets the current user is subscribed to.
+    
+    Returns datasets where the current user has an active subscription.
+    """
+    if not current_user or not current_user.username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    manager = get_datasets_manager(db, ws_client)
+    return manager.get_user_subscriptions(
+        subscriber_email=current_user.username,
+        skip=skip,
+        limit=limit,
+    )
+
+
 @router.get("/datasets", response_model=List[DatasetListItem])
 async def list_datasets(
     db: DBSessionDep,

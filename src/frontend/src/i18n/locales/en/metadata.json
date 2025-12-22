@@ -12,18 +12,25 @@
     "delete": "Delete",
     "editTitle": "Edit note",
     "addTitle": "Add note",
+    "attachShared": "Attach shared note",
+    "selectShared": "Select Shared Note",
     "table": {
       "title": "Title",
       "description": "Description",
       "created": "Created",
-      "actions": "Actions"
+      "actions": "Actions",
+      "level": "Level",
+      "flags": "Flags"
     },
     "form": {
       "title": "Title",
       "shortDescription": "Short Description",
       "content": "Content (Markdown)",
       "save": "Save",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "level": "Level",
+      "inheritable": "Inheritable",
+      "shared": "Shared asset"
     },
     "messages": {
       "deleteFailed": "Delete failed",
@@ -41,19 +48,26 @@
     "delete": "Delete",
     "editTitle": "Edit link",
     "addTitle": "Add link",
+    "attachShared": "Attach shared link",
+    "selectShared": "Select Shared Link",
     "table": {
       "title": "Title",
       "url": "URL",
       "description": "Description",
       "created": "Created",
-      "actions": "Actions"
+      "actions": "Actions",
+      "level": "Level",
+      "flags": "Flags"
     },
     "form": {
       "title": "Title",
       "url": "URL",
       "shortDescription": "Short Description",
       "save": "Save",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "level": "Level",
+      "inheritable": "Inheritable",
+      "shared": "Shared asset"
     },
     "messages": {
       "deleteFailed": "Delete failed",
@@ -68,27 +82,42 @@
     "noDocuments": "No documents uploaded.",
     "preview": "Preview",
     "delete": "Delete",
+    "attachShared": "Attach shared document",
+    "selectShared": "Select Shared Document",
     "table": {
       "title": "Title",
       "filename": "Filename",
       "description": "Description",
       "size": "Size",
       "created": "Created",
-      "actions": "Actions"
+      "actions": "Actions",
+      "level": "Level",
+      "flags": "Flags"
     },
     "form": {
       "title": "Title",
       "shortDescription": "Short Description",
       "file": "File",
       "upload": "Upload",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "level": "Level",
+      "inheritable": "Inheritable",
+      "shared": "Shared asset"
     },
     "messages": {
       "deleteFailed": "Delete failed",
       "uploadFailed": "Upload failed"
     }
   },
+  "sharedAssets": {
+    "selectDescription": "Select a shared asset to attach to this entity",
+    "noSharedNotes": "No shared notes available",
+    "noSharedLinks": "No shared links available",
+    "noSharedDocuments": "No shared documents available"
+  },
   "messages": {
-    "loadFailed": "Metadata load failed"
+    "loadFailed": "Metadata load failed",
+    "attachSuccess": "Shared asset attached successfully",
+    "attachFailed": "Failed to attach shared asset"
   }
 }

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
+import { useProjectContext } from '@/stores/project-store';
 import { Loader2 } from 'lucide-react';
 import type {
   Dataset,
@@ -61,6 +62,7 @@ export default function DatasetFormDialog({
   onSuccess,
 }: DatasetFormDialogProps) {
   const { toast } = useToast();
+  const { currentProject } = useProjectContext();
   const [submitting, setSubmitting] = useState(false);
   const [contracts, setContracts] = useState<{ id: string; name: string }[]>([]);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
@@ -136,6 +138,7 @@ export default function DatasetFormDialog({
           published: dataset.published || false,
         });
       } else {
+        // For new datasets, default to current project if one is active
         reset({
           name: '',
           description: '',
@@ -146,14 +149,14 @@ export default function DatasetFormDialog({
           environment: 'dev',
           contract_id: '',
           owner_team_id: '',
-          project_id: '',
+          project_id: currentProject?.id || '',
           status: 'draft',
           version: '',
           published: false,
         });
       }
     }
-  }, [open, dataset, reset]);
+  }, [open, dataset, reset, currentProject]);
 
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);

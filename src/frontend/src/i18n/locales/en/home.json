@@ -210,6 +210,13 @@
       "parentDomain": "Parent",
       "childDomains": "{{count}} child domain",
       "childDomains_plural": "{{count}} child domains"
+    },
+    "tilesPerRow": {
+      "placeholder": "Tiles",
+      "one": "1 per row",
+      "two": "2 per row",
+      "three": "3 per row",
+      "four": "4 per row"
     }
   }
 }

@@ -469,6 +469,33 @@ class DatasetsManager(SearchableAsset):
             logger.error(f"Error getting subscription status for dataset {dataset_id}: {e}", exc_info=True)
             raise
 
+    def get_user_subscriptions(
+        self,
+        subscriber_email: str,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[DatasetListItem]:
+        """Get all datasets a user is subscribed to."""
+        try:
+            subscriptions = dataset_subscription_repo.get_by_subscriber(
+                db=self._db,
+                email=subscriber_email,
+                skip=skip,
+                limit=limit,
+            )
+            
+            # Get the dataset for each subscription
+            datasets = []
+            for sub in subscriptions:
+                ds = dataset_repo.get_with_all(db=self._db, id=sub.dataset_id)
+                if ds:
+                    datasets.append(self._to_list_item(ds))
+            
+            return datasets
+        except Exception as e:
+            logger.error(f"Error getting subscriptions for user {subscriber_email}: {e}", exc_info=True)
+            raise
+
     def get_subscribers(
         self,
         dataset_id: str,

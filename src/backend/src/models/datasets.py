@@ -180,6 +180,9 @@ class Dataset(BaseModel):
     version: Optional[str] = Field(None, description="Version")
     published: bool = Field(False, description="Marketplace publication status")
     
+    # Metadata inheritance
+    max_level_inheritance: int = Field(99, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
+    
     # Related data
     tags: List[DatasetTag] = Field(default_factory=list, description="Tags")
     custom_properties: List[DatasetCustomProperty] = Field(default_factory=list, description="Custom properties")
@@ -229,6 +232,9 @@ class DatasetCreate(BaseModel):
     version: Optional[str] = Field(None, description="Version")
     published: bool = Field(False, description="Marketplace publication status")
     
+    # Metadata inheritance
+    max_level_inheritance: int = Field(99, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
+    
     # Optional related data
     tags: Optional[List[DatasetTagCreate]] = Field(None, description="Tags to create")
     custom_properties: Optional[List[DatasetCustomPropertyCreate]] = Field(None, description="Custom properties")
@@ -261,6 +267,9 @@ class DatasetUpdate(BaseModel):
     status: Optional[str] = Field(None, description="Lifecycle status")
     version: Optional[str] = Field(None, description="Version")
     published: Optional[bool] = Field(None, description="Marketplace publication status")
+    
+    # Metadata inheritance
+    max_level_inheritance: Optional[int] = Field(None, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
     
     # Optional related data (replaces existing if provided)
     tags: Optional[List[DatasetTagCreate]] = Field(None, description="Tags to set")

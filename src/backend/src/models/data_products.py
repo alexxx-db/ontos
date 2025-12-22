@@ -304,6 +304,9 @@ class DataProduct(BaseModel):
     team: Optional[Team] = Field(None, description="Team information")
     productCreatedTs: Optional[datetime] = Field(None, alias="product_created_ts", description="Product creation timestamp")
 
+    # Metadata inheritance
+    max_level_inheritance: int = Field(99, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
+
     # Audit fields (not in ODPS, but useful)
     created_at: Optional[datetime] = Field(None, description="Record creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Record update timestamp")
@@ -381,6 +384,9 @@ class DataProductCreate(BaseModel):
     managementPorts: Optional[List[ManagementPort]] = Field(None, alias="management_ports", description="Management ports")
     support: Optional[List[Support]] = Field(None, alias="support_channels", description="Support channels")
     team: Optional[Team] = Field(None, description="Team")
+    
+    # Metadata inheritance
+    max_level_inheritance: int = Field(99, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
 
     # Field validator to handle string IDs from frontend
     @field_validator('tags', mode='before')
@@ -419,6 +425,7 @@ class DataProductUpdate(BaseModel):
     managementPorts: Optional[List[ManagementPort]] = Field(None, alias="management_ports")
     support: Optional[List[Support]] = Field(None, alias="support_channels")
     team: Optional[Team] = None
+    max_level_inheritance: Optional[int] = Field(None, ge=0, le=999)
 
     # Field validator to handle string IDs from frontend
     @field_validator('tags', mode='before')

@@ -3,8 +3,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/ui/markdown-viewer';
-import { useEntityMetadata, DocumentItem, LinkItem, EntityKind } from '@/hooks/use-entity-metadata';
-import { Bell, Check, Loader2, ArrowLeft } from 'lucide-react';
+import { useEntityMetadata, useMergedMetadata, DocumentItem, LinkItem, EntityKind } from '@/hooks/use-entity-metadata';
+import { Bell, Check, Loader2, ArrowLeft, Share2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 
 interface Props {
   entityType: EntityKind;
@@ -17,6 +18,9 @@ interface Props {
   isSubscribed?: boolean;
   subscriptionLoading?: boolean;
   showBackButton?: boolean;
+  // Inheritance support (for Data Products and Datasets)
+  contractIds?: string[];
+  maxLevelInheritance?: number;
 }
 
 // Replace image references in markdown to target our document content endpoint.
@@ -79,15 +83,46 @@ export default function EntityInfoDialog({
   isSubscribed,
   subscriptionLoading,
   showBackButton = false,
+  contractIds,
+  maxLevelInheritance = 99,
 }: Props) {
-  const { richTexts, documents, links, loading, error } = useEntityMetadata(entityType, entityId || undefined);
+  // Use merged metadata when contractIds are provided (for DP/DS with inheritance)
+  const directMetadata = useEntityMetadata(entityType, entityId || undefined);
+  const mergedMetadata = useMergedMetadata(
+    entityType, 
+    entityId || undefined, 
+    contractIds, 
+    maxLevelInheritance
+  );
+  
+  // Use merged if we have contract IDs, otherwise use direct
+  const useMerged = contractIds && contractIds.length > 0;
+  const { richTexts, documents, links, loading, error } = useMerged 
+    ? { 
+        richTexts: mergedMetadata.richTexts, 
+        documents: mergedMetadata.documents, 
+        links: mergedMetadata.links, 
+        loading: mergedMetadata.loading, 
+        error: mergedMetadata.error 
+      }
+    : directMetadata;
+  
+  const sources = useMerged ? mergedMetadata.sources : {};
 
   const concatenatedMarkdown = useMemo(() => {
     const divider = '\n\n---\n\n';
-    const raw = richTexts.map(rt => `# ${rt.title}\n\n${rt.short_description ? `_${rt.short_description}_\n\n` : ''}${rt.content_markdown}`).join(divider);
+    const raw = richTexts.map(rt => {
+      const source = sources[rt.id];
+      const sourceLabel = source?.startsWith('contract:') 
+        ? ` _(from contract)_` 
+        : source?.startsWith('shared:') 
+        ? ` _(shared)_` 
+        : '';
+      return `# ${rt.title}${sourceLabel}\n\n${rt.short_description ? `_${rt.short_description}_\n\n` : ''}${rt.content_markdown}`;
+    }).join(divider);
     const withImages = rewriteImageLinks(raw, documents);
     return withImages;
-  }, [richTexts, documents]);
+  }, [richTexts, documents, sources]);
 
   const toc = useMemo(() => buildToc(concatenatedMarkdown), [concatenatedMarkdown]);
 
@@ -169,13 +204,24 @@ export default function EntityInfoDialog({
                         </tr>
                       </thead>
                       <tbody>
-                        {links.map((l: LinkItem) => (
-                          <tr key={l.id} className="border-t">
-                            <td className="py-2 px-3 whitespace-nowrap">{l.title}</td>
-                            <td className="py-2 px-3 max-w-[420px] truncate"><a className="text-primary hover:underline" href={l.url} target="_blank" rel="noreferrer">{l.url}</a></td>
-                            <td className="py-2 px-3 text-muted-foreground">{l.short_description || ''}</td>
-                          </tr>
-                        ))}
+                        {links.map((l: LinkItem) => {
+                          const source = sources[l.id];
+                          const isFromContract = source?.startsWith('contract:');
+                          const isShared = source?.startsWith('shared:') || l.is_shared;
+                          return (
+                            <tr key={l.id} className="border-t">
+                              <td className="py-2 px-3 whitespace-nowrap">
+                                <span className="flex items-center gap-2">
+                                  {l.title}
+                                  {isFromContract && <Badge variant="outline" className="text-xs">Inherited</Badge>}
+                                  {isShared && <Badge variant="secondary" className="text-xs"><Share2 className="h-3 w-3 mr-1" />Shared</Badge>}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 max-w-[420px] truncate"><a className="text-primary hover:underline" href={l.url} target="_blank" rel="noreferrer">{l.url}</a></td>
+                              <td className="py-2 px-3 text-muted-foreground">{l.short_description || ''}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

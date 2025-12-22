@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Text,
     Boolean,
+    Integer,
     ForeignKey,
     UniqueConstraint,
     Index,
@@ -64,6 +65,12 @@ class DatasetDb(Base):
     
     # Marketplace publication status
     published = Column(Boolean, nullable=False, default=False, index=True)
+    
+    # Metadata Inheritance
+    # Maximum level of metadata to inherit from associated contracts.
+    # Only metadata with level <= this value AND inheritable=True will be inherited.
+    # Default 99 means inherit almost everything that's marked inheritable.
+    max_level_inheritance = Column(Integer, nullable=False, default=99)
     
     # Audit fields
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

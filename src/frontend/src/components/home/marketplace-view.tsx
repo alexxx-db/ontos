@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Database, Search, Bell, Bookmark, X, LayoutList, Network, Package, Table2 } from 'lucide-react';
+import { Loader2, Database, Search, Bell, Bookmark, X, LayoutList, Network, Package, Table2, Grid2X2 } from 'lucide-react';
 import { useDomains } from '@/hooks/use-domains';
 import { type DataProduct } from '@/types/data-product';
 import { type DataDomain } from '@/types/data-domain';
@@ -12,6 +12,7 @@ import { type DatasetListItem, DATASET_ENVIRONMENT_LABELS, DATASET_ENVIRONMENT_C
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { useUserStore } from '@/stores/user-store';
 import { useViewModeStore } from '@/stores/view-mode-store';
@@ -31,7 +32,18 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
   const { t } = useTranslation('home');
   const { domains, loading: domainsLoading, getDomainName } = useDomains();
   const { userInfo } = useUserStore();
-  const { domainBrowserStyle, setDomainBrowserStyle } = useViewModeStore();
+  const { domainBrowserStyle, setDomainBrowserStyle, tilesPerRow, setTilesPerRow } = useViewModeStore();
+  
+  // Compute grid class based on tiles per row setting
+  const gridClass = useMemo(() => {
+    switch (tilesPerRow) {
+      case 1: return 'grid grid-cols-1 gap-4';
+      case 2: return 'grid grid-cols-1 sm:grid-cols-2 gap-4';
+      case 3: return 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4';
+      case 4: 
+      default: return 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
+    }
+  }, [tilesPerRow]);
   
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -556,54 +568,26 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
         </p>
       </div>
 
-      {/* Asset Type Toggle & Search Bar */}
-      <div className="space-y-3">
-        {/* Asset Type Toggle */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{t('marketplace.browseAssetType')}</span>
-          <div className="inline-flex items-center gap-1 p-0.5 bg-muted rounded-md">
-            <Button
-              variant={assetType === 'products' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setAssetType('products')}
-              className="h-7 px-3 gap-1.5"
-            >
-              <Package className="h-3.5 w-3.5" />
-              {t('marketplace.assetTypes.products')}
-            </Button>
-            <Button
-              variant={assetType === 'datasets' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setAssetType('datasets')}
-              className="h-7 px-3 gap-1.5"
-            >
-              <Table2 className="h-3.5 w-3.5" />
-              {t('marketplace.assetTypes.datasets')}
-            </Button>
-          </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder={assetType === 'products' ? t('marketplace.searchPlaceholder') : t('marketplace.searchDatasetsPlaceholder')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 h-12 text-base"
-          />
-          {searchQuery && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-              onClick={() => setSearchQuery('')}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+      {/* Search Bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder={assetType === 'products' ? t('marketplace.searchPlaceholder') : t('marketplace.searchDatasetsPlaceholder')}
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-10 h-12 text-base"
+        />
+        {searchQuery && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+            onClick={() => setSearchQuery('')}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       {/* Domain Browser - only show for products */}
@@ -727,28 +711,77 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
       </div>
       )}
 
-      {/* Tabs */}
+      {/* Tabs with Asset Type Toggle */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'explore' | 'subscriptions')}>
-        <TabsList>
-          <TabsTrigger value="explore" className="gap-2">
-            <Search className="h-4 w-4" />
-            {t('marketplace.tabs.explore')}
-          </TabsTrigger>
-          <TabsTrigger value="subscriptions" className="gap-2">
-            <Bookmark className="h-4 w-4" />
-            {t('marketplace.tabs.subscriptions')}
-            {assetType === 'products' && subscribedProducts.length > 0 && (
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                {subscribedProducts.length}
-              </Badge>
-            )}
-            {assetType === 'datasets' && subscribedDatasets.length > 0 && (
-              <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                {subscribedDatasets.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <TabsList>
+            <TabsTrigger value="explore" className="gap-2">
+              <Search className="h-4 w-4" />
+              {t('marketplace.tabs.explore')}
+            </TabsTrigger>
+            <TabsTrigger value="subscriptions" className="gap-2">
+              <Bookmark className="h-4 w-4" />
+              {t('marketplace.tabs.subscriptions')}
+              {assetType === 'products' && subscribedProducts.length > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                  {subscribedProducts.length}
+                </Badge>
+              )}
+              {assetType === 'datasets' && subscribedDatasets.length > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                  {subscribedDatasets.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Asset Type Toggle & Tiles Per Row */}
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Asset Type Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">{t('marketplace.browseAssetType')}</span>
+              <div className="inline-flex items-center gap-1 p-0.5 bg-muted rounded-md">
+                <Button
+                  variant={assetType === 'products' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setAssetType('products')}
+                  className="h-7 px-3 gap-1.5"
+                >
+                  <Package className="h-3.5 w-3.5" />
+                  {t('marketplace.assetTypes.products')}
+                </Button>
+                <Button
+                  variant={assetType === 'datasets' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setAssetType('datasets')}
+                  className="h-7 px-3 gap-1.5"
+                >
+                  <Table2 className="h-3.5 w-3.5" />
+                  {t('marketplace.assetTypes.datasets')}
+                </Button>
+              </div>
+            </div>
+
+            {/* Tiles Per Row Selector */}
+            <div className="flex items-center gap-2">
+              <Grid2X2 className="h-4 w-4 text-muted-foreground" />
+              <Select
+                value={String(tilesPerRow)}
+                onValueChange={(v) => setTilesPerRow(Number(v) as 1 | 2 | 3 | 4)}
+              >
+                <SelectTrigger className="w-[100px] h-7 text-xs">
+                  <SelectValue placeholder={t('marketplace.tilesPerRow.placeholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">{t('marketplace.tilesPerRow.one')}</SelectItem>
+                  <SelectItem value="2">{t('marketplace.tilesPerRow.two')}</SelectItem>
+                  <SelectItem value="3">{t('marketplace.tilesPerRow.three')}</SelectItem>
+                  <SelectItem value="4">{t('marketplace.tilesPerRow.four')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
 
         {/* Explore Tab Content - Products */}
         {assetType === 'products' && (
@@ -774,7 +807,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
                 <div className="text-sm text-muted-foreground mb-4">
                   {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className={gridClass}>
                   {filteredProducts.map(p => renderProductCard(p, subscribedProductIds.has(p.id || '')))}
                 </div>
               </>
@@ -806,7 +839,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
                 <div className="text-sm text-muted-foreground mb-4">
                   {filteredDatasets.length} {filteredDatasets.length === 1 ? 'dataset' : 'datasets'} available
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className={gridClass}>
                   {filteredDatasets.map(d => renderDatasetCard(d, subscribedDatasetIds.has(d.id || '')))}
                 </div>
               </>
@@ -840,7 +873,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
                 <div className="text-sm text-muted-foreground mb-4">
                   {subscribedProducts.length} subscribed {subscribedProducts.length === 1 ? 'product' : 'products'}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className={gridClass}>
                   {subscribedProducts.map(p => renderProductCard(p, true))}
                 </div>
               </>
@@ -874,7 +907,7 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
                 <div className="text-sm text-muted-foreground mb-4">
                   {subscribedDatasets.length} subscribed {subscribedDatasets.length === 1 ? 'dataset' : 'datasets'}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className={gridClass}>
                   {subscribedDatasets.map(d => renderDatasetCard(d, true))}
                 </div>
               </>

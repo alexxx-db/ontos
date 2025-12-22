@@ -7,7 +7,7 @@ Schema: https://github.com/bitol-io/open-data-product-standard/blob/main/schema/
 All models follow the ODPS v1.0.0 structure with Databricks-specific extensions where needed.
 """
 
-from sqlalchemy import Column, String, DateTime, Text, Boolean, func, ForeignKey, Date, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, func, ForeignKey, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 from uuid import uuid4
 
@@ -38,6 +38,12 @@ class DataProductDb(Base):
     # ==================== Databricks Extensions ====================
     project_id = Column(String, ForeignKey('projects.id'), nullable=True, index=True)
     owner_team_id = Column(String, ForeignKey('teams.id'), nullable=True, index=True)  # Team UUID reference
+
+    # ==================== Metadata Inheritance ====================
+    # Maximum level of metadata to inherit from associated contracts.
+    # Only metadata with level <= this value AND inheritable=True will be inherited.
+    # Default 99 means inherit almost everything that's marked inheritable.
+    max_level_inheritance = Column(Integer, nullable=False, default=99)
 
     # ==================== Audit Fields ====================
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

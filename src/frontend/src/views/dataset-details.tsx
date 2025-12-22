@@ -55,6 +55,14 @@ import {
 } from '@/types/dataset';
 import { RelativeDate } from '@/components/common/relative-date';
 import DatasetFormDialog from '@/components/datasets/dataset-form-dialog';
+import EntityMetadataPanel from '@/components/metadata/entity-metadata-panel';
+import TagChip from '@/components/ui/tag-chip';
+import { CommentSidebar } from '@/components/comments';
+import ConceptSelectDialog from '@/components/semantic/concept-select-dialog';
+import LinkedConceptChips from '@/components/semantic/linked-concept-chips';
+import type { EntitySemanticLink } from '@/types/semantic-link';
+import { Label } from '@/components/ui/label';
+import { Plus, MessageSquare } from 'lucide-react';
 
 export default function DatasetDetails() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -75,6 +83,11 @@ export default function DatasetDetails() {
 
   // Dialog state
   const [openEditDialog, setOpenEditDialog] = useState(false);
+  const [isCommentSidebarOpen, setIsCommentSidebarOpen] = useState(false);
+  const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
+
+  // Semantic links state
+  const [semanticLinks, setSemanticLinks] = useState<EntitySemanticLink[]>([]);
 
   // Fetch dataset
   const fetchDataset = useCallback(async () => {
@@ -129,11 +142,28 @@ export default function DatasetDetails() {
     }
   }, [datasetId]);
 
+  // Fetch semantic links
+  const fetchSemanticLinks = useCallback(async () => {
+    if (!datasetId) return;
+
+    try {
+      const response = await fetch(`/api/semantic-links/entity/dataset/${datasetId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setSemanticLinks(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch semantic links:', err);
+      setSemanticLinks([]);
+    }
+  }, [datasetId]);
+
   useEffect(() => {
     fetchDataset();
     fetchSubscriptionStatus();
     fetchSubscribers();
-  }, [fetchDataset, fetchSubscriptionStatus, fetchSubscribers]);
+    fetchSemanticLinks();
+  }, [fetchDataset, fetchSubscriptionStatus, fetchSubscribers, fetchSemanticLinks]);
 
   useEffect(() => {
     // Set breadcrumbs
@@ -206,6 +236,48 @@ export default function DatasetDetails() {
     }
   };
 
+  // Add semantic link
+  const addSemanticLink = async (iri: string) => {
+    if (!datasetId) return;
+    try {
+      const response = await fetch('/api/semantic-links/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entity_id: datasetId,
+          entity_type: 'dataset',
+          iri,
+        }),
+      });
+      if (!response.ok) throw new Error('Failed to add concept');
+      await fetchSemanticLinks();
+      setConceptDialogOpen(false);
+      toast({ title: 'Linked', description: 'Business concept linked to dataset.' });
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: err instanceof Error ? err.message : 'Failed to link business concept',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Remove semantic link
+  const removeSemanticLink = async (linkId: string) => {
+    try {
+      const response = await fetch(`/api/semantic-links/${linkId}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Failed to remove concept');
+      await fetchSemanticLinks();
+      toast({ title: 'Unlinked', description: 'Business concept unlinked from dataset.' });
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: err instanceof Error ? err.message : 'Failed to unlink business concept',
+        variant: 'destructive',
+      });
+    }
+  };
+
   if (loading) {
     return (
       <div className="container mx-auto py-6 space-y-6">
@@ -273,6 +345,13 @@ export default function DatasetDetails() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <CommentSidebar
+            entityType="dataset"
+            entityId={datasetId!}
+            isOpen={isCommentSidebarOpen}
+            onToggle={() => setIsCommentSidebarOpen(!isCommentSidebarOpen)}
+            className="h-8"
+          />
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -481,25 +560,53 @@ export default function DatasetDetails() {
           </Card>
 
           {/* Tags */}
-          {dataset.tags && dataset.tags.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Tag className="h-4 w-4" />
-                  Tags
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Tag className="h-4 w-4" />
+                Tags
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {dataset.tags && dataset.tags.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {dataset.tags.map((tag, idx) => (
-                    <Badge key={idx} variant="secondary">
-                      {tag.name}
-                    </Badge>
+                    <TagChip key={idx} tag={tag.name} size="sm" />
                   ))}
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              ) : (
+                <p className="text-sm text-muted-foreground">No tags</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Semantic Links / Business Concepts */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Business Concepts</CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConceptDialogOpen(true)}
+                  className="h-7"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {semanticLinks.length > 0 ? (
+                <LinkedConceptChips
+                  links={semanticLinks}
+                  onRemove={(id) => removeSemanticLink(id)}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">No linked concepts</p>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Audit Info */}
           <Card>
@@ -548,6 +655,11 @@ export default function DatasetDetails() {
         </div>
       </div>
 
+      {/* Metadata Panel - Rich texts, links, documents */}
+      {datasetId && (
+        <EntityMetadataPanel entityId={datasetId} entityType="dataset" />
+      )}
+
       {/* Edit Dialog */}
       <DatasetFormDialog
         open={openEditDialog}
@@ -557,6 +669,13 @@ export default function DatasetDetails() {
           fetchDataset();
           setOpenEditDialog(false);
         }}
+      />
+
+      {/* Concept Select Dialog */}
+      <ConceptSelectDialog
+        isOpen={conceptDialogOpen}
+        onOpenChange={setConceptDialogOpen}
+        onSelect={addSemanticLink}
       />
     </div>
   );

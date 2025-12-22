@@ -168,7 +168,13 @@ class DatasetRepository(CRUDBase[DatasetDb, Dict[str, Any], Union[Dict[str, Any]
             if owner_team_id:
                 query = query.filter(self.model.owner_team_id == owner_team_id)
             if project_id:
-                query = query.filter(self.model.project_id == project_id)
+                # Include datasets with matching project OR no project assigned (orphans)
+                query = query.filter(
+                    or_(
+                        self.model.project_id == project_id,
+                        self.model.project_id.is_(None)
+                    )
+                )
             if published is not None:
                 query = query.filter(self.model.published == published)
             if catalog_name:

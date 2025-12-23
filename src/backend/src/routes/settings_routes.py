@@ -473,55 +473,67 @@ async def clear_demo_data(
         from sqlalchemy import text
         
         # Delete in reverse dependency order
+        # UUID patterns use type codes in first 3 hex chars (see demo_data.sql for mapping)
+        # Pattern: {type:3}{seq:5}-0000-4000-8000-...
         delete_statements = [
-            # Metadata
-            "DELETE FROM document_metadata WHERE id::text LIKE 'md00000%'",
-            "DELETE FROM link_metadata WHERE id::text LIKE 'ml00000%'",
-            "DELETE FROM rich_text_metadata WHERE id::text LIKE 'mt00000%'",
+            # Metadata (018=document, 017=link, 016=rich_text)
+            "DELETE FROM document_metadata WHERE id::text LIKE '018%'",
+            "DELETE FROM link_metadata WHERE id::text LIKE '017%'",
+            "DELETE FROM rich_text_metadata WHERE id::text LIKE '016%'",
             
-            # Semantic Links
-            "DELETE FROM entity_semantic_links WHERE id::text LIKE 'sl00000%'",
+            # MDM (01c=match_candidates, 01b=match_runs, 01a=source_links, 019=configs)
+            "DELETE FROM mdm_match_candidates WHERE id::text LIKE '01c%'",
+            "DELETE FROM mdm_match_runs WHERE id::text LIKE '01b%'",
+            "DELETE FROM mdm_source_links WHERE id::text LIKE '01a%'",
+            "DELETE FROM mdm_configs WHERE id::text LIKE '019%'",
             
-            # Cost Items
-            "DELETE FROM cost_items WHERE id::text LIKE 'ct00000%'",
+            # Authoritative Definitions (01f=property, 01e=schema_object, 01d=contract)
+            "DELETE FROM data_contract_schema_property_authoritative_definitions WHERE id::text LIKE '01f%'",
+            "DELETE FROM data_contract_schema_object_authoritative_definitions WHERE id::text LIKE '01e%'",
+            "DELETE FROM data_contract_authoritative_definitions WHERE id::text LIKE '01d%'",
             
-            # Compliance
-            "DELETE FROM compliance_results WHERE id LIKE 'cx00000%'",
-            "DELETE FROM compliance_runs WHERE id LIKE 'cr00000%'",
-            "DELETE FROM compliance_policies WHERE id LIKE 'cp00000%'",
+            # Semantic Links (015)
+            "DELETE FROM entity_semantic_links WHERE id::text LIKE '015%'",
             
-            # Notifications
-            "DELETE FROM notifications WHERE id LIKE 'nt00000%'",
+            # Cost Items (014)
+            "DELETE FROM cost_items WHERE id::text LIKE '014%'",
             
-            # Reviews
-            "DELETE FROM reviewed_assets WHERE id LIKE 'ra00000%'",
-            "DELETE FROM data_asset_review_requests WHERE id LIKE 'rv00000%'",
+            # Compliance (013=results, 012=runs, 011=policies)
+            "DELETE FROM compliance_results WHERE id::text LIKE '013%'",
+            "DELETE FROM compliance_runs WHERE id::text LIKE '012%'",
+            "DELETE FROM compliance_policies WHERE id::text LIKE '011%'",
             
-            # Data Products (child tables first)
-            "DELETE FROM data_product_team_members WHERE id LIKE 'pm00000%'",
-            "DELETE FROM data_product_teams WHERE id LIKE 'pt00000%'",
-            "DELETE FROM data_product_support_channels WHERE id LIKE 'sc00000%'",
-            "DELETE FROM data_product_input_ports WHERE id LIKE 'ip00000%'",
-            "DELETE FROM data_product_output_ports WHERE id LIKE 'op00000%'",
-            "DELETE FROM data_product_descriptions WHERE id LIKE 'dd00000%'",
-            "DELETE FROM data_products WHERE id LIKE 'dp00000%'",
+            # Notifications (010)
+            "DELETE FROM notifications WHERE id::text LIKE '010%'",
             
-            # Data Contracts (child tables first)
-            "DELETE FROM data_contract_schema_properties WHERE id LIKE 'sp00000%'",
-            "DELETE FROM data_contract_schema_objects WHERE id LIKE 'so00000%'",
-            "DELETE FROM data_contracts WHERE id LIKE 'dc00000%'",
+            # Reviews (00f=reviewed_assets, 00e=requests)
+            "DELETE FROM reviewed_assets WHERE id::text LIKE '00f%'",
+            "DELETE FROM data_asset_review_requests WHERE id::text LIKE '00e%'",
             
-            # Projects
-            "DELETE FROM project_teams WHERE project_id LIKE 'pj00000%'",
-            "DELETE FROM projects WHERE id LIKE 'pj00000%'",
+            # Data Products (00d=team_members, 00c=teams, 00b=support, 00a=input, 009=output, 008=desc, 007=products)
+            "DELETE FROM data_product_team_members WHERE id::text LIKE '00d%'",
+            "DELETE FROM data_product_teams WHERE id::text LIKE '00c%'",
+            "DELETE FROM data_product_support_channels WHERE id::text LIKE '00b%'",
+            "DELETE FROM data_product_input_ports WHERE id::text LIKE '00a%'",
+            "DELETE FROM data_product_output_ports WHERE id::text LIKE '009%'",
+            "DELETE FROM data_product_descriptions WHERE id::text LIKE '008%'",
+            "DELETE FROM data_products WHERE id::text LIKE '007%'",
             
-            # Teams
-            "DELETE FROM team_members WHERE id LIKE 'mb00000%'",
-            "DELETE FROM teams WHERE id LIKE 'tm00000%'",
+            # Data Contracts (006=properties, 005=schema_objects, 004=contracts)
+            "DELETE FROM data_contract_schema_properties WHERE id::text LIKE '006%'",
+            "DELETE FROM data_contract_schema_objects WHERE id::text LIKE '005%'",
+            "DELETE FROM data_contracts WHERE id::text LIKE '004%'",
             
-            # Domains (children first)
-            "DELETE FROM data_domains WHERE id LIKE 'dd00001%'",  # Level 2
-            "DELETE FROM data_domains WHERE id LIKE 'dd00000%'",  # Level 0-1
+            # Projects (003)
+            "DELETE FROM project_teams WHERE project_id::text LIKE '003%'",
+            "DELETE FROM projects WHERE id::text LIKE '003%'",
+            
+            # Teams (002=members, 001=teams)
+            "DELETE FROM team_members WHERE id::text LIKE '002%'",
+            "DELETE FROM teams WHERE id::text LIKE '001%'",
+            
+            # Domains (000)
+            "DELETE FROM data_domains WHERE id::text LIKE '000%'",
         ]
         
         deleted_counts = {}

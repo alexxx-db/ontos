@@ -61,8 +61,6 @@ const createSchemaPropertyColumns = (
   contract: DataContract | null,
   selectedSchemaIndex: number,
   propertyLinks: Record<string, EntitySemanticLink[]>,
-  propertyAuthDefs: Record<string, any[]>,
-  onManagePropertyAuthDefs: (schemaId: string, propertyId: string, propertyName: string) => void
 ): ColumnDef<SchemaProperty>[] => [
   {
     accessorKey: 'name',
@@ -136,26 +134,6 @@ const createSchemaPropertyColumns = (
         {row.getValue('description') || '-'}
       </span>
     ),
-  },
-  {
-    id: 'authoritative_definitions',
-    header: 'Auth. Defs',
-    cell: ({ row }) => {
-      const property = row.original
-      const propertyId = (property as any).id || property.name
-      const schemaId = (contract?.schema?.[selectedSchemaIndex] as any)?.id || contract?.schema?.[selectedSchemaIndex]?.name || ''
-      const defs = propertyAuthDefs[propertyId] || []
-      return (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onManagePropertyAuthDefs(schemaId, propertyId, property.name)}
-          className="h-7 px-2 text-xs"
-        >
-          Defs ({defs.length})
-        </Button>
-      )
-    },
   },
 ]
 
@@ -1723,7 +1701,7 @@ export default function DataContractDetails() {
                 </div>
                 {contract.schema[0].properties && contract.schema[0].properties.length > 0 && (
                   <DataTable
-                    columns={createSchemaPropertyColumns(contract, 0, propertyLinks, propertyAuthDefs, handleManagePropertyAuthDefs)}
+                    columns={createSchemaPropertyColumns(contract, 0, propertyLinks)}
                     data={contract.schema[0].properties as SchemaProperty[]}
                     searchColumn="name"
                   />
@@ -1853,7 +1831,7 @@ export default function DataContractDetails() {
                   </div>
                   {contract.schema[selectedSchemaIndex]?.properties && contract.schema[selectedSchemaIndex].properties.length > 0 && (
                     <DataTable
-                      columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks, propertyAuthDefs, handleManagePropertyAuthDefs)}
+                      columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks)}
                       data={contract.schema[selectedSchemaIndex].properties as SchemaProperty[]}
                       searchColumn="name"
                     />
@@ -1989,7 +1967,7 @@ export default function DataContractDetails() {
                   </div>
                   {contract.schema[selectedSchemaIndex]?.properties && contract.schema[selectedSchemaIndex].properties.length > 0 && (
                     <DataTable
-                      columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks, propertyAuthDefs, handleManagePropertyAuthDefs)}
+                      columns={createSchemaPropertyColumns(contract, selectedSchemaIndex, propertyLinks)}
                       data={contract.schema[selectedSchemaIndex].properties as SchemaProperty[]}
                       searchColumn="name"
                     />

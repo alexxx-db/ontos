@@ -46,6 +46,13 @@
 --   016 = rich_text_metadata
 --   017 = link_metadata
 --   018 = document_metadata
+--   019 = mdm_configs
+--   01a = mdm_source_links
+--   01b = mdm_match_runs
+--   01c = mdm_match_candidates
+--   01d = data_contract_authoritative_definitions
+--   01e = data_contract_schema_object_authoritative_definitions
+--   01f = data_contract_schema_property_authoritative_definitions
 -- ============================================================================
 
 BEGIN;
@@ -473,6 +480,7 @@ ON CONFLICT (id) DO NOTHING;
 -- ============================================================================
 
 INSERT INTO entity_semantic_links (id, entity_id, entity_type, iri, label, created_by, created_at) VALUES
+-- Data Domains
 ('01500001-0000-4000-8000-000000000001', '00000007-0000-4000-8000-000000000007', 'data_domain', 'http://example.com/business/concepts#CustomerDomain', 'Customer Domain', 'system@demo', NOW()),
 ('01500002-0000-4000-8000-000000000002', '00000002-0000-4000-8000-000000000002', 'data_domain', 'http://example.com/business/concepts#FinancialDomain', 'Financial Domain', 'system@demo', NOW()),
 ('01500003-0000-4000-8000-000000000003', '00000003-0000-4000-8000-000000000003', 'data_domain', 'http://example.com/business/concepts#SalesDomain', 'Sales Domain', 'system@demo', NOW()),
@@ -480,12 +488,55 @@ INSERT INTO entity_semantic_links (id, entity_id, entity_type, iri, label, creat
 ('01500005-0000-4000-8000-000000000005', '00000005-0000-4000-8000-000000000005', 'data_domain', 'http://example.com/business/concepts#RetailDomain', 'Retail Domain', 'system@demo', NOW()),
 ('01500006-0000-4000-8000-000000000006', '00000008-0000-4000-8000-000000000008', 'data_domain', 'http://example.com/business/concepts#ProductDomain', 'Product Domain', 'system@demo', NOW()),
 ('01500007-0000-4000-8000-000000000007', '00000009-0000-4000-8000-000000000009', 'data_domain', 'http://example.com/business/concepts#EmployeeDomain', 'Employee Domain', 'system@demo', NOW()),
+
+-- Data Products
 ('01500008-0000-4000-8000-000000000008', '00700001-0000-4000-8000-000000000001', 'data_product', 'http://example.com/business/concepts#Sale', 'Sale', 'system@demo', NOW()),
 ('01500009-0000-4000-8000-000000000009', '00700002-0000-4000-8000-000000000002', 'data_product', 'http://example.com/business/concepts#Transaction', 'Transaction', 'system@demo', NOW()),
 ('0150000a-0000-4000-8000-000000000010', '00700006-0000-4000-8000-000000000006', 'data_product', 'http://example.com/business/concepts#Customer', 'Customer', 'system@demo', NOW()),
 ('0150000b-0000-4000-8000-000000000011', '00700007-0000-4000-8000-000000000007', 'data_product', 'http://example.com/business/concepts#Sale', 'Sale', 'system@demo', NOW()),
 ('0150000c-0000-4000-8000-000000000012', '00700004-0000-4000-8000-000000000004', 'data_product', 'http://example.com/business/concepts#Inventory', 'Inventory', 'system@demo', NOW()),
-('0150000d-0000-4000-8000-000000000013', '00700005-0000-4000-8000-000000000005', 'data_product', 'http://example.com/business/concepts#Product', 'Product', 'system@demo', NOW())
+('0150000d-0000-4000-8000-000000000013', '00700005-0000-4000-8000-000000000005', 'data_product', 'http://example.com/business/concepts#Product', 'Product', 'system@demo', NOW()),
+
+-- Data Contracts (mirrors data_contract_authoritative_definitions)
+('0150000e-0000-4000-8000-000000000014', '00400001-0000-4000-8000-000000000001', 'data_contract', 'http://glossary.example.com/terms/Customer', 'Customer', 'system@demo', NOW()),
+('0150000f-0000-4000-8000-000000000015', '00400001-0000-4000-8000-000000000001', 'data_contract', 'http://glossary.example.com/terms/PersonalData', 'Personal Data', 'system@demo', NOW()),
+('01500010-0000-4000-8000-000000000016', '00400002-0000-4000-8000-000000000002', 'data_contract', 'http://glossary.example.com/terms/Product', 'Product', 'system@demo', NOW()),
+('01500011-0000-4000-8000-000000000017', '00400002-0000-4000-8000-000000000002', 'data_contract', 'http://glossary.example.com/terms/Inventory', 'Inventory', 'system@demo', NOW()),
+('01500012-0000-4000-8000-000000000018', '00400004-0000-4000-8000-000000000004', 'data_contract', 'http://glossary.example.com/terms/Device', 'Device', 'system@demo', NOW()),
+('01500013-0000-4000-8000-000000000019', '00400004-0000-4000-8000-000000000004', 'data_contract', 'http://glossary.example.com/terms/Telemetry', 'Telemetry', 'system@demo', NOW()),
+('01500014-0000-4000-8000-000000000020', '00400006-0000-4000-8000-000000000006', 'data_contract', 'http://glossary.example.com/terms/Transaction', 'Transaction', 'system@demo', NOW()),
+('01500015-0000-4000-8000-000000000021', '00400006-0000-4000-8000-000000000006', 'data_contract', 'http://glossary.example.com/terms/FinancialRecord', 'Financial Record', 'system@demo', NOW()),
+
+-- Schema Objects - use entity_id = contractId#schemaName, entity_type = data_contract_schema
+-- Customer Data Contract (00400001...) schemas: customers, customer_preferences, customer_addresses
+('01500016-0000-4000-8000-000000000022', '00400001-0000-4000-8000-000000000001#customers', 'data_contract_schema', 'http://glossary.example.com/terms/CustomerProfile', 'Customer Profile', 'system@demo', NOW()),
+('01500017-0000-4000-8000-000000000023', '00400001-0000-4000-8000-000000000001#customers', 'data_contract_schema', 'http://glossary.example.com/terms/MasterData', 'Master Data', 'system@demo', NOW()),
+('01500018-0000-4000-8000-000000000024', '00400001-0000-4000-8000-000000000001#customer_preferences', 'data_contract_schema', 'http://glossary.example.com/terms/CustomerPreference', 'Customer Preference', 'system@demo', NOW()),
+('01500019-0000-4000-8000-000000000025', '00400001-0000-4000-8000-000000000001#customer_addresses', 'data_contract_schema', 'http://glossary.example.com/terms/Address', 'Address', 'system@demo', NOW()),
+('0150001a-0000-4000-8000-000000000026', '00400001-0000-4000-8000-000000000001#customer_addresses', 'data_contract_schema', 'http://glossary.example.com/terms/ContactInformation', 'Contact Information', 'system@demo', NOW()),
+-- IoT Device Registry Contract (00400004...) schemas: devices, sensor_readings, device_events
+('0150001b-0000-4000-8000-000000000027', '00400004-0000-4000-8000-000000000004#devices', 'data_contract_schema', 'http://glossary.example.com/terms/IoTDevice', 'IoT Device', 'system@demo', NOW()),
+('0150001c-0000-4000-8000-000000000028', '00400004-0000-4000-8000-000000000004#devices', 'data_contract_schema', 'http://glossary.example.com/terms/AssetRegistry', 'Asset Registry', 'system@demo', NOW()),
+('0150001d-0000-4000-8000-000000000029', '00400004-0000-4000-8000-000000000004#sensor_readings', 'data_contract_schema', 'http://glossary.example.com/terms/SensorReading', 'Sensor Reading', 'system@demo', NOW()),
+('0150001e-0000-4000-8000-000000000030', '00400004-0000-4000-8000-000000000004#device_events', 'data_contract_schema', 'http://glossary.example.com/terms/DeviceEvent', 'Device Event', 'system@demo', NOW()),
+('0150001f-0000-4000-8000-000000000031', '00400004-0000-4000-8000-000000000004#device_events', 'data_contract_schema', 'http://glossary.example.com/terms/Alert', 'Alert', 'system@demo', NOW()),
+
+-- Schema Properties - use entity_id = contractId#schemaName#propertyName, entity_type = data_contract_property
+-- Customer Data Contract > customers schema properties
+('01500020-0000-4000-8000-000000000032', '00400001-0000-4000-8000-000000000001#customers#customer_id', 'data_contract_property', 'http://glossary.example.com/terms/CustomerId', 'customerId', 'system@demo', NOW()),
+('01500021-0000-4000-8000-000000000033', '00400001-0000-4000-8000-000000000001#customers#customer_id', 'data_contract_property', 'http://glossary.example.com/terms/UniqueIdentifier', 'Unique Identifier', 'system@demo', NOW()),
+('01500022-0000-4000-8000-000000000034', '00400001-0000-4000-8000-000000000001#customers#email', 'data_contract_property', 'http://glossary.example.com/terms/EmailAddress', 'emailAddress', 'system@demo', NOW()),
+('01500023-0000-4000-8000-000000000035', '00400001-0000-4000-8000-000000000001#customers#email', 'data_contract_property', 'http://glossary.example.com/terms/PII', 'PII', 'system@demo', NOW()),
+('01500024-0000-4000-8000-000000000036', '00400001-0000-4000-8000-000000000001#customers#first_name', 'data_contract_property', 'http://glossary.example.com/terms/FirstName', 'firstName', 'system@demo', NOW()),
+('01500025-0000-4000-8000-000000000037', '00400001-0000-4000-8000-000000000001#customers#last_name', 'data_contract_property', 'http://glossary.example.com/terms/LastName', 'lastName', 'system@demo', NOW()),
+('01500026-0000-4000-8000-000000000038', '00400001-0000-4000-8000-000000000001#customers#date_of_birth', 'data_contract_property', 'http://glossary.example.com/terms/DateOfBirth', 'dateOfBirth', 'system@demo', NOW()),
+('01500027-0000-4000-8000-000000000039', '00400001-0000-4000-8000-000000000001#customers#phone_number', 'data_contract_property', 'http://glossary.example.com/terms/PhoneNumber', 'phoneNumber', 'system@demo', NOW()),
+('01500028-0000-4000-8000-000000000040', '00400001-0000-4000-8000-000000000001#customers#country_code', 'data_contract_property', 'http://glossary.example.com/terms/CountryCode', 'countryCode', 'system@demo', NOW()),
+('01500029-0000-4000-8000-000000000041', '00400001-0000-4000-8000-000000000001#customers#account_status', 'data_contract_property', 'http://glossary.example.com/terms/AccountStatus', 'accountStatus', 'system@demo', NOW()),
+-- IoT Device Registry Contract > devices schema properties
+('0150002a-0000-4000-8000-000000000042', '00400004-0000-4000-8000-000000000004#devices#device_id', 'data_contract_property', 'http://glossary.example.com/terms/DeviceId', 'deviceId', 'system@demo', NOW()),
+('0150002b-0000-4000-8000-000000000043', '00400004-0000-4000-8000-000000000004#devices#device_type', 'data_contract_property', 'http://glossary.example.com/terms/DeviceType', 'deviceType', 'system@demo', NOW()),
+('0150002c-0000-4000-8000-000000000044', '00400004-0000-4000-8000-000000000004#devices#status', 'data_contract_property', 'http://glossary.example.com/terms/DeviceStatus', 'deviceStatus', 'system@demo', NOW())
 
 ON CONFLICT (id) DO NOTHING;
 
@@ -517,6 +568,216 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO document_metadata (id, entity_id, entity_type, title, short_description, original_filename, storage_path, is_shared, level, inheritable, created_by, created_at, updated_at) VALUES
 ('01800001-0000-4000-8000-000000000001', '00700006-0000-4000-8000-000000000006', 'data_product', 'Overview', 'Product overview visual.', 'customer_recs_overview.svg', 'images/customer_marketing_recos/overview.svg', false, 50, true, 'system@demo', NOW(), NOW()),
 ('01800002-0000-4000-8000-000000000002', '00700006-0000-4000-8000-000000000006', 'data_product', 'Data Flow', 'High-level data flow.', 'customer_recs_flow.svg', 'images/customer_marketing_recos/flow.svg', false, 50, true, 'system@demo', NOW(), NOW())
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 12. MDM CONFIGURATIONS (type=019)
+-- ============================================================================
+-- MDM configs link master contracts to source contracts for entity matching
+-- Columns: id, master_contract_id, name, description, entity_type, status, matching_rules, survivorship_rules, project_id, created_at, updated_at, created_by, updated_by
+
+INSERT INTO mdm_configs (id, master_contract_id, name, description, entity_type, status, matching_rules, survivorship_rules, project_id, created_by, updated_by, created_at, updated_at) VALUES
+-- Customer MDM: Customer Data Contract as master
+('01900001-0000-4000-8000-000000000001', '00400001-0000-4000-8000-000000000001', 'Customer Master Data', 'Unified customer master record from CRM and IoT device registrations', 'customer', 'active', 
+'[{"name": "email_exact", "type": "deterministic", "fields": ["email"], "weight": 1.0, "threshold": 1.0}, {"name": "name_fuzzy", "type": "probabilistic", "fields": ["first_name", "last_name"], "weight": 0.6, "threshold": 0.85, "algorithm": "jaro_winkler"}, {"name": "phone_match", "type": "deterministic", "fields": ["phone_number"], "weight": 0.8, "threshold": 1.0}]',
+'[{"field": "email", "strategy": "most_recent"}, {"field": "phone_number", "strategy": "most_complete"}, {"field": "first_name", "strategy": "source_priority", "priority": ["crm", "iot"]}, {"field": "last_name", "strategy": "source_priority", "priority": ["crm", "iot"]}]',
+'00300001-0000-4000-8000-000000000001', 'system@demo', 'system@demo', NOW(), NOW()),
+
+-- Product MDM: Product Catalog Contract as master
+('01900002-0000-4000-8000-000000000002', '00400002-0000-4000-8000-000000000002', 'Product Master Data', 'Consolidated product catalog from multiple inventory sources', 'product', 'active',
+'[{"name": "sku_exact", "type": "deterministic", "fields": ["sku"], "weight": 1.0, "threshold": 1.0}, {"name": "name_fuzzy", "type": "probabilistic", "fields": ["product_name"], "weight": 0.7, "threshold": 0.90, "algorithm": "levenshtein"}, {"name": "upc_exact", "type": "deterministic", "fields": ["upc"], "weight": 0.9, "threshold": 1.0}]',
+'[{"field": "product_name", "strategy": "most_complete"}, {"field": "price", "strategy": "most_recent"}, {"field": "inventory_count", "strategy": "source_wins"}]',
+'00300004-0000-4000-8000-000000000004', 'system@demo', 'system@demo', NOW(), NOW())
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 12b. MDM SOURCE LINKS (type=01a)
+-- ============================================================================
+-- Links source contracts to MDM configurations
+-- Columns: id, config_id, source_contract_id, key_column, column_mapping, priority, status, last_sync_at, created_at, updated_at
+
+INSERT INTO mdm_source_links (id, config_id, source_contract_id, key_column, column_mapping, priority, status, last_sync_at, created_at, updated_at) VALUES
+-- Customer MDM sources
+('01a00001-0000-4000-8000-000000000001', '01900001-0000-4000-8000-000000000001', '00400004-0000-4000-8000-000000000004', 'device_id',
+'{"device_id": "customer_id", "device_serial": "external_id", "status": "account_status"}',
+2, 'active', NOW() - INTERVAL '2 hours', NOW(), NOW()),
+
+-- Product MDM sources
+('01a00002-0000-4000-8000-000000000002', '01900002-0000-4000-8000-000000000002', '00400007-0000-4000-8000-000000000007', 'sku',
+'{"sku": "product_id", "item_name": "product_name", "quantity": "inventory_count", "warehouse_id": "location_id"}',
+1, 'active', NOW() - INTERVAL '4 hours', NOW(), NOW())
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 12c. MDM MATCH RUNS (type=01b)
+-- ============================================================================
+-- Tracks MDM matching job runs
+-- Columns: id, config_id, source_link_id, status, databricks_run_id, total_source_records, total_master_records, matches_found, new_records, started_at, completed_at, error_message, triggered_by
+
+INSERT INTO mdm_match_runs (id, config_id, source_link_id, status, databricks_run_id, total_source_records, total_master_records, matches_found, new_records, started_at, completed_at, error_message, triggered_by) VALUES
+-- Customer MDM run (completed successfully)
+('01b00001-0000-4000-8000-000000000001', '01900001-0000-4000-8000-000000000001', '01a00001-0000-4000-8000-000000000001', 'completed', 'run-demo-cust-001', 1500, 10000, 1423, 77, NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 hours 45 minutes', NULL, 'system@demo'),
+
+-- Customer MDM run (older, also completed)
+('01b00002-0000-4000-8000-000000000002', '01900001-0000-4000-8000-000000000001', '01a00001-0000-4000-8000-000000000001', 'completed', 'run-demo-cust-002', 1200, 9500, 1180, 20, NOW() - INTERVAL '1 day 3 hours', NOW() - INTERVAL '1 day 2 hours 50 minutes', NULL, 'data.engineer@example.com'),
+
+-- Product MDM run (completed)
+('01b00003-0000-4000-8000-000000000003', '01900002-0000-4000-8000-000000000002', '01a00002-0000-4000-8000-000000000002', 'completed', 'run-demo-prod-001', 800, 5000, 750, 50, NOW() - INTERVAL '5 hours', NOW() - INTERVAL '4 hours 40 minutes', NULL, 'system@demo'),
+
+-- Product MDM run (failed example)
+('01b00004-0000-4000-8000-000000000004', '01900002-0000-4000-8000-000000000002', '01a00002-0000-4000-8000-000000000002', 'failed', 'run-demo-prod-002', 0, 0, 0, 0, NOW() - INTERVAL '6 hours', NOW() - INTERVAL '5 hours 55 minutes', 'Source table not accessible: permission denied on catalog.schema.inventory', 'ops-lead@example.com')
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 12d. MDM MATCH CANDIDATES (type=01c)
+-- ============================================================================
+-- Individual match candidates awaiting review or processed
+-- Columns: id, run_id, master_record_id, source_record_id, source_contract_id, confidence_score, match_type, matched_fields, review_request_id, reviewed_asset_id, status, master_record_data, source_record_data, merged_record_data, reviewed_at, reviewed_by, merged_at
+
+INSERT INTO mdm_match_candidates (id, run_id, master_record_id, source_record_id, source_contract_id, confidence_score, match_type, matched_fields, status, master_record_data, source_record_data) VALUES
+-- Customer matches from run 01b00001
+('01c00001-0000-4000-8000-000000000001', '01b00001-0000-4000-8000-000000000001', 'CUST-M-001', 'DEV-S-001', '00400004-0000-4000-8000-000000000004', 0.98, 'exact', 
+'{"email": {"match": true, "score": 1.0}, "phone_number": {"match": true, "score": 1.0}}',
+'approved', 
+'{"customer_id": "CUST-M-001", "email": "john.smith@example.com", "first_name": "John", "last_name": "Smith", "phone_number": "+1-555-123-4567"}',
+'{"device_id": "DEV-S-001", "device_serial": "IOT-2024-001", "status": "active"}'),
+
+('01c00002-0000-4000-8000-000000000002', '01b00001-0000-4000-8000-000000000001', 'CUST-M-002', 'DEV-S-002', '00400004-0000-4000-8000-000000000004', 0.87, 'fuzzy',
+'{"first_name": {"match": true, "score": 0.92}, "last_name": {"match": true, "score": 0.88}, "phone_number": {"match": false, "score": 0.0}}',
+'pending',
+'{"customer_id": "CUST-M-002", "email": "jane.doe@example.com", "first_name": "Jane", "last_name": "Doe", "phone_number": "+1-555-987-6543"}',
+'{"device_id": "DEV-S-002", "device_serial": "IOT-2024-002", "status": "active"}'),
+
+('01c00003-0000-4000-8000-000000000003', '01b00001-0000-4000-8000-000000000001', NULL, 'DEV-S-003', '00400004-0000-4000-8000-000000000004', 0.0, 'new',
+'{}',
+'pending',
+NULL,
+'{"device_id": "DEV-S-003", "device_serial": "IOT-2024-003", "status": "inactive"}'),
+
+-- Product matches from run 01b00003
+('01c00004-0000-4000-8000-000000000004', '01b00003-0000-4000-8000-000000000003', 'PROD-M-001', 'INV-S-001', '00400007-0000-4000-8000-000000000007', 1.0, 'exact',
+'{"sku": {"match": true, "score": 1.0}}',
+'merged',
+'{"product_id": "PROD-M-001", "product_name": "Widget Pro", "sku": "WGT-PRO-001", "price": 29.99}',
+'{"sku": "WGT-PRO-001", "item_name": "Widget Professional", "quantity": 150, "warehouse_id": "WH-EAST-01"}'),
+
+('01c00005-0000-4000-8000-000000000005', '01b00003-0000-4000-8000-000000000003', 'PROD-M-002', 'INV-S-002', '00400007-0000-4000-8000-000000000007', 0.91, 'fuzzy',
+'{"product_name": {"match": true, "score": 0.91}, "sku": {"match": false, "score": 0.0}}',
+'rejected',
+'{"product_id": "PROD-M-002", "product_name": "Gadget Deluxe", "sku": "GDG-DLX-002", "price": 49.99}',
+'{"sku": "GDG-DELUXE-02", "item_name": "Gadget De Luxe", "quantity": 75, "warehouse_id": "WH-WEST-01"}')
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 13. AUTHORITATIVE DEFINITIONS (Business Term Assignments)
+-- ============================================================================
+
+-- 13a. Contract-level authoritative definitions (type=01d)
+-- Links business terms to entire data contracts
+INSERT INTO data_contract_authoritative_definitions (id, contract_id, url, type) VALUES
+-- Customer Data Contract business terms
+('01d00001-0000-4000-8000-000000000001', '00400001-0000-4000-8000-000000000001', 'http://glossary.example.com/terms/Customer', 'businessTerm'),
+('01d00002-0000-4000-8000-000000000002', '00400001-0000-4000-8000-000000000001', 'http://glossary.example.com/terms/PersonalData', 'businessTerm'),
+('01d00003-0000-4000-8000-000000000003', '00400001-0000-4000-8000-000000000001', 'https://gdpr.eu/article-4/', 'regulation'),
+
+-- Product Catalog Contract business terms
+('01d00004-0000-4000-8000-000000000004', '00400002-0000-4000-8000-000000000002', 'http://glossary.example.com/terms/Product', 'businessTerm'),
+('01d00005-0000-4000-8000-000000000005', '00400002-0000-4000-8000-000000000002', 'http://glossary.example.com/terms/Inventory', 'businessTerm'),
+
+-- IoT Device Data Contract business terms
+('01d00006-0000-4000-8000-000000000006', '00400004-0000-4000-8000-000000000004', 'http://glossary.example.com/terms/Device', 'businessTerm'),
+('01d00007-0000-4000-8000-000000000007', '00400004-0000-4000-8000-000000000004', 'http://glossary.example.com/terms/Telemetry', 'businessTerm'),
+
+-- Financial Transactions Contract
+('01d00008-0000-4000-8000-000000000008', '00400006-0000-4000-8000-000000000006', 'http://glossary.example.com/terms/Transaction', 'businessTerm'),
+('01d00009-0000-4000-8000-000000000009', '00400006-0000-4000-8000-000000000006', 'http://glossary.example.com/terms/FinancialRecord', 'businessTerm')
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- 13b. Schema object-level authoritative definitions (type=01e)
+-- Links business terms to schema objects (tables/views)
+INSERT INTO data_contract_schema_object_authoritative_definitions (id, schema_object_id, url, type) VALUES
+-- customers table (00500001)
+('01e00001-0000-4000-8000-000000000001', '00500001-0000-4000-8000-000000000001', 'http://glossary.example.com/terms/CustomerProfile', 'businessTerm'),
+('01e00002-0000-4000-8000-000000000002', '00500001-0000-4000-8000-000000000001', 'http://glossary.example.com/terms/MasterData', 'businessTerm'),
+
+-- customer_preferences table (00500002)
+('01e00003-0000-4000-8000-000000000003', '00500002-0000-4000-8000-000000000002', 'http://glossary.example.com/terms/CustomerPreference', 'businessTerm'),
+
+-- customer_addresses table (00500003)
+('01e00004-0000-4000-8000-000000000004', '00500003-0000-4000-8000-000000000003', 'http://glossary.example.com/terms/Address', 'businessTerm'),
+('01e00005-0000-4000-8000-000000000005', '00500003-0000-4000-8000-000000000003', 'http://glossary.example.com/terms/ContactInformation', 'businessTerm'),
+
+-- devices table (00500004)
+('01e00006-0000-4000-8000-000000000006', '00500004-0000-4000-8000-000000000004', 'http://glossary.example.com/terms/IoTDevice', 'businessTerm'),
+('01e00007-0000-4000-8000-000000000007', '00500004-0000-4000-8000-000000000004', 'http://glossary.example.com/terms/AssetRegistry', 'businessTerm'),
+
+-- device_telemetry table (00500005)
+('01e00008-0000-4000-8000-000000000008', '00500005-0000-4000-8000-000000000005', 'http://glossary.example.com/terms/SensorReading', 'businessTerm'),
+
+-- device_events table (00500006)
+('01e00009-0000-4000-8000-000000000009', '00500006-0000-4000-8000-000000000006', 'http://glossary.example.com/terms/DeviceEvent', 'businessTerm'),
+('01e0000a-0000-4000-8000-000000000010', '00500006-0000-4000-8000-000000000006', 'http://glossary.example.com/terms/Alert', 'businessTerm')
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- 13c. Schema property-level authoritative definitions (type=01f)
+-- Links business terms to individual columns/properties
+INSERT INTO data_contract_schema_property_authoritative_definitions (id, property_id, url, type) VALUES
+-- customers.customer_id (00600001)
+('01f00001-0000-4000-8000-000000000001', '00600001-0000-4000-8000-000000000001', 'http://glossary.example.com/terms/CustomerId', 'businessTerm'),
+('01f00002-0000-4000-8000-000000000002', '00600001-0000-4000-8000-000000000001', 'http://glossary.example.com/terms/UniqueIdentifier', 'businessTerm'),
+
+-- customers.email (00600002)
+('01f00003-0000-4000-8000-000000000003', '00600002-0000-4000-8000-000000000002', 'http://glossary.example.com/terms/EmailAddress', 'businessTerm'),
+('01f00004-0000-4000-8000-000000000004', '00600002-0000-4000-8000-000000000002', 'http://glossary.example.com/terms/PII', 'classification'),
+
+-- customers.first_name (00600003)
+('01f00005-0000-4000-8000-000000000005', '00600003-0000-4000-8000-000000000003', 'http://glossary.example.com/terms/FirstName', 'businessTerm'),
+('01f00006-0000-4000-8000-000000000006', '00600003-0000-4000-8000-000000000003', 'http://glossary.example.com/terms/PersonalName', 'businessTerm'),
+
+-- customers.last_name (00600004)
+('01f00007-0000-4000-8000-000000000007', '00600004-0000-4000-8000-000000000004', 'http://glossary.example.com/terms/LastName', 'businessTerm'),
+('01f00008-0000-4000-8000-000000000008', '00600004-0000-4000-8000-000000000004', 'http://glossary.example.com/terms/FamilyName', 'businessTerm'),
+
+-- customers.date_of_birth (00600005)
+('01f00009-0000-4000-8000-000000000009', '00600005-0000-4000-8000-000000000005', 'http://glossary.example.com/terms/DateOfBirth', 'businessTerm'),
+('01f0000a-0000-4000-8000-000000000010', '00600005-0000-4000-8000-000000000005', 'http://glossary.example.com/terms/SensitivePII', 'classification'),
+
+-- customers.phone_number (00600006)
+('01f0000b-0000-4000-8000-000000000011', '00600006-0000-4000-8000-000000000006', 'http://glossary.example.com/terms/PhoneNumber', 'businessTerm'),
+('01f0000c-0000-4000-8000-000000000012', '00600006-0000-4000-8000-000000000006', 'http://glossary.example.com/terms/ContactPhone', 'businessTerm'),
+
+-- customers.country_code (00600007)
+('01f0000d-0000-4000-8000-000000000013', '00600007-0000-4000-8000-000000000007', 'http://glossary.example.com/terms/CountryCode', 'businessTerm'),
+('01f0000e-0000-4000-8000-000000000014', '00600007-0000-4000-8000-000000000007', 'https://www.iso.org/iso-3166-country-codes.html', 'standard'),
+
+-- customers.account_status (00600009)
+('01f0000f-0000-4000-8000-000000000015', '00600009-0000-4000-8000-000000000009', 'http://glossary.example.com/terms/AccountStatus', 'businessTerm'),
+
+-- devices.device_id (0060000b)
+('01f00010-0000-4000-8000-000000000016', '0060000b-0000-4000-8000-000000000011', 'http://glossary.example.com/terms/DeviceId', 'businessTerm'),
+('01f00011-0000-4000-8000-000000000017', '0060000b-0000-4000-8000-000000000011', 'http://glossary.example.com/terms/AssetIdentifier', 'businessTerm'),
+
+-- devices.device_type (0060000d)
+('01f00012-0000-4000-8000-000000000018', '0060000d-0000-4000-8000-000000000013', 'http://glossary.example.com/terms/DeviceType', 'businessTerm'),
+('01f00013-0000-4000-8000-000000000019', '0060000d-0000-4000-8000-000000000013', 'http://glossary.example.com/terms/IoTClassification', 'businessTerm'),
+
+-- devices.status (0060000e)
+('01f00014-0000-4000-8000-000000000020', '0060000e-0000-4000-8000-000000000014', 'http://glossary.example.com/terms/DeviceStatus', 'businessTerm'),
+('01f00015-0000-4000-8000-000000000021', '0060000e-0000-4000-8000-000000000014', 'http://glossary.example.com/terms/OperationalState', 'businessTerm')
 
 ON CONFLICT (id) DO NOTHING;
 

@@ -4851,12 +4851,28 @@ class DataContractsManager(SearchableAsset):
                 # Add logical type options to property
                 prop_dict.update(options)
                 
+                # Add property-level authoritative definitions
+                if hasattr(prop, 'authoritative_definitions') and prop.authoritative_definitions:
+                    prop_dict['authoritativeDefinitions'] = [
+                        {'url': ad.url, 'type': ad.type}
+                        for ad in prop.authoritative_definitions
+                    ]
+                
                 properties.append(ColumnProperty(**prop_dict))
+            
+            # Build schema-level authoritative definitions
+            schema_auth_defs = []
+            if hasattr(schema_obj, 'authoritative_definitions') and schema_obj.authoritative_definitions:
+                schema_auth_defs = [
+                    {'url': ad.url, 'type': ad.type}
+                    for ad in schema_obj.authoritative_definitions
+                ]
             
             schema_objects.append(SchemaObject(
                 name=schema_obj.name,
                 physicalName=schema_obj.physical_name,
-                properties=properties
+                properties=properties,
+                authoritativeDefinitions=schema_auth_defs
             ))
         
         # Build team (ODCS v3.0.2 compliant)

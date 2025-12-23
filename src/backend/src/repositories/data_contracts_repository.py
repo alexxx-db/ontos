@@ -56,9 +56,14 @@ class DataContractRepository(CRUDBase[DataContractDb, Dict[str, Any], Union[Dict
                     selectinload(self.model.custom_properties),
                     selectinload(self.model.sla_properties),
                     selectinload(self.model.schema_objects)
-                        .selectinload(SchemaObjectDb.properties),
+                        .selectinload(SchemaObjectDb.properties)
+                        .selectinload(SchemaPropertyDb.authoritative_definitions),
                     selectinload(self.model.schema_objects)
                         .selectinload(SchemaObjectDb.quality_checks),
+                    selectinload(self.model.schema_objects)
+                        .selectinload(SchemaObjectDb.authoritative_definitions),
+                    selectinload(self.model.schema_objects)
+                        .selectinload(SchemaObjectDb.custom_properties),
                     selectinload(self.model.comments),
                 )
                 .filter(self.model.id == id)

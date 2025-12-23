@@ -2048,17 +2048,38 @@ async def get_schema_authoritative_definitions(
     db: DBSessionDep,
     _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY))
 ):
-    """Get all authoritative definitions for a schema object."""
+    """Get all authoritative definitions for a schema object.
+    
+    The schema_id can be either the schema UUID or the schema name.
+    """
     from src.repositories.data_contracts_repository import schema_authoritative_definition_repo
     from src.models.data_contracts_api import AuthoritativeDefinitionRead
+    from src.db_models.data_contracts import SchemaObjectDb
+    import re
 
     contract = data_contract_repo.get(db, id=contract_id)
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
 
     try:
-        definitions = schema_authoritative_definition_repo.get_by_schema(db=db, schema_id=schema_id)
+        # Check if schema_id is a UUID or a name
+        uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+        actual_schema_id = schema_id
+        
+        if not uuid_pattern.match(schema_id):
+            # Treat as schema name, look up the actual ID
+            schema_obj = db.query(SchemaObjectDb).filter(
+                SchemaObjectDb.contract_id == contract_id,
+                SchemaObjectDb.name == schema_id
+            ).first()
+            if not schema_obj:
+                raise HTTPException(status_code=404, detail=f"Schema '{schema_id}' not found")
+            actual_schema_id = schema_obj.id
+        
+        definitions = schema_authoritative_definition_repo.get_by_schema(db=db, schema_id=actual_schema_id)
         return [AuthoritativeDefinitionRead.model_validate(d).model_dump() for d in definitions]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error fetching schema authoritative definitions for schema %s", schema_id, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch schema authoritative definitions")

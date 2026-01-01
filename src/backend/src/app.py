@@ -141,11 +141,14 @@ logger.info(f"STATIC_ASSETS_PATH: {STATIC_ASSETS_PATH}")
 # mimetypes.add_type('image/svg+xml', '.svg')
 # mimetypes.add_type('image/png', '.png')
 
+# Import version from package
+from src import __version__
+
 # Create single FastAPI app with settings dependency
 app = FastAPI(
     title="Ontos",
     description="A Databricks App for managing data products, contracts, and more",
-    version="1.0.0",
+    version=__version__,
     dependencies=[Depends(get_settings)],
     on_startup=[startup_event],
     on_shutdown=[shutdown_event]
@@ -230,7 +233,6 @@ async def get_cache_version():
 @app.get("/api/version")
 async def get_app_version():
     """Get the application version and server start time"""
-    from src import __version__
     return {
         'version': __version__,
         'startTime': SERVER_STARTUP_TIME,

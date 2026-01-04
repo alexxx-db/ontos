@@ -47,6 +47,11 @@ class DataContractDb(Base):
     base_name = Column(String, nullable=True, index=True)  # Base name without version (e.g., "customer_data" for "customer_data_v1.0.0")
     change_summary = Column(Text, nullable=True)  # Summary of changes in this version
 
+    # Personal draft visibility field
+    # If set, this is a personal draft visible only to the owner
+    # NULL = follows normal team/project visibility rules (Tier 2/3)
+    draft_owner_id = Column(String, nullable=True, index=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(String, nullable=True)

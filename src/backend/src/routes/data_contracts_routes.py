@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, List
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, Depends, Request, Body
+from fastapi import APIRouter, File, HTTPException, UploadFile, Depends, Request, Body, Query
 from fastapi.responses import JSONResponse
 
 from src.controller.data_contracts_manager import DataContractsManager
@@ -266,6 +266,69 @@ async def reject_contract(
         raise HTTPException(status_code=500, detail="Failed to reject contract")
 
 
+class ChangeStatusPayload(BaseModel):
+    new_status: str
+
+
+@router.post('/data-contracts/{contract_id}/change-status')
+async def change_contract_status(
+    contract_id: str,
+    payload: ChangeStatusPayload,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """
+    Change contract status. Validates transition is allowed per ODCS lifecycle.
+    
+    Valid transitions:
+    - draft → proposed, deprecated
+    - proposed → draft, under_review, deprecated
+    - under_review → draft, approved, deprecated
+    - approved → active, draft, deprecated
+    - active → certified, deprecated
+    - certified → deprecated, active
+    - deprecated → retired, active
+    - retired → (terminal state, no transitions)
+    """
+    try:
+        contract = data_contract_repo.get(db, id=contract_id)
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        from_status = (contract.status or 'draft').lower()
+        new_status = payload.new_status.lower()
+        
+        # Use manager's transition_status which validates the transition
+        updated = manager.transition_status(
+            db=db,
+            contract_id=contract_id,
+            new_status=new_status,
+            current_user=current_user.username if current_user else None
+        )
+        
+        # Audit
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action='CHANGE_STATUS',
+            success=True,
+            details={'contract_id': contract_id, 'from': from_status, 'to': updated.status}
+        )
+        return {'status': updated.status, 'from': from_status, 'to': updated.status}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Change status failed for contract_id=%s", contract_id)
+        raise HTTPException(status_code=500, detail="Failed to change contract status")
+
+
 # --- Request Endpoints (for review, publish, deploy) ---
 
 class RequestReviewPayload(BaseModel):
@@ -281,6 +344,19 @@ class RequestDeployPayload(BaseModel):
     
     class Config:
         populate_by_name = True
+
+
+class RequestStatusChangePayload(BaseModel):
+    target_status: str
+    justification: str
+    current_status: Optional[str] = None
+
+
+class HandleStatusChangePayload(BaseModel):
+    decision: str  # 'approve' | 'deny' | 'clarify'
+    target_status: str
+    requester_email: str
+    message: Optional[str] = None
 
 
 @router.post('/data-contracts/{contract_id}/request-review')
@@ -430,6 +506,58 @@ async def request_deploy_to_catalog(
     except Exception as e:
         logger.exception("Request deploy failed for contract_id=%s", contract_id)
         raise HTTPException(status_code=500, detail="Failed to request deploy")
+
+
+@router.post('/data-contracts/{contract_id}/request-status-change')
+async def request_status_change(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    notifications: NotificationsManagerDep,
+    payload: RequestStatusChangePayload = Body(...),
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY)),
+):
+    """Request approval to change the status of a contract."""
+    try:
+        result = manager.request_status_change(
+            db=db,
+            notifications_manager=notifications,
+            contract_id=contract_id,
+            target_status=payload.target_status,
+            justification=payload.justification,
+            requester_email=current_user.email if current_user else None,
+            current_user=current_user.username if current_user else None
+        )
+        
+        # Audit
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action='REQUEST_STATUS_CHANGE',
+            success=True,
+            details={
+                'contract_id': contract_id,
+                'target_status': payload.target_status,
+                'current_status': payload.current_status
+            }
+        )
+        
+        return result
+        
+    except ValueError as e:
+        logger.error("Request status change validation error for contract_id=%s: %s", contract_id, e)
+        error_status = 404 if "not found" in str(e).lower() else (403 if "denied" in str(e).lower() or "permission" in str(e).lower() else 409)
+        raise HTTPException(status_code=error_status, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Request status change failed for contract_id=%s", contract_id)
+        raise HTTPException(status_code=500, detail="Failed to request status change")
 
 
 # --- Handle Request Endpoints (for approvers to respond) ---
@@ -609,6 +737,60 @@ async def handle_deploy_request_response(
     except Exception as e:
         logger.exception("Handle deploy failed for contract_id=%s", contract_id)
         raise HTTPException(status_code=500, detail="Failed to handle deploy")
+
+
+@router.post('/data-contracts/{contract_id}/handle-status-change')
+async def handle_status_change_response(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    notifications: NotificationsManagerDep,
+    payload: HandleStatusChangePayload = Body(...),
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE)),
+):
+    """Handle a status change request decision (approve/deny/clarify)."""
+    try:
+        result = manager.handle_status_change_response(
+            db=db,
+            notifications_manager=notifications,
+            contract_id=contract_id,
+            approver_email=current_user.email if current_user else None,
+            decision=payload.decision,
+            target_status=payload.target_status,
+            requester_email=payload.requester_email,
+            message=payload.message,
+            current_user=current_user.username if current_user else None
+        )
+        
+        # Audit
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action=f'STATUS_CHANGE_{payload.decision.upper()}',
+            success=True,
+            details={
+                'contract_id': contract_id,
+                'decision': payload.decision,
+                'target_status': payload.target_status
+            }
+        )
+        
+        return result
+        
+    except ValueError as e:
+        logger.error("Handle status change validation error for contract_id=%s: %s", contract_id, e)
+        error_status = 404 if "not found" in str(e).lower() else (400 if "must be" in str(e).lower() else 409)
+        raise HTTPException(status_code=error_status, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Handle status change failed for contract_id=%s", contract_id)
+        raise HTTPException(status_code=500, detail="Failed to handle status change")
 
 
 @router.post('/data-contracts', response_model=DataContractRead)
@@ -2759,6 +2941,237 @@ async def get_team_members_for_import(
             success=success,
             details={"contract_id": contract_id, "team_id": team_id, "member_count": len(members)}
         )
+
+
+# ===== Personal Draft Endpoints =====
+
+@router.post('/data-contracts/{contract_id}/clone-for-editing', response_model=dict, status_code=201)
+async def clone_contract_for_editing(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE))
+):
+    """Clone a contract to create a personal draft for editing.
+    
+    Creates a personal draft that is only visible to the owner.
+    The draft version is set to "{parent_version}-draft" as a placeholder.
+    The user can edit the draft and then commit it with a final version.
+    """
+    success = False
+    response_status_code = 201
+    
+    try:
+        # Get parent contract to create placeholder version
+        parent = data_contract_repo.get(db, id=contract_id)
+        if not parent:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        
+        # Create personal draft with placeholder version
+        placeholder_version = f"{parent.version}-draft"
+        
+        new_contract = manager.clone_contract_for_new_version(
+            db=db,
+            contract_id=contract_id,
+            new_version=placeholder_version,
+            change_summary=None,
+            current_user=current_user.username if current_user else None,
+            as_personal_draft=True
+        )
+        
+        success = True
+        return {
+            "id": new_contract.id,
+            "name": new_contract.name,
+            "version": new_contract.version,
+            "status": new_contract.status,
+            "draft_owner_id": new_contract.draft_owner_id,
+            "parent_contract_id": new_contract.parent_contract_id,
+            "message": "Personal draft created. Edit and commit when ready."
+        }
+        
+    except ValueError as e:
+        response_status_code = 400
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        response_status_code = 500
+        logger.error("Error creating personal draft from contract %s", contract_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create personal draft")
+    finally:
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action='CLONE_FOR_EDITING',
+            success=success,
+            details={"contract_id": contract_id}
+        )
+
+
+@router.get('/data-contracts/{contract_id}/diff-from-parent', response_model=dict)
+async def get_diff_from_parent(
+    contract_id: str,
+    db: DBSessionDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY))
+):
+    """Compare a contract to its parent and get version suggestion.
+    
+    Returns the diff analysis and a suggested version bump based on
+    the changes detected between the contract and its parent.
+    """
+    try:
+        result = manager.get_diff_from_parent(db=db, contract_id=contract_id)
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Error getting diff from parent for contract %s", contract_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get diff from parent")
+
+
+@router.post('/data-contracts/{contract_id}/commit', response_model=dict)
+async def commit_personal_draft(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE))
+):
+    """Commit a personal draft to team/project visibility.
+    
+    This promotes a personal draft from tier 1 (only owner can see) to
+    tier 2 (team/project members can see).
+    
+    Request body:
+    - new_version: Final semantic version (e.g., "1.1.0")
+    - change_summary: Summary of changes in this version
+    """
+    success = False
+    
+    try:
+        new_version = body.get('new_version')
+        change_summary = body.get('change_summary')
+        
+        if not new_version:
+            raise HTTPException(status_code=400, detail="new_version is required")
+        if not change_summary:
+            raise HTTPException(status_code=400, detail="change_summary is required")
+        
+        result = manager.commit_personal_draft(
+            db=db,
+            draft_id=contract_id,
+            new_version=new_version,
+            change_summary=change_summary,
+            current_user=current_user.username if current_user else None
+        )
+        
+        success = True
+        return {
+            "id": result.id,
+            "name": result.name,
+            "version": result.version,
+            "status": result.status,
+            "message": "Draft committed successfully. Now visible to team."
+        }
+        
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Error committing personal draft %s", contract_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to commit draft")
+    finally:
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action='COMMIT_PERSONAL_DRAFT',
+            success=success,
+            details={"contract_id": contract_id, "new_version": body.get('new_version')}
+        )
+
+
+@router.delete('/data-contracts/{contract_id}/discard', response_model=dict)
+async def discard_personal_draft(
+    contract_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataContractsManager = Depends(get_data_contracts_manager),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_WRITE))
+):
+    """Discard a personal draft (delete it and all child entities).
+    
+    Only the draft owner can discard their personal draft.
+    """
+    success = False
+    
+    try:
+        manager.discard_personal_draft(
+            db=db,
+            draft_id=contract_id,
+            current_user=current_user.username if current_user else None
+        )
+        
+        success = True
+        return {"message": "Personal draft discarded successfully"}
+        
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Error discarding personal draft %s", contract_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to discard draft")
+    finally:
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username if current_user else 'anonymous',
+            ip_address=request.client.host if request.client else None,
+            feature='data-contracts',
+            action='DISCARD_PERSONAL_DRAFT',
+            success=success,
+            details={"contract_id": contract_id}
+        )
+
+
+@router.get('/data-contracts/my-drafts', response_model=List[dict])
+async def get_my_personal_drafts(
+    request: Request,
+    db: DBSessionDep,
+    current_user: AuditCurrentUserDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    _: bool = Depends(PermissionChecker('data-contracts', FeatureAccessLevel.READ_ONLY))
+):
+    """Get all personal drafts owned by the current user."""
+    try:
+        from src.models.data_contracts_api import DataContractRead
+        
+        drafts = data_contract_repo.get_user_personal_drafts(
+            db=db,
+            current_user=current_user.username if current_user else None,
+            skip=skip,
+            limit=limit
+        )
+        
+        return [DataContractRead.model_validate(d).model_dump() for d in drafts]
+        
+    except Exception as e:
+        logger.error("Error fetching personal drafts", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch personal drafts")
 
 
 def register_routes(app):

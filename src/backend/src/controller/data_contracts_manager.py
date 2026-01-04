@@ -3569,7 +3569,8 @@ class DataContractsManager(SearchableAsset):
         contract_id: str,
         new_version: str,
         change_summary: Optional[str] = None,
-        current_user: Optional[str] = None
+        current_user: Optional[str] = None,
+        as_personal_draft: bool = False
     ) -> DataContractDb:
         """Clone a contract to create a new version.
         
@@ -3581,9 +3582,10 @@ class DataContractsManager(SearchableAsset):
         Args:
             db: Database session
             contract_id: Source contract ID to clone
-            new_version: Semantic version string (e.g., "2.0.0")
+            new_version: Semantic version string (e.g., "2.0.0") or placeholder (e.g., "1.0.0-draft")
             change_summary: Optional summary of changes in this version
             current_user: Username creating the clone
+            as_personal_draft: If True, creates a personal draft visible only to owner
             
         Returns:
             The newly created contract database object
@@ -3603,9 +3605,13 @@ class DataContractsManager(SearchableAsset):
             SchemaPropertyAuthoritativeDefinitionDb
         )
         
-        # Validate semantic version format
-        if not re.match(r'^\d+\.\d+\.\d+$', new_version):
-            raise ValueError("new_version must be in format X.Y.Z (e.g., 2.0.0)")
+        # Validate semantic version format (allow -draft suffix for personal drafts)
+        if as_personal_draft:
+            if not re.match(r'^\d+\.\d+\.\d+(-draft)?$', new_version):
+                raise ValueError("new_version must be in format X.Y.Z or X.Y.Z-draft")
+        else:
+            if not re.match(r'^\d+\.\d+\.\d+$', new_version):
+                raise ValueError("new_version must be in format X.Y.Z (e.g., 2.0.0)")
         
         # Get source contract
         source_contract = data_contract_repo.get(db, id=contract_id)
@@ -3623,6 +3629,12 @@ class DataContractsManager(SearchableAsset):
                 change_summary=change_summary,
                 created_by=current_user or "system"
             )
+            
+            # Set personal draft owner if cloning for editing
+            if as_personal_draft:
+                cloned_data['draft_owner_id'] = current_user
+                # Personal drafts always start with draft status
+                cloned_data['status'] = 'draft'
             
             # Create new contract in database
             new_contract = DataContractDb(**cloned_data)
@@ -3735,6 +3747,201 @@ class DataContractsManager(SearchableAsset):
         except Exception as e:
             db.rollback()
             logger.error(f"Error cloning contract for new version: {e}", exc_info=True)
+            raise
+
+    def commit_personal_draft(
+        self,
+        db,
+        draft_id: str,
+        new_version: str,
+        change_summary: str,
+        current_user: str
+    ) -> DataContractDb:
+        """Commit a personal draft to team/project visibility (tier 2).
+        
+        This promotes a personal draft from tier 1 (only owner can see) to
+        tier 2 (team/project members can see). The draft_owner_id is cleared
+        and the version is updated to the final semver.
+        
+        Args:
+            db: Database session
+            draft_id: ID of the personal draft to commit
+            new_version: Final semantic version (e.g., "1.1.0")
+            change_summary: Summary of changes in this version
+            current_user: Username of the user committing (must be draft owner)
+            
+        Returns:
+            The updated contract database object
+            
+        Raises:
+            ValueError: If draft not found
+            PermissionError: If user is not the draft owner
+        """
+        import re
+        
+        # Validate semantic version format
+        if not re.match(r'^\d+\.\d+\.\d+$', new_version):
+            raise ValueError("new_version must be in format X.Y.Z (e.g., 1.1.0)")
+        
+        # Get the draft
+        draft = data_contract_repo.get(db, id=draft_id)
+        if not draft:
+            raise ValueError("Draft not found")
+        
+        # Verify user is the draft owner
+        if draft.draft_owner_id != current_user:
+            raise PermissionError("Only the draft owner can commit this draft")
+        
+        # Verify it's actually a personal draft
+        if draft.draft_owner_id is None:
+            raise ValueError("This contract is not a personal draft")
+        
+        try:
+            # Update version and promote to team visibility
+            draft.version = new_version
+            draft.change_summary = change_summary
+            draft.draft_owner_id = None  # Promote from tier 1 (personal) to tier 2 (team)
+            # draft.published remains False - marketplace publish is separate action
+            draft.updated_by = current_user
+            
+            db.commit()
+            db.refresh(draft)
+            
+            logger.info(f"Personal draft {draft_id} committed as version {new_version} by {current_user}")
+            return draft
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error committing personal draft {draft_id}: {e}", exc_info=True)
+            raise
+
+    def get_diff_from_parent(
+        self,
+        db,
+        contract_id: str
+    ) -> Dict[str, Any]:
+        """Get diff between a contract and its parent, with version suggestion.
+        
+        Used for the commit flow to show users what changed and suggest
+        an appropriate version bump.
+        
+        Args:
+            db: Database session
+            contract_id: ID of the contract to compare (typically a personal draft)
+            
+        Returns:
+            Dict with:
+            - parent_version: Version of the parent contract
+            - parent_status: Status of the parent contract
+            - suggested_bump: "major", "minor", or "patch"
+            - suggested_version: Calculated next version based on bump
+            - analysis: Full change analysis from ContractChangeAnalyzer
+            
+        Raises:
+            ValueError: If contract not found or has no parent
+        """
+        # Get the contract
+        contract = data_contract_repo.get_with_all(db, id=contract_id)
+        if not contract:
+            raise ValueError("Contract not found")
+        
+        if not contract.parent_contract_id:
+            raise ValueError("Contract has no parent to compare against")
+        
+        # Get the parent contract
+        parent = data_contract_repo.get_with_all(db, id=contract.parent_contract_id)
+        if not parent:
+            raise ValueError("Parent contract not found")
+        
+        # Convert both to dicts for comparison
+        contract_dict = self._contract_db_to_dict(contract, db)
+        parent_dict = self._contract_db_to_dict(parent, db)
+        
+        # Run change analysis
+        analysis_result = self.compare_contracts(parent_dict, contract_dict)
+        
+        # Calculate suggested version
+        suggested_version = self._calculate_next_version(
+            parent.version,
+            analysis_result.get('version_bump', 'patch')
+        )
+        
+        return {
+            'parent_version': parent.version,
+            'parent_status': parent.status,
+            'suggested_bump': analysis_result.get('version_bump', 'patch'),
+            'suggested_version': suggested_version,
+            'analysis': analysis_result
+        }
+
+    def _calculate_next_version(self, current_version: str, bump_type: str) -> str:
+        """Calculate the next version based on bump type.
+        
+        Args:
+            current_version: Current semver (e.g., "1.2.3")
+            bump_type: "major", "minor", or "patch"
+            
+        Returns:
+            Next version string
+        """
+        import re
+        match = re.match(r'^(\d+)\.(\d+)\.(\d+)', current_version)
+        if not match:
+            return "1.0.0"
+        
+        major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        
+        if bump_type == 'major':
+            return f"{major + 1}.0.0"
+        elif bump_type == 'minor':
+            return f"{major}.{minor + 1}.0"
+        else:  # patch
+            return f"{major}.{minor}.{patch + 1}"
+
+    def discard_personal_draft(
+        self,
+        db,
+        draft_id: str,
+        current_user: str
+    ) -> bool:
+        """Discard a personal draft (delete it and all its child entities).
+        
+        Args:
+            db: Database session
+            draft_id: ID of the personal draft to discard
+            current_user: Username of the user discarding (must be draft owner)
+            
+        Returns:
+            True if successfully discarded
+            
+        Raises:
+            ValueError: If draft not found
+            PermissionError: If user is not the draft owner
+        """
+        # Get the draft
+        draft = data_contract_repo.get(db, id=draft_id)
+        if not draft:
+            raise ValueError("Draft not found")
+        
+        # Verify user is the draft owner
+        if draft.draft_owner_id != current_user:
+            raise PermissionError("Only the draft owner can discard this draft")
+        
+        # Verify it's actually a personal draft
+        if draft.draft_owner_id is None:
+            raise ValueError("This contract is not a personal draft")
+        
+        try:
+            # Delete the draft (cascade will handle child entities)
+            db.delete(draft)
+            db.commit()
+            
+            logger.info(f"Personal draft {draft_id} discarded by {current_user}")
+            return True
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error discarding personal draft {draft_id}: {e}", exc_info=True)
             raise
     
     def compare_contracts(
@@ -4677,6 +4884,235 @@ class DataContractsManager(SearchableAsset):
         
         result["message"] = response_message
         return result
+    
+    def request_status_change(
+        self,
+        db,
+        notifications_manager,
+        contract_id: str,
+        target_status: str,
+        justification: str,
+        requester_email: str,
+        current_user: Optional[str] = None
+    ) -> dict:
+        """Request approval to change the status of a contract.
+        
+        Creates notifications for admins and logs the request.
+        
+        Args:
+            db: Database session
+            notifications_manager: Notifications manager instance
+            contract_id: Contract ID to request status change for
+            target_status: Requested target status
+            justification: Justification for the status change
+            requester_email: Email of user requesting the change
+            current_user: Username requesting the change
+            
+        Returns:
+            Dict with message
+            
+        Raises:
+            ValueError: If contract not found or invalid status transition
+        """
+        from datetime import datetime
+        from src.models.notifications import NotificationType, Notification
+        
+        contract = data_contract_repo.get(db, id=contract_id)
+        if not contract:
+            raise ValueError("Contract not found")
+        
+        # Validate the transition is allowed
+        current_status = (contract.status or 'draft').lower()
+        target_status_lower = target_status.lower()
+        
+        allowed_transitions = self._get_allowed_status_transitions(current_status)
+        if target_status_lower not in allowed_transitions:
+            raise ValueError(f"Invalid transition from '{current_status}' to '{target_status}'")
+        
+        now = datetime.utcnow()
+        
+        # Create notification for the requester
+        requester_note = Notification(
+            id=str(uuid4()),
+            created_at=now,
+            type=NotificationType.INFO,
+            title="Status Change Request Submitted",
+            subtitle=f"Contract: {contract.name}",
+            description=f"Your request to change status from '{current_status}' to '{target_status}' has been submitted for approval.",
+            recipient=requester_email,
+            can_delete=True,
+        )
+        notifications_manager.create_notification(notification=requester_note, db=db)
+        
+        # Create actionable notification for admins
+        notifications_manager.create_actionable_notification(
+            db=db,
+            title="Status Change Request Pending",
+            subtitle=f"Contract: {contract.name}",
+            description=f"{requester_email} is requesting to change status from '{current_status}' to '{target_status}'.\n\nJustification: {justification}",
+            action_type="handle_status_change_request",
+            action_payload={
+                "contract_id": contract_id,
+                "target_status": target_status,
+                "requester_email": requester_email,
+                "current_status": current_status,
+            },
+            recipient_role="Admin",
+        )
+        
+        # Log change
+        from src.controller.change_log_manager import change_log_manager
+        change_log_manager.log_change_with_details(
+            db,
+            entity_type="data_contract",
+            entity_id=contract_id,
+            action="status_change_requested",
+            username=current_user,
+            details={
+                "requester_email": requester_email,
+                "current_status": current_status,
+                "target_status": target_status,
+                "justification": justification,
+                "timestamp": now.isoformat(),
+                "summary": f"Status change from '{current_status}' to '{target_status}' requested by {requester_email}",
+            },
+        )
+        
+        return {"message": "Status change request submitted successfully"}
+    
+    def handle_status_change_response(
+        self,
+        db,
+        notifications_manager,
+        contract_id: str,
+        approver_email: str,
+        decision: str,
+        target_status: str,
+        requester_email: str,
+        message: Optional[str] = None,
+        current_user: Optional[str] = None
+    ) -> dict:
+        """Handle a status change request decision (approve/deny/clarify).
+        
+        If approved, applies the status change. Notifies requester of decision.
+        
+        Args:
+            db: Database session
+            notifications_manager: Notifications manager instance
+            contract_id: Contract ID
+            approver_email: Email of approver
+            decision: Decision ('approve', 'deny', or 'clarify')
+            target_status: The target status that was requested
+            requester_email: Email of the original requester
+            message: Optional approver message
+            current_user: Username handling the request
+            
+        Returns:
+            Dict with status and message
+            
+        Raises:
+            ValueError: If contract not found or invalid decision
+        """
+        from datetime import datetime
+        from src.models.notifications import NotificationType, Notification
+        
+        contract = data_contract_repo.get(db, id=contract_id)
+        if not contract:
+            raise ValueError("Contract not found")
+        
+        decision = decision.lower()
+        if decision not in ('approve', 'deny', 'clarify'):
+            raise ValueError("Decision must be 'approve', 'deny', or 'clarify'")
+        
+        from_status = (contract.status or 'draft').lower()
+        now = datetime.utcnow()
+        
+        # Apply status change if approved
+        if decision == 'approve':
+            target_status_lower = target_status.lower()
+            allowed_transitions = self._get_allowed_status_transitions(from_status)
+            if target_status_lower not in allowed_transitions:
+                raise ValueError(f"Invalid transition from '{from_status}' to '{target_status}'")
+            
+            contract.status = target_status_lower
+            contract.updated_at = now
+            db.commit()
+            db.refresh(contract)
+            
+            notification_title = "Status Change Approved"
+            notification_desc = f"Your request to change status of contract '{contract.name}' from '{from_status}' to '{target_status}' has been approved."
+        elif decision == 'deny':
+            notification_title = "Status Change Denied"
+            notification_desc = f"Your request to change status of contract '{contract.name}' from '{from_status}' to '{target_status}' has been denied."
+        else:  # clarify
+            notification_title = "Status Change Request Needs Clarification"
+            notification_desc = f"Your status change request for contract '{contract.name}' requires additional information."
+        
+        if message:
+            notification_desc += f"\n\nReviewer message: {message}"
+        
+        # Mark actionable notification as handled
+        try:
+            notifications_manager.handle_actionable_notification(
+                db=db,
+                action_type="handle_status_change_request",
+                action_payload={"contract_id": contract_id},
+            )
+        except Exception:
+            pass
+        
+        # Notify requester
+        requester_note = Notification(
+            id=str(uuid4()),
+            created_at=now,
+            type=NotificationType.INFO if decision == 'approve' else NotificationType.WARNING,
+            title=notification_title,
+            subtitle=f"Contract: {contract.name}",
+            description=notification_desc,
+            recipient=requester_email,
+            can_delete=True,
+        )
+        notifications_manager.create_notification(notification=requester_note, db=db)
+        
+        # Change log entry
+        from src.controller.change_log_manager import change_log_manager
+        change_log_manager.log_change_with_details(
+            db,
+            entity_type="data_contract",
+            entity_id=contract_id,
+            action=f"status_change_{decision}",
+            username=current_user,
+            details={
+                "approver_email": approver_email,
+                "requester_email": requester_email,
+                "decision": decision,
+                "from_status": from_status,
+                "target_status": target_status,
+                "message": message,
+                "timestamp": now.isoformat(),
+                "summary": f"Status change {decision} by {approver_email}" + (f": {message}" if message else ""),
+            },
+        )
+        
+        return {
+            "message": f"Status change {decision} processed successfully",
+            "status": contract.status if decision == 'approve' else from_status,
+            "decision": decision
+        }
+    
+    def _get_allowed_status_transitions(self, current_status: str) -> List[str]:
+        """Get allowed status transitions from current status."""
+        transitions = {
+            'draft': ['proposed', 'deprecated'],
+            'proposed': ['draft', 'under_review', 'deprecated'],
+            'under_review': ['draft', 'approved', 'deprecated'],
+            'approved': ['active', 'deprecated'],
+            'active': ['certified', 'deprecated'],
+            'certified': ['deprecated'],
+            'deprecated': ['retired'],
+            'retired': [],
+        }
+        return transitions.get(current_status.lower(), [])
     
     def get_team_members_for_import(
         self,

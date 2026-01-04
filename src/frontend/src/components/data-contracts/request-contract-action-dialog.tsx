@@ -26,6 +26,8 @@ interface RequestContractActionDialogProps {
   contractName?: string;
   contractStatus?: string;
   onSuccess?: () => void;
+  /** If true, status changes are applied directly without approval workflow */
+  canDirectStatusChange?: boolean;
 }
 
 export default function RequestContractActionDialog({
@@ -34,7 +36,8 @@ export default function RequestContractActionDialog({
   contractId,
   contractName,
   contractStatus,
-  onSuccess
+  onSuccess,
+  canDirectStatusChange = false
 }: RequestContractActionDialogProps) {
   const { post, get } = useApi();
   const { toast } = useToast();
@@ -92,10 +95,14 @@ export default function RequestContractActionDialog({
         const allowedTransitions = contractStatus ? getAllowedTransitions(contractStatus) : [];
         return {
           icon: <RefreshCw className="h-5 w-5" />,
-          title: 'Request Status Change',
-          description: 'Request approval to change the lifecycle status of this contract.',
+          title: canDirectStatusChange ? 'Change Status' : 'Request Status Change',
+          description: canDirectStatusChange 
+            ? 'Directly change the lifecycle status of this contract.'
+            : 'Request approval to change the lifecycle status of this contract.',
           enabled: allowedTransitions.length > 0,
-          endpoint: `/api/data-contracts/${contractId}/request-status-change`,
+          endpoint: canDirectStatusChange 
+            ? `/api/data-contracts/${contractId}/change-status`
+            : `/api/data-contracts/${contractId}/request-status-change`,
         };
     }
   };
@@ -131,13 +138,16 @@ export default function RequestContractActionDialog({
         setError('Please select a target status');
         return false;
       }
-      if (!justification.trim()) {
-        setError('Please provide a justification for the status change');
-        return false;
-      }
-      if (justification.trim().length < 20) {
-        setError('Please provide a more detailed justification (at least 20 characters)');
-        return false;
+      // Justification is only required for approval requests, not direct changes
+      if (!canDirectStatusChange) {
+        if (!justification.trim()) {
+          setError('Please provide a justification for the status change');
+          return false;
+        }
+        if (justification.trim().length < 20) {
+          setError('Please provide a more detailed justification (at least 20 characters)');
+          return false;
+        }
       }
     }
     
@@ -183,11 +193,19 @@ export default function RequestContractActionDialog({
           message: message.trim() || undefined,
         };
       } else if (requestType === 'status_change') {
-        payload = {
-          target_status: targetStatus,
-          justification: justification.trim(),
-          current_status: contractStatus,
-        };
+        if (canDirectStatusChange) {
+          // Direct status change - different payload format
+          payload = {
+            new_status: targetStatus,
+          };
+        } else {
+          // Request for approval
+          payload = {
+            target_status: targetStatus,
+            justification: justification.trim(),
+            current_status: contractStatus,
+          };
+        }
       }
 
       const response = await post(config.endpoint, payload);
@@ -196,10 +214,18 @@ export default function RequestContractActionDialog({
         throw new Error(response.error);
       }
 
-      toast({
-        title: 'Request Submitted',
-        description: `Your ${requestType} request has been submitted and you will be notified of the decision.`
-      });
+      // Different success messages for direct changes vs requests
+      if (requestType === 'status_change' && canDirectStatusChange) {
+        toast({
+          title: 'Status Changed',
+          description: `Contract status changed from "${contractStatus}" to "${targetStatus}".`
+        });
+      } else {
+        toast({
+          title: 'Request Submitted',
+          description: `Your ${requestType} request has been submitted and you will be notified of the decision.`
+        });
+      }
 
       // Refresh notifications
       refreshNotifications();
@@ -624,23 +650,25 @@ export default function RequestContractActionDialog({
                 </Alert>
               )}
 
-              {/* Justification */}
-              <div className="space-y-2">
-                <Label htmlFor="status-justification" className="text-sm font-medium">
-                  Justification *
-                </Label>
-                <Textarea
-                  id="status-justification"
-                  value={justification}
-                  onChange={(e) => setJustification(e.target.value)}
-                  placeholder="Explain why this status change is needed and any relevant context..."
-                  className="min-h-[100px] resize-none"
-                  disabled={submitting}
-                />
-                <div className="text-xs text-muted-foreground">
-                  Minimum 20 characters required. This will be reviewed by an admin.
+              {/* Justification - required for approval requests, optional for direct changes */}
+              {!canDirectStatusChange && (
+                <div className="space-y-2">
+                  <Label htmlFor="status-justification" className="text-sm font-medium">
+                    Justification *
+                  </Label>
+                  <Textarea
+                    id="status-justification"
+                    value={justification}
+                    onChange={(e) => setJustification(e.target.value)}
+                    placeholder="Explain why this status change is needed and any relevant context..."
+                    className="min-h-[100px] resize-none"
+                    disabled={submitting}
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Minimum 20 characters required. This will be reviewed by an admin.
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Lifecycle Diagram */}
               <div className="rounded-lg border p-3 bg-muted/20">
@@ -691,7 +719,9 @@ export default function RequestContractActionDialog({
             disabled={submitting || !currentConfig.enabled}
           >
             {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {submitting ? 'Sending Request...' : 'Send Request'}
+            {submitting 
+              ? (requestType === 'status_change' && canDirectStatusChange ? 'Changing Status...' : 'Sending Request...') 
+              : (requestType === 'status_change' && canDirectStatusChange ? 'Change Status' : 'Send Request')}
           </Button>
         </DialogFooter>
       </DialogContent>

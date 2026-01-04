@@ -6,9 +6,15 @@ export type DataContractListItem = {
   status: string
   published?: boolean // Marketplace publication status
   owner_team_id?: string // UUID of the owning team
+  project_id?: string // Project association
   tags?: any[] // Tags assigned to the contract
   created?: string
   updated?: string
+  // Semantic versioning fields
+  parentContractId?: string
+  baseName?: string
+  // Personal draft visibility
+  draftOwnerId?: string // If set, this is a personal draft
 }
 
 // ODCS compliant column property
@@ -202,6 +208,45 @@ export interface DataContract {
   customProperties?: Record<string, any>
   created?: string
   updated?: string
+  // Semantic versioning fields
+  parentContractId?: string // Parent version reference
+  baseName?: string // Base name without version suffix
+  changeSummary?: string // Summary of changes in this version
+  // Personal draft visibility (three-tier model)
+  // Tier 1: draftOwnerId set = personal draft, only owner can see
+  // Tier 2: draftOwnerId null, published=false = team/project visible
+  // Tier 3: published=true = marketplace visible to all
+  draftOwnerId?: string
+}
+
+// Response from diff-from-parent endpoint
+export interface DiffFromParentResponse {
+  parent_version: string
+  parent_status: string
+  suggested_bump: 'major' | 'minor' | 'patch'
+  suggested_version: string
+  analysis: {
+    change_type: string
+    version_bump: string
+    summary: string
+    breaking_changes: string[]
+    new_features: string[]
+    fixes: string[]
+    schema_changes?: Array<{
+      change_type: string
+      schema_name: string
+      field_name?: string
+      old_value?: string
+      new_value?: string
+      severity: string
+    }>
+  }
+}
+
+// Request to commit a personal draft
+export interface CommitDraftRequest {
+  new_version: string
+  change_summary: string
 }
 
 // DQX Profiling types

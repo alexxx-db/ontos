@@ -39,8 +39,13 @@ import ImportTeamMembersDialog from '@/components/data-contracts/import-team-mem
 import LinkProductToContractDialog from '@/components/data-contracts/link-product-to-contract-dialog'
 import VersioningRecommendationDialog from '@/components/common/versioning-recommendation-dialog'
 import CustomPropertyFormDialog from '@/components/data-contracts/custom-property-form-dialog'
+import CommitDraftDialog from '@/components/data-contracts/commit-draft-dialog'
 import type { DataProduct } from '@/types/data-product'
 import type { DataProfilingRun } from '@/types/data-contract'
+
+// Status-based editability constants
+// Only draft/proposed contracts can be edited in place
+const EDITABLE_STATUSES = ['draft', 'proposed']
 
 // View mode for filtering contract details sections
 type ViewMode = 'minimal' | 'medium' | 'large'
@@ -193,6 +198,17 @@ export default function DataContractDetails() {
 
   // Link product dialog state
   const [isLinkProductDialogOpen, setIsLinkProductDialogOpen] = useState(false)
+
+  // Commit draft dialog state
+  const [isCommitDraftDialogOpen, setIsCommitDraftDialogOpen] = useState(false)
+
+  // Computed properties for status-based editability
+  // Only draft/proposed contracts can be edited in place
+  const canEditInPlace = contract?.status && EDITABLE_STATUSES.includes(contract.status.toLowerCase())
+  // Personal drafts are editable since they have draft status
+  const isPersonalDraft = contract?.draftOwnerId != null
+  // Contract is read-only if it's not editable and not a personal draft
+  const isReadOnly = !canEditInPlace
 
   // View mode state for filtering sections - initialize from localStorage
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -570,6 +586,55 @@ export default function DataContractDetails() {
     } catch (e) {
       toast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to delete', variant: 'destructive' })
     }
+  }
+
+  const handleCloneForEditing = async () => {
+    if (!contractId) return
+    try {
+      const res = await fetch(`/api/data-contracts/${contractId}/clone-for-editing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Failed to create personal draft')
+      }
+      const data = await res.json()
+      toast({
+        title: 'Personal Draft Created',
+        description: 'You can now edit this draft. It will only be visible to you until committed.',
+      })
+      // Navigate to the new draft
+      navigate(`/data-contracts/${data.id}`)
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to clone', variant: 'destructive' })
+    }
+  }
+
+  const handleDiscardDraft = async () => {
+    if (!contractId) return
+    if (!confirm('Discard this personal draft? This cannot be undone.')) return
+    try {
+      const res = await fetch(`/api/data-contracts/${contractId}/discard`, { method: 'DELETE' })
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Failed to discard draft')
+      }
+      toast({ title: 'Draft Discarded', description: 'Your personal draft has been deleted.' })
+      // Navigate back to contracts list or parent contract
+      if (contract?.parentContractId) {
+        navigate(`/data-contracts/${contract.parentContractId}`)
+      } else {
+        navigate('/data-contracts')
+      }
+    } catch (e) {
+      toast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to discard', variant: 'destructive' })
+    }
+  }
+
+  const handleCommitSuccess = () => {
+    // Refresh the contract details after successful commit
+    fetchDetails()
   }
 
   const exportOdcs = async () => {
@@ -1391,12 +1456,69 @@ export default function DataContractDetails() {
             className="h-8"
           />
           <Button variant="outline" onClick={() => setIsRequestDialogOpen(true)} size="sm"><KeyRound className="mr-2 h-4 w-4" /> Request...</Button>
-          <Button variant="outline" onClick={handleCreateNewVersion} size="sm"><CopyPlus className="mr-2 h-4 w-4" /> Create New Version</Button>
-          <Button variant="outline" onClick={() => setIsBasicFormOpen(true)} size="sm"><Pencil className="mr-2 h-4 w-4" /> Edit Metadata</Button>
+          {/* Personal draft actions */}
+          {isPersonalDraft && (
+            <>
+              <Button variant="default" onClick={() => setIsCommitDraftDialogOpen(true)} size="sm">
+                <CopyPlus className="mr-2 h-4 w-4" /> Commit Changes
+              </Button>
+              <Button variant="outline" onClick={handleDiscardDraft} size="sm">
+                <Trash2 className="mr-2 h-4 w-4" /> Discard Draft
+              </Button>
+            </>
+          )}
+          {/* Clone for editing (for active+ contracts) */}
+          {!canEditInPlace && !isPersonalDraft && (
+            <Button variant="outline" onClick={handleCloneForEditing} size="sm">
+              <CopyPlus className="mr-2 h-4 w-4" /> Clone for Editing
+            </Button>
+          )}
+          {/* Create new version (for any contract) */}
+          {!isPersonalDraft && (
+            <Button variant="outline" onClick={handleCreateNewVersion} size="sm">
+              <CopyPlus className="mr-2 h-4 w-4" /> Create New Version
+            </Button>
+          )}
+          {/* Edit metadata only if editable */}
+          {canEditInPlace && (
+            <Button variant="outline" onClick={() => setIsBasicFormOpen(true)} size="sm">
+              <Pencil className="mr-2 h-4 w-4" /> Edit Metadata
+            </Button>
+          )}
           <Button variant="outline" onClick={exportOdcs} size="sm"><Download className="mr-2 h-4 w-4" /> Export ODCS</Button>
-          <Button variant="destructive" onClick={handleDelete} size="sm"><Trash2 className="mr-2 h-4 w-4" /> Delete</Button>
+          {canEditInPlace && (
+            <Button variant="destructive" onClick={handleDelete} size="sm"><Trash2 className="mr-2 h-4 w-4" /> Delete</Button>
+          )}
         </div>
       </div>
+
+      {/* Personal Draft Banner */}
+      {isPersonalDraft && (
+        <Alert className="bg-amber-50 border-amber-300 dark:bg-amber-950 dark:border-amber-800">
+          <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          <AlertDescription className="text-amber-800 dark:text-amber-200">
+            <strong>Personal Draft</strong> — Only visible to you. Commit to share with your team.
+            {contract?.parentContractId && (
+              <span className="ml-2 text-sm">
+                Based on{' '}
+                <Button variant="link" className="h-auto p-0 text-amber-700 dark:text-amber-300" onClick={() => navigate(`/data-contracts/${contract.parentContractId}`)}>
+                  v{contract?.version?.replace('-draft', '') || 'parent'}
+                </Button>
+              </span>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Read-Only Banner (for active+ contracts that aren't personal drafts) */}
+      {isReadOnly && !isPersonalDraft && (
+        <Alert className="bg-blue-50 border-blue-300 dark:bg-blue-950 dark:border-blue-800">
+          <AlertCircle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <AlertDescription className="text-blue-800 dark:text-blue-200">
+            <strong>Read-Only</strong> — This contract is {contract?.status?.toLowerCase()}. Clone to create a new version for editing.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Core Metadata Card */}
       <Card>
@@ -1529,8 +1651,8 @@ export default function DataContractDetails() {
                 <Label className="text-xs text-muted-foreground mb-1.5 block">Linked Business Concepts:</Label>
                 <LinkedConceptChips
                   links={links}
-                  onRemove={(id) => removeLink(id)}
-                  trailing={<Button size="sm" variant="outline" onClick={() => setIriDialogOpen(true)} className="h-6 text-xs">Add</Button>}
+                  onRemove={canEditInPlace ? (id) => removeLink(id) : undefined}
+                  trailing={canEditInPlace ? <Button size="sm" variant="outline" onClick={() => setIriDialogOpen(true)} className="h-6 text-xs">Add</Button> : undefined}
                 />
               </div>
             </div>
@@ -1547,9 +1669,11 @@ export default function DataContractDetails() {
                 <FileText className="mr-2 h-5 w-5" />
                 Description
               </span>
-              <Button size="sm" variant="outline" onClick={() => setIsBasicFormOpen(true)}>
-                <Pencil className="h-4 w-4" />
-              </Button>
+              {canEditInPlace && (
+                <Button size="sm" variant="outline" onClick={() => setIsBasicFormOpen(true)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1593,14 +1717,18 @@ export default function DataContractDetails() {
                 <Sparkles className="h-4 w-4 mr-1.5" />
                 Profile with DQX
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setIsDatasetLookupOpen(true)} disabled={isInferringSchema}>
-                {isInferringSchema ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Database className="h-4 w-4 mr-1.5" />}
-                {isInferringSchema ? 'Inferring...' : 'Infer from Unity Catalog'}
-              </Button>
-              <Button size="sm" onClick={() => { setEditingSchemaIndex(null); setIsSchemaFormOpen(true); }}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Schema
-              </Button>
+              {canEditInPlace && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => setIsDatasetLookupOpen(true)} disabled={isInferringSchema}>
+                    {isInferringSchema ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Database className="h-4 w-4 mr-1.5" />}
+                    {isInferringSchema ? 'Inferring...' : 'Infer from Unity Catalog'}
+                  </Button>
+                  <Button size="sm" onClick={() => { setEditingSchemaIndex(null); setIsSchemaFormOpen(true); }}>
+                    <Plus className="h-4 w-4 mr-1.5" />
+                    Add Schema
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -1643,17 +1771,23 @@ export default function DataContractDetails() {
           {!contract.schema || contract.schema.length === 0 ? (
             <div className="text-center py-12 border-2 border-dashed border-muted-foreground/25 rounded-lg">
               <div className="text-muted-foreground mb-2">No schemas defined yet</div>
-              <div className="text-sm text-muted-foreground mb-4">Define the structure of your data by adding schemas</div>
-              <div className="flex gap-3 justify-center">
-                <Button variant="outline" onClick={() => setIsDatasetLookupOpen(true)} disabled={isInferringSchema}>
-                  {isInferringSchema ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Database className="h-4 w-4 mr-2" />}
-                  {isInferringSchema ? 'Inferring Schema...' : 'Infer from Unity Catalog'}
-                </Button>
-                <Button onClick={() => { setEditingSchemaIndex(null); setIsSchemaFormOpen(true); }}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Schema Manually
-                </Button>
+              <div className="text-sm text-muted-foreground mb-4">
+                {canEditInPlace 
+                  ? 'Define the structure of your data by adding schemas'
+                  : 'This contract has no schemas defined'}
               </div>
+              {canEditInPlace && (
+                <div className="flex gap-3 justify-center">
+                  <Button variant="outline" onClick={() => setIsDatasetLookupOpen(true)} disabled={isInferringSchema}>
+                    {isInferringSchema ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Database className="h-4 w-4 mr-2" />}
+                    {isInferringSchema ? 'Inferring Schema...' : 'Infer from Unity Catalog'}
+                  </Button>
+                  <Button onClick={() => { setEditingSchemaIndex(null); setIsSchemaFormOpen(true); }}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Schema Manually
+                  </Button>
+                </div>
+              )}
             </div>
           ) : contract.schema.length === 1 ? (
               // Single schema - simple view
@@ -1691,12 +1825,16 @@ export default function DataContractDetails() {
                         {contract.schema[0].physicalName}
                       </a>
                     )}
-                    <Button size="sm" variant="ghost" onClick={() => { setEditingSchemaIndex(0); setIsSchemaFormOpen(true); }}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDeleteSchema(0)} className="text-destructive hover:text-destructive">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {canEditInPlace && (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => { setEditingSchemaIndex(0); setIsSchemaFormOpen(true); }}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleDeleteSchema(0)} className="text-destructive hover:text-destructive">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
                 {contract.schema[0].properties && contract.schema[0].properties.length > 0 && (
@@ -1715,18 +1853,20 @@ export default function DataContractDetails() {
                     <div className="mt-4 pt-4 border-t">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="text-sm font-semibold">Authoritative Definitions ({defs.length})</h4>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setActiveSchemaIdForAuthDef(schemaId)
-                            setEditingSchemaAuthDef(null)
-                            setIsSchemaAuthDefFormOpen(true)
-                          }}
-                        >
-                          <Plus className="h-3 w-3 mr-1" />
-                          Add
-                        </Button>
+                        {canEditInPlace && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setActiveSchemaIdForAuthDef(schemaId)
+                              setEditingSchemaAuthDef(null)
+                              setIsSchemaAuthDefFormOpen(true)
+                            }}
+                          >
+                            <Plus className="h-3 w-3 mr-1" />
+                            Add
+                          </Button>
+                        )}
                       </div>
                       {defs.length === 0 ? (
                         <p className="text-xs text-muted-foreground">No authoritative definitions for this schema.</p>
@@ -1740,27 +1880,29 @@ export default function DataContractDetails() {
                                   {def.url}
                                 </a>
                               </div>
-                              <div className="flex gap-1 ml-2">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    setEditingSchemaAuthDef({ schemaId, index: idx })
-                                    setIsSchemaAuthDefFormOpen(true)
-                                  }}
-                                  className="h-6 w-6 p-0"
-                                >
-                                  <Pencil className="h-3 w-3" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleDeleteSchemaAuthDef(schemaId, idx)}
-                                  className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
+                              {canEditInPlace && (
+                                <div className="flex gap-1 ml-2">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => {
+                                      setEditingSchemaAuthDef({ schemaId, index: idx })
+                                      setIsSchemaAuthDefFormOpen(true)
+                                    }}
+                                    className="h-6 w-6 p-0"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleDeleteSchemaAuthDef(schemaId, idx)}
+                                    className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1821,12 +1963,16 @@ export default function DataContractDetails() {
                           {contract.schema[selectedSchemaIndex].physicalName}
                         </a>
                       )}
-                      <Button size="sm" variant="ghost" onClick={() => { setEditingSchemaIndex(selectedSchemaIndex); setIsSchemaFormOpen(true); }}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleDeleteSchema(selectedSchemaIndex)} className="text-destructive hover:text-destructive">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {canEditInPlace && (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => { setEditingSchemaIndex(selectedSchemaIndex); setIsSchemaFormOpen(true); }}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteSchema(selectedSchemaIndex)} className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                   {contract.schema[selectedSchemaIndex]?.properties && contract.schema[selectedSchemaIndex].properties.length > 0 && (
@@ -1845,18 +1991,20 @@ export default function DataContractDetails() {
                       <div className="mt-4 pt-4 border-t">
                         <div className="flex items-center justify-between mb-3">
                           <h4 className="text-sm font-semibold">Authoritative Definitions ({defs.length})</h4>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setActiveSchemaIdForAuthDef(schemaId)
-                              setEditingSchemaAuthDef(null)
-                              setIsSchemaAuthDefFormOpen(true)
-                            }}
-                          >
-                            <Plus className="h-3 w-3 mr-1" />
-                            Add
-                          </Button>
+                          {canEditInPlace && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setActiveSchemaIdForAuthDef(schemaId)
+                                setEditingSchemaAuthDef(null)
+                                setIsSchemaAuthDefFormOpen(true)
+                              }}
+                            >
+                              <Plus className="h-3 w-3 mr-1" />
+                              Add
+                            </Button>
+                          )}
                         </div>
                         {defs.length === 0 ? (
                           <p className="text-xs text-muted-foreground">No authoritative definitions for this schema.</p>
@@ -1870,27 +2018,29 @@ export default function DataContractDetails() {
                                     {def.url}
                                   </a>
                                 </div>
-                                <div className="flex gap-1 ml-2">
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => {
-                                      setEditingSchemaAuthDef({ schemaId, index: idx })
-                                      setIsSchemaAuthDefFormOpen(true)
-                                    }}
-                                    className="h-6 w-6 p-0"
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => handleDeleteSchemaAuthDef(schemaId, idx)}
-                                    className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                </div>
+                                {canEditInPlace && (
+                                  <div className="flex gap-1 ml-2">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => {
+                                        setEditingSchemaAuthDef({ schemaId, index: idx })
+                                        setIsSchemaAuthDefFormOpen(true)
+                                      }}
+                                      className="h-6 w-6 p-0"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleDeleteSchemaAuthDef(schemaId, idx)}
+                                      className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1957,12 +2107,16 @@ export default function DataContractDetails() {
                           {contract.schema[selectedSchemaIndex].physicalName}
                         </a>
                       )}
-                      <Button size="sm" variant="ghost" onClick={() => { setEditingSchemaIndex(selectedSchemaIndex); setIsSchemaFormOpen(true); }}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleDeleteSchema(selectedSchemaIndex)} className="text-destructive hover:text-destructive">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {canEditInPlace && (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => { setEditingSchemaIndex(selectedSchemaIndex); setIsSchemaFormOpen(true); }}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteSchema(selectedSchemaIndex)} className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                   {contract.schema[selectedSchemaIndex]?.properties && contract.schema[selectedSchemaIndex].properties.length > 0 && (
@@ -1981,18 +2135,20 @@ export default function DataContractDetails() {
                       <div className="mt-4 pt-4 border-t">
                         <div className="flex items-center justify-between mb-3">
                           <h4 className="text-sm font-semibold">Authoritative Definitions ({defs.length})</h4>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setActiveSchemaIdForAuthDef(schemaId)
-                              setEditingSchemaAuthDef(null)
-                              setIsSchemaAuthDefFormOpen(true)
-                            }}
-                          >
-                            <Plus className="h-3 w-3 mr-1" />
-                            Add
-                          </Button>
+                          {canEditInPlace && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setActiveSchemaIdForAuthDef(schemaId)
+                                setEditingSchemaAuthDef(null)
+                                setIsSchemaAuthDefFormOpen(true)
+                              }}
+                            >
+                              <Plus className="h-3 w-3 mr-1" />
+                              Add
+                            </Button>
+                          )}
                         </div>
                         {defs.length === 0 ? (
                           <p className="text-xs text-muted-foreground">No authoritative definitions for this schema.</p>
@@ -2006,27 +2162,29 @@ export default function DataContractDetails() {
                                     {def.url}
                                   </a>
                                 </div>
-                                <div className="flex gap-1 ml-2">
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => {
-                                      setEditingSchemaAuthDef({ schemaId, index: idx })
-                                      setIsSchemaAuthDefFormOpen(true)
-                                    }}
-                                    className="h-6 w-6 p-0"
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => handleDeleteSchemaAuthDef(schemaId, idx)}
-                                    className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                </div>
+                                {canEditInPlace && (
+                                  <div className="flex gap-1 ml-2">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => {
+                                        setEditingSchemaAuthDef({ schemaId, index: idx })
+                                        setIsSchemaAuthDefFormOpen(true)
+                                      }}
+                                      className="h-6 w-6 p-0"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleDeleteSchemaAuthDef(schemaId, idx)}
+                                      className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -2147,10 +2305,12 @@ export default function DataContractDetails() {
               <CardTitle className="text-xl">Quality Rules ({contract.qualityRules?.length || 0})</CardTitle>
               <CardDescription>Data quality checks and validations</CardDescription>
             </div>
-            <Button size="sm" onClick={() => { setEditingQualityRuleIndex(null); setIsQualityRuleFormOpen(true); }}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Add Rule
-            </Button>
+            {canEditInPlace && (
+              <Button size="sm" onClick={() => { setEditingQualityRuleIndex(null); setIsQualityRuleFormOpen(true); }}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                Add Rule
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -2166,14 +2326,16 @@ export default function DataContractDetails() {
                       <span>{rule.type}</span>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => { setEditingQualityRuleIndex(idx); setIsQualityRuleFormOpen(true); }}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDeleteQualityRule(idx)} className="text-destructive hover:text-destructive">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  {canEditInPlace && (
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => { setEditingQualityRuleIndex(idx); setIsQualityRuleFormOpen(true); }}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleDeleteQualityRule(idx)} className="text-destructive hover:text-destructive">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2203,7 +2365,7 @@ export default function DataContractDetails() {
                 })
                 return null
               })()}
-              {contract.owner_team_id && (
+              {canEditInPlace && contract.owner_team_id && (
                 <Button 
                   size="sm" 
                   variant="outline"
@@ -2215,10 +2377,12 @@ export default function DataContractDetails() {
                   Import from Team
                 </Button>
               )}
-              <Button size="sm" onClick={() => { setEditingTeamMemberIndex(null); setIsTeamMemberFormOpen(true); }}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Member
-              </Button>
+              {canEditInPlace && (
+                <Button size="sm" onClick={() => { setEditingTeamMemberIndex(null); setIsTeamMemberFormOpen(true); }}>
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Add Member
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -2231,14 +2395,16 @@ export default function DataContractDetails() {
                     <Badge variant="outline">{member.role}</Badge>
                     <span className="text-sm">{member.name || member.username || member.email}</span>
                   </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => { setEditingTeamMemberIndex(idx); setIsTeamMemberFormOpen(true); }}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDeleteTeamMember(idx)} className="text-destructive hover:text-destructive">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  {canEditInPlace && (
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => { setEditingTeamMemberIndex(idx); setIsTeamMemberFormOpen(true); }}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleDeleteTeamMember(idx)} className="text-destructive hover:text-destructive">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2261,10 +2427,12 @@ export default function DataContractDetails() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <Label className="text-base font-semibold">SLA Requirements</Label>
-              <Button size="sm" variant="outline" onClick={() => setIsSLAFormOpen(true)}>
-                <Pencil className="h-4 w-4 mr-1.5" />
-                Edit SLA
-              </Button>
+              {canEditInPlace && (
+                <Button size="sm" variant="outline" onClick={() => setIsSLAFormOpen(true)}>
+                  <Pencil className="h-4 w-4 mr-1.5" />
+                  Edit SLA
+                </Button>
+              )}
             </div>
             {contract.sla && Object.keys(contract.sla).length > 0 ? (
               <div className="grid grid-cols-2 gap-3 pl-4">
@@ -2302,10 +2470,12 @@ export default function DataContractDetails() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <Label className="text-base font-semibold">Server Configurations ({serversList.length})</Label>
-              <Button size="sm" onClick={() => { setEditingServerIndex(null); setIsServerConfigFormOpen(true); }}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Server
-              </Button>
+              {canEditInPlace && (
+                <Button size="sm" onClick={() => { setEditingServerIndex(null); setIsServerConfigFormOpen(true); }}>
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Add Server
+                </Button>
+              )}
             </div>
             {serversList.length > 0 ? (
               <div className="space-y-2 pl-4">
@@ -2319,14 +2489,16 @@ export default function DataContractDetails() {
                         {server.host && <span>{server.host}</span>}
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => { setEditingServerIndex(idx); setIsServerConfigFormOpen(true); }}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleDeleteServer(idx)} className="text-destructive hover:text-destructive">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    {canEditInPlace && (
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => { setEditingServerIndex(idx); setIsServerConfigFormOpen(true); }}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleDeleteServer(idx)} className="text-destructive hover:text-destructive">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2370,10 +2542,12 @@ export default function DataContractDetails() {
                 <CardTitle className="text-xl">Custom Properties ({Object.keys(contract.customProperties || {}).length})</CardTitle>
                 <CardDescription>Additional metadata and configuration</CardDescription>
               </div>
-              <Button size="sm" onClick={() => { setEditingCustomPropertyKey(null); setIsCustomPropertyFormOpen(true); }}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Property
-              </Button>
+              {canEditInPlace && (
+                <Button size="sm" onClick={() => { setEditingCustomPropertyKey(null); setIsCustomPropertyFormOpen(true); }}>
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Add Property
+                </Button>
+              )}
             </div>
           </CardHeader>
           <CardContent>
@@ -2413,29 +2587,31 @@ export default function DataContractDetails() {
                               <span className="text-muted-foreground break-all">{valueStr}</span>
                             )}
                           </td>
-                          <td className="p-3 align-top text-right">
-                            <div className="flex justify-end gap-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setEditingCustomPropertyKey(key)
-                                  setIsCustomPropertyFormOpen(true)
-                                }}
-                                className="h-7 w-7 p-0"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleDeleteCustomProperty(key)}
-                                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </td>
+                          {canEditInPlace && (
+                            <td className="p-3 align-top text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setEditingCustomPropertyKey(key)
+                                    setIsCustomPropertyFormOpen(true)
+                                  }}
+                                  className="h-7 w-7 p-0"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteCustomProperty(key)}
+                                  className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -2479,16 +2655,18 @@ export default function DataContractDetails() {
               <CardTitle className="text-xl">Authoritative Definitions</CardTitle>
               <CardDescription>ODCS authoritative sources for this contract ({contractAuthDefs.length})</CardDescription>
             </div>
-            <Button
-              size="sm"
-              onClick={() => {
-                setEditingContractAuthDefIndex(null)
-                setIsContractAuthDefFormOpen(true)
-              }}
-            >
-              <Plus className="h-4 w-4 mr-1.5" />
-              Add Definition
-            </Button>
+            {canEditInPlace && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditingContractAuthDefIndex(null)
+                  setIsContractAuthDefFormOpen(true)
+                }}
+              >
+                <Plus className="h-4 w-4 mr-1.5" />
+                Add Definition
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -2511,26 +2689,28 @@ export default function DataContractDetails() {
                       {def.url}
                     </a>
                   </div>
-                  <div className="flex gap-1 ml-3">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setEditingContractAuthDefIndex(idx)
-                        setIsContractAuthDefFormOpen(true)
-                      }}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleDeleteContractAuthDef(idx)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  {canEditInPlace && (
+                    <div className="flex gap-1 ml-3">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingContractAuthDefIndex(idx)
+                          setIsContractAuthDefFormOpen(true)
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDeleteContractAuthDef(idx)}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2623,6 +2803,12 @@ export default function DataContractDetails() {
           contractName={contract.name}
           contractStatus={contract.status}
           onSuccess={() => fetchDetails()}
+          canDirectStatusChange={(() => {
+            const permLevel = getPermissionLevel('data-contracts')
+            return permLevel === FeatureAccessLevel.READ_WRITE ||
+                   permLevel === FeatureAccessLevel.ADMIN ||
+                   permLevel === FeatureAccessLevel.FULL
+          })()}
         />
       )}
 
@@ -2735,6 +2921,15 @@ export default function DataContractDetails() {
         } : undefined}
         existingKeys={Object.keys(contract?.customProperties || {})}
         onSubmit={editingCustomPropertyKey ? handleUpdateCustomProperty : handleAddCustomProperty}
+      />
+
+      {/* Commit Draft Dialog */}
+      <CommitDraftDialog
+        isOpen={isCommitDraftDialogOpen}
+        onOpenChange={setIsCommitDraftDialogOpen}
+        contractId={contractId!}
+        contractName={contract?.name || 'this contract'}
+        onSuccess={handleCommitSuccess}
       />
     </div>
   )

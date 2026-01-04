@@ -21,6 +21,7 @@ type ContractVersion = {
   parentContractId?: string
   changeSummary?: string
   createdAt: string
+  draftOwnerId?: string  // If set, this is a personal draft
 }
 
 type VersionSelectorProps = {
@@ -116,9 +117,16 @@ export default function VersionSelector({
                     <span className="ml-2 text-xs text-muted-foreground">(current)</span>
                   )}
                 </span>
-                <Badge variant={getStatusBadgeVariant(version.status)} className="text-xs">
-                  {version.status}
-                </Badge>
+                <div className="flex items-center gap-1">
+                  {version.draftOwnerId && (
+                    <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">
+                      Personal
+                    </Badge>
+                  )}
+                  <Badge variant={getStatusBadgeVariant(version.status)} className="text-xs">
+                    {version.status}
+                  </Badge>
+                </div>
               </div>
               {version.changeSummary && (
                 <span className="text-xs text-muted-foreground line-clamp-2">

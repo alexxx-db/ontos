@@ -487,6 +487,12 @@ class DataContractRead(BaseModel):
     baseName: Optional[str] = Field(None, alias='base_name')
     changeSummary: Optional[str] = Field(None, alias='change_summary')
 
+    # Personal draft visibility (three-tier model)
+    # Tier 1: draft_owner_id set = personal draft, only owner can see
+    # Tier 2: draft_owner_id null, published=false = team/project visible
+    # Tier 3: published=true = marketplace visible to all
+    draftOwnerId: Optional[str] = Field(None, alias='draft_owner_id')
+
     class Config:
         populate_by_name = True
 
@@ -681,6 +687,31 @@ class AuthoritativeDefinitionRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ===== Personal Draft Commit Models =====
+class CommitDraftRequest(BaseModel):
+    """Request to commit a personal draft to team/project visibility"""
+    new_version: str = Field(..., description="New semver version (e.g., '1.1.0')")
+    change_summary: str = Field(..., description="Summary of changes in this version")
+
+
+class CommitDraftResponse(BaseModel):
+    """Response after committing a personal draft"""
+    id: str
+    name: str
+    version: str
+    status: str
+    message: str = "Draft committed successfully"
+
+
+class DiffFromParentResponse(BaseModel):
+    """Response from diff-from-parent endpoint"""
+    parent_version: str
+    parent_status: str
+    suggested_bump: str  # "major", "minor", "patch"
+    suggested_version: str
+    analysis: Dict[str, Any]  # Full analysis from ContractChangeAnalyzer
 
 
 # Rebuild models to resolve forward references

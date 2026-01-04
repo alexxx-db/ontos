@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, List, Union
 
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session, selectinload
 
 from src.common.repository import CRUDBase
@@ -174,6 +175,135 @@ class DataContractRepository(CRUDBase[DataContractDb, Dict[str, Any], Union[Dict
             return db.query(self.model).filter(self.model.project_id == project_id).count()
         except Exception as e:
             logger.error(f"Database error counting DataContracts by project {project_id}: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    # --- Three-Tier Visibility Filtering ---
+    def get_visible_contracts(
+        self,
+        db: Session,
+        current_user: str,
+        user_projects: List[str],
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[DataContractDb]:
+        """Get contracts visible to user based on three-tier visibility model.
+        
+        Tier 1: Personal drafts (draft_owner_id set) - only visible to owner
+        Tier 2: Team/project versions (draft_owner_id null, published=false) - visible to project members
+        Tier 3: Published versions (published=true) - visible to everyone
+        
+        Args:
+            db: Database session
+            current_user: Current user's username/ID
+            user_projects: List of project IDs the user is a member of
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            
+        Returns:
+            List of DataContractDb objects visible to the user
+        """
+        logger.debug(f"Fetching visible contracts for user {current_user}, projects: {user_projects}")
+        try:
+            query = db.query(self.model).filter(
+                or_(
+                    # Tier 3: Published to marketplace (everyone can see)
+                    self.model.published == True,
+                    # Tier 2: Team/project versions (no personal owner, in user's projects)
+                    and_(
+                        self.model.draft_owner_id.is_(None),
+                        self.model.project_id.in_(user_projects) if user_projects else False
+                    ),
+                    # Tier 2: Contracts without project assignment (legacy/shared)
+                    and_(
+                        self.model.draft_owner_id.is_(None),
+                        self.model.project_id.is_(None)
+                    ),
+                    # Tier 1: User's own personal drafts
+                    self.model.draft_owner_id == current_user,
+                )
+            )
+            return query.offset(skip).limit(limit).all()
+        except Exception as e:
+            logger.error(f"Database error fetching visible contracts: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def get_user_personal_drafts(
+        self,
+        db: Session,
+        current_user: str,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[DataContractDb]:
+        """Get all personal drafts owned by a specific user.
+        
+        Args:
+            db: Database session
+            current_user: Current user's username/ID
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            
+        Returns:
+            List of DataContractDb objects that are personal drafts for this user
+        """
+        logger.debug(f"Fetching personal drafts for user {current_user}")
+        try:
+            return (
+                db.query(self.model)
+                .filter(self.model.draft_owner_id == current_user)
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
+        except Exception as e:
+            logger.error(f"Database error fetching personal drafts for user {current_user}: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def is_visible_to_user(
+        self,
+        db: Session,
+        contract_id: str,
+        current_user: str,
+        user_projects: List[str]
+    ) -> bool:
+        """Check if a specific contract is visible to the user.
+        
+        Args:
+            db: Database session
+            contract_id: ID of the contract to check
+            current_user: Current user's username/ID
+            user_projects: List of project IDs the user is a member of
+            
+        Returns:
+            True if the contract is visible to the user, False otherwise
+        """
+        try:
+            contract = db.query(self.model).filter(self.model.id == contract_id).first()
+            if not contract:
+                return False
+            
+            # Tier 3: Published to marketplace
+            if contract.published:
+                return True
+            
+            # Tier 1: User's own personal draft
+            if contract.draft_owner_id == current_user:
+                return True
+            
+            # Tier 2: Team/project version (no personal owner, in user's projects)
+            if contract.draft_owner_id is None:
+                # Contract without project assignment is visible to all team members
+                if contract.project_id is None:
+                    return True
+                # Contract in user's project
+                if contract.project_id in user_projects:
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Database error checking visibility for contract {contract_id}: {e}", exc_info=True)
             db.rollback()
             raise
 

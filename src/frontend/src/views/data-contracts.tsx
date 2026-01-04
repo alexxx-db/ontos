@@ -364,11 +364,21 @@ export default function DataContracts() {
           </Button>
         );
       },
-      cell: ({ row }) => (
-        <Badge variant="outline" className={getStatusColor(row.getValue("status"))}>
-          {row.getValue("status")}
-        </Badge>
-      ),
+      cell: ({ row }) => {
+        const contract = row.original;
+        return (
+          <div className="flex items-center gap-1">
+            {contract.draftOwnerId && (
+              <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">
+                Personal
+              </Badge>
+            )}
+            <Badge variant="outline" className={getStatusColor(row.getValue("status"))}>
+              {row.getValue("status")}
+            </Badge>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "tags",

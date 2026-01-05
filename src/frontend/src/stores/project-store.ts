@@ -120,13 +120,8 @@ export const useProjectStore = create<ProjectState>()(
             if (currentProj) {
               setCurrentProject(currentProj);
             }
-          } else if (!currentProject && data.projects && data.projects.length > 0) {
-            // If no current project is set, try to find and set "Admin Project" as default
-            const adminProject = data.projects.find(p => p.name === 'Admin Project');
-            if (adminProject) {
-              setCurrentProject(adminProject);
-            }
           }
+          // Default is "All Projects" (null) - no auto-selection
         } catch (error) {
           console.error('Failed to fetch user projects:', error);
           setError(error instanceof Error ? error.message : 'Failed to fetch projects');

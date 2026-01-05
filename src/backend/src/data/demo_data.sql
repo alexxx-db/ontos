@@ -60,6 +60,10 @@
 --   023 = dataset_tags
 --   024 = dataset_custom_properties
 --   025 = dataset_instances
+--   026 = tag_namespaces
+--   027 = tags
+--   028 = tag_namespace_permissions
+--   029 = entity_tag_associations
 -- ============================================================================
 
 BEGIN;
@@ -1084,6 +1088,165 @@ INSERT INTO dataset_subscriptions (id, dataset_id, subscriber_email, subscriptio
 ('02600007-0000-4000-8000-000000000007', '02100007-0000-4000-8000-000000000007', 'alice.analyst@example.com', 'Sales trend analysis', NOW() - INTERVAL '3 days')
 
 ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 16. TAG NAMESPACES (type=026)
+-- ============================================================================
+-- Centralized tag namespaces for organizing tags across the platform
+
+-- Note: 'default' namespace is auto-created at startup, so we use 'general' for demo general-purpose tags
+INSERT INTO tag_namespaces (id, name, description, created_by, created_at, updated_at) VALUES
+('02600100-0000-4000-8000-000000000001', 'general', 'General-purpose tags for common use cases', 'system@demo', NOW(), NOW()),
+('02600101-0000-4000-8000-000000000002', 'governance', 'Data governance classifications and sensitivity labels', 'system@demo', NOW(), NOW()),
+('02600102-0000-4000-8000-000000000003', 'technical', 'Technical metadata tags for data processing characteristics', 'system@demo', NOW(), NOW()),
+('02600103-0000-4000-8000-000000000004', 'business', 'Business domain and functional area tags', 'system@demo', NOW(), NOW()),
+('02600104-0000-4000-8000-000000000005', 'compliance', 'Regulatory and compliance requirement tags', 'system@demo', NOW(), NOW())
+
+ON CONFLICT (name) DO NOTHING;
+
+
+-- ============================================================================
+-- 17. TAGS (type=027)
+-- ============================================================================
+-- Tags within each namespace for categorizing and labeling entities
+
+INSERT INTO tags (id, name, description, possible_values, status, version, namespace_id, parent_id, created_by, created_at, updated_at) VALUES
+-- General namespace tags (priority and lifecycle)
+('02700001-0000-4000-8000-000000000001', 'priority-high', 'High priority item requiring immediate attention', NULL, 'active', 'v1.0', '02600100-0000-4000-8000-000000000001', NULL, 'system@demo', NOW(), NOW()),
+('02700002-0000-4000-8000-000000000002', 'priority-medium', 'Medium priority item for standard processing', NULL, 'active', 'v1.0', '02600100-0000-4000-8000-000000000001', NULL, 'system@demo', NOW(), NOW()),
+('02700003-0000-4000-8000-000000000003', 'priority-low', 'Low priority item for deferred handling', NULL, 'active', 'v1.0', '02600100-0000-4000-8000-000000000001', NULL, 'system@demo', NOW(), NOW()),
+('02700004-0000-4000-8000-000000000004', 'deprecated', 'Marked for deprecation or removal', NULL, 'active', 'v1.0', '02600100-0000-4000-8000-000000000001', NULL, 'system@demo', NOW(), NOW()),
+
+-- Governance namespace tags (data classification)
+('02700005-0000-4000-8000-000000000005', 'pii', 'Contains Personally Identifiable Information', NULL, 'active', 'v1.0', '02600101-0000-4000-8000-000000000002', NULL, 'system@demo', NOW(), NOW()),
+('02700006-0000-4000-8000-000000000006', 'confidential', 'Confidential data with restricted access', NULL, 'active', 'v1.0', '02600101-0000-4000-8000-000000000002', NULL, 'system@demo', NOW(), NOW()),
+('02700007-0000-4000-8000-000000000007', 'public', 'Publicly available data with no restrictions', NULL, 'active', 'v1.0', '02600101-0000-4000-8000-000000000002', NULL, 'system@demo', NOW(), NOW()),
+('02700008-0000-4000-8000-000000000008', 'internal', 'Internal use only within the organization', NULL, 'active', 'v1.0', '02600101-0000-4000-8000-000000000002', NULL, 'system@demo', NOW(), NOW()),
+('02700009-0000-4000-8000-000000000009', 'restricted', 'Highly restricted data requiring special authorization', NULL, 'active', 'v1.0', '02600101-0000-4000-8000-000000000002', NULL, 'system@demo', NOW(), NOW()),
+
+-- Technical namespace tags (processing characteristics)
+('0270000a-0000-4000-8000-000000000010', 'real-time', 'Real-time or streaming data processing', NULL, 'active', 'v1.0', '02600102-0000-4000-8000-000000000003', NULL, 'system@demo', NOW(), NOW()),
+('0270000b-0000-4000-8000-000000000011', 'batch', 'Batch processing data pipeline', NULL, 'active', 'v1.0', '02600102-0000-4000-8000-000000000003', NULL, 'system@demo', NOW(), NOW()),
+('0270000c-0000-4000-8000-000000000012', 'streaming', 'Streaming data source or sink', NULL, 'active', 'v1.0', '02600102-0000-4000-8000-000000000003', NULL, 'system@demo', NOW(), NOW()),
+('0270000d-0000-4000-8000-000000000013', 'delta-table', 'Stored as Delta Lake table format', NULL, 'active', 'v1.0', '02600102-0000-4000-8000-000000000003', NULL, 'system@demo', NOW(), NOW()),
+('0270000e-0000-4000-8000-000000000014', 'archived', 'Archived or cold storage data', NULL, 'active', 'v1.0', '02600102-0000-4000-8000-000000000003', NULL, 'system@demo', NOW(), NOW()),
+
+-- Business namespace tags (functional areas)
+('0270000f-0000-4000-8000-000000000015', 'customer-facing', 'Data used for customer-facing applications', NULL, 'active', 'v1.0', '02600103-0000-4000-8000-000000000004', NULL, 'system@demo', NOW(), NOW()),
+('02700010-0000-4000-8000-000000000016', 'internal-ops', 'Data for internal operations and processes', NULL, 'active', 'v1.0', '02600103-0000-4000-8000-000000000004', NULL, 'system@demo', NOW(), NOW()),
+('02700011-0000-4000-8000-000000000017', 'analytics', 'Data primarily used for analytics purposes', NULL, 'active', 'v1.0', '02600103-0000-4000-8000-000000000004', NULL, 'system@demo', NOW(), NOW()),
+('02700012-0000-4000-8000-000000000018', 'reporting', 'Data used for business reporting', NULL, 'active', 'v1.0', '02600103-0000-4000-8000-000000000004', NULL, 'system@demo', NOW(), NOW()),
+
+-- Compliance namespace tags (regulatory requirements)
+('02700013-0000-4000-8000-000000000019', 'gdpr', 'Subject to GDPR requirements', NULL, 'active', 'v1.0', '02600104-0000-4000-8000-000000000005', NULL, 'system@demo', NOW(), NOW()),
+('02700014-0000-4000-8000-000000000020', 'ccpa', 'Subject to CCPA requirements', NULL, 'active', 'v1.0', '02600104-0000-4000-8000-000000000005', NULL, 'system@demo', NOW(), NOW()),
+('02700015-0000-4000-8000-000000000021', 'sox', 'Subject to SOX compliance', NULL, 'active', 'v1.0', '02600104-0000-4000-8000-000000000005', NULL, 'system@demo', NOW(), NOW()),
+('02700016-0000-4000-8000-000000000022', 'hipaa', 'Subject to HIPAA requirements', NULL, 'active', 'v1.0', '02600104-0000-4000-8000-000000000005', NULL, 'system@demo', NOW(), NOW()),
+('02700017-0000-4000-8000-000000000023', 'pci-dss', 'Subject to PCI-DSS requirements', NULL, 'active', 'v1.0', '02600104-0000-4000-8000-000000000005', NULL, 'system@demo', NOW(), NOW())
+
+ON CONFLICT (namespace_id, name) DO NOTHING;
+
+
+-- ============================================================================
+-- 18. TAG NAMESPACE PERMISSIONS (type=028)
+-- ============================================================================
+-- Access control for tag namespaces by group
+
+INSERT INTO tag_namespace_permissions (id, namespace_id, group_id, access_level, created_by, created_at, updated_at) VALUES
+-- General namespace permissions (everyone can read, stewards can write)
+('02800001-0000-4000-8000-000000000001', '02600100-0000-4000-8000-000000000001', 'data-engineers', 'read_write', 'system@demo', NOW(), NOW()),
+('02800002-0000-4000-8000-000000000002', '02600100-0000-4000-8000-000000000001', 'analysts', 'read_only', 'system@demo', NOW(), NOW()),
+('02800003-0000-4000-8000-000000000003', '02600100-0000-4000-8000-000000000001', 'data-stewards', 'admin', 'system@demo', NOW(), NOW()),
+('02800004-0000-4000-8000-000000000004', '02600100-0000-4000-8000-000000000001', 'data-scientists', 'read_write', 'system@demo', NOW(), NOW()),
+
+-- Governance namespace permissions (stewards have full control)
+('02800005-0000-4000-8000-000000000005', '02600101-0000-4000-8000-000000000002', 'data-stewards', 'admin', 'system@demo', NOW(), NOW()),
+('02800006-0000-4000-8000-000000000006', '02600101-0000-4000-8000-000000000002', 'data-engineers', 'read_only', 'system@demo', NOW(), NOW()),
+('02800007-0000-4000-8000-000000000007', '02600101-0000-4000-8000-000000000002', 'analysts', 'read_only', 'system@demo', NOW(), NOW()),
+
+-- Technical namespace permissions (engineers can write)
+('02800008-0000-4000-8000-000000000008', '02600102-0000-4000-8000-000000000003', 'data-engineers', 'admin', 'system@demo', NOW(), NOW()),
+('02800009-0000-4000-8000-000000000009', '02600102-0000-4000-8000-000000000003', 'data-scientists', 'read_write', 'system@demo', NOW(), NOW()),
+('0280000a-0000-4000-8000-000000000010', '02600102-0000-4000-8000-000000000003', 'analysts', 'read_only', 'system@demo', NOW(), NOW()),
+
+-- Business namespace permissions (analysts have more access)
+('0280000b-0000-4000-8000-000000000011', '02600103-0000-4000-8000-000000000004', 'analysts', 'read_write', 'system@demo', NOW(), NOW()),
+('0280000c-0000-4000-8000-000000000012', '02600103-0000-4000-8000-000000000004', 'data-stewards', 'admin', 'system@demo', NOW(), NOW()),
+('0280000d-0000-4000-8000-000000000013', '02600103-0000-4000-8000-000000000004', 'data-engineers', 'read_only', 'system@demo', NOW(), NOW()),
+
+-- Compliance namespace permissions (stewards only)
+('0280000e-0000-4000-8000-000000000014', '02600104-0000-4000-8000-000000000005', 'data-stewards', 'admin', 'system@demo', NOW(), NOW()),
+('0280000f-0000-4000-8000-000000000015', '02600104-0000-4000-8000-000000000005', 'data-engineers', 'read_only', 'system@demo', NOW(), NOW()),
+('02800010-0000-4000-8000-000000000016', '02600104-0000-4000-8000-000000000005', 'analysts', 'read_only', 'system@demo', NOW(), NOW())
+
+ON CONFLICT (namespace_id, group_id) DO NOTHING;
+
+
+-- ============================================================================
+-- 19. ENTITY TAG ASSOCIATIONS (type=029)
+-- ============================================================================
+-- Links tags to entities (data products, contracts, datasets)
+
+INSERT INTO entity_tag_associations (id, tag_id, entity_id, entity_type, assigned_value, assigned_by, assigned_at) VALUES
+-- Data Product tags
+-- POS Transaction Stream (00700001) - real-time streaming product
+('02900001-0000-4000-8000-000000000001', '0270000a-0000-4000-8000-000000000010', '00700001-0000-4000-8000-000000000001', 'data_product', NULL, 'system@demo', NOW()),
+('02900002-0000-4000-8000-000000000002', '0270000c-0000-4000-8000-000000000012', '00700001-0000-4000-8000-000000000001', 'data_product', NULL, 'system@demo', NOW()),
+('02900003-0000-4000-8000-000000000003', '02700001-0000-4000-8000-000000000001', '00700001-0000-4000-8000-000000000001', 'data_product', NULL, 'system@demo', NOW()),
+
+-- Prepared Sales Transactions (00700002) - batch analytics product with PII
+('02900004-0000-4000-8000-000000000004', '0270000b-0000-4000-8000-000000000011', '00700002-0000-4000-8000-000000000002', 'data_product', NULL, 'system@demo', NOW()),
+('02900005-0000-4000-8000-000000000005', '02700005-0000-4000-8000-000000000005', '00700002-0000-4000-8000-000000000002', 'data_product', NULL, 'system@demo', NOW()),
+('02900006-0000-4000-8000-000000000006', '02700011-0000-4000-8000-000000000017', '00700002-0000-4000-8000-000000000002', 'data_product', NULL, 'system@demo', NOW()),
+
+-- Customer Marketing Recommendations (00700006) - customer-facing with GDPR
+('02900007-0000-4000-8000-000000000007', '0270000f-0000-4000-8000-000000000015', '00700006-0000-4000-8000-000000000006', 'data_product', NULL, 'system@demo', NOW()),
+('02900008-0000-4000-8000-000000000008', '02700005-0000-4000-8000-000000000005', '00700006-0000-4000-8000-000000000006', 'data_product', NULL, 'system@demo', NOW()),
+('02900009-0000-4000-8000-000000000009', '02700013-0000-4000-8000-000000000019', '00700006-0000-4000-8000-000000000006', 'data_product', NULL, 'system@demo', NOW()),
+
+-- Data Contract tags
+-- Customer Data Contract (00400001) - PII, confidential, GDPR
+('0290000a-0000-4000-8000-000000000010', '02700005-0000-4000-8000-000000000005', '00400001-0000-4000-8000-000000000001', 'data_contract', NULL, 'system@demo', NOW()),
+('0290000b-0000-4000-8000-000000000011', '02700006-0000-4000-8000-000000000006', '00400001-0000-4000-8000-000000000001', 'data_contract', NULL, 'system@demo', NOW()),
+('0290000c-0000-4000-8000-000000000012', '02700013-0000-4000-8000-000000000019', '00400001-0000-4000-8000-000000000001', 'data_contract', NULL, 'system@demo', NOW()),
+('0290000d-0000-4000-8000-000000000013', '02700001-0000-4000-8000-000000000001', '00400001-0000-4000-8000-000000000001', 'data_contract', NULL, 'system@demo', NOW()),
+
+-- Product Catalog Contract (00400002) - internal, deprecated
+('0290000e-0000-4000-8000-000000000014', '02700008-0000-4000-8000-000000000008', '00400002-0000-4000-8000-000000000002', 'data_contract', NULL, 'system@demo', NOW()),
+('0290000f-0000-4000-8000-000000000015', '02700004-0000-4000-8000-000000000004', '00400002-0000-4000-8000-000000000002', 'data_contract', NULL, 'system@demo', NOW()),
+
+-- IoT Device Data Contract (00400004) - real-time, technical
+('02900010-0000-4000-8000-000000000016', '0270000a-0000-4000-8000-000000000010', '00400004-0000-4000-8000-000000000004', 'data_contract', NULL, 'system@demo', NOW()),
+('02900011-0000-4000-8000-000000000017', '02700008-0000-4000-8000-000000000008', '00400004-0000-4000-8000-000000000004', 'data_contract', NULL, 'system@demo', NOW()),
+
+-- Financial Transactions Contract (00400006) - SOX compliance
+('02900012-0000-4000-8000-000000000018', '02700006-0000-4000-8000-000000000006', '00400006-0000-4000-8000-000000000006', 'data_contract', NULL, 'system@demo', NOW()),
+('02900013-0000-4000-8000-000000000019', '02700015-0000-4000-8000-000000000021', '00400006-0000-4000-8000-000000000006', 'data_contract', NULL, 'system@demo', NOW()),
+('02900014-0000-4000-8000-000000000020', '02700009-0000-4000-8000-000000000009', '00400006-0000-4000-8000-000000000006', 'data_contract', NULL, 'system@demo', NOW()),
+
+-- Dataset tags
+-- Customer Master - Production (02100001) - PII, GDPR, delta-table
+('02900015-0000-4000-8000-000000000021', '02700005-0000-4000-8000-000000000005', '02100001-0000-4000-8000-000000000001', 'dataset', NULL, 'system@demo', NOW()),
+('02900016-0000-4000-8000-000000000022', '02700013-0000-4000-8000-000000000019', '02100001-0000-4000-8000-000000000001', 'dataset', NULL, 'system@demo', NOW()),
+('02900017-0000-4000-8000-000000000023', '0270000d-0000-4000-8000-000000000013', '02100001-0000-4000-8000-000000000001', 'dataset', NULL, 'system@demo', NOW()),
+('02900018-0000-4000-8000-000000000024', '02700001-0000-4000-8000-000000000001', '02100001-0000-4000-8000-000000000001', 'dataset', NULL, 'system@demo', NOW()),
+
+-- IoT Telemetry Stream (02100005) - real-time, streaming
+('02900019-0000-4000-8000-000000000025', '0270000a-0000-4000-8000-000000000010', '02100005-0000-4000-8000-000000000005', 'dataset', NULL, 'system@demo', NOW()),
+('0290001a-0000-4000-8000-000000000026', '0270000c-0000-4000-8000-000000000012', '02100005-0000-4000-8000-000000000005', 'dataset', NULL, 'system@demo', NOW()),
+('0290001b-0000-4000-8000-000000000027', '0270000d-0000-4000-8000-000000000013', '02100005-0000-4000-8000-000000000005', 'dataset', NULL, 'system@demo', NOW()),
+
+-- Sales Analytics Summary (02100007) - analytics, reporting, batch
+('0290001c-0000-4000-8000-000000000028', '02700011-0000-4000-8000-000000000017', '02100007-0000-4000-8000-000000000007', 'dataset', NULL, 'system@demo', NOW()),
+('0290001d-0000-4000-8000-000000000029', '02700012-0000-4000-8000-000000000018', '02100007-0000-4000-8000-000000000007', 'dataset', NULL, 'system@demo', NOW()),
+('0290001e-0000-4000-8000-000000000030', '0270000b-0000-4000-8000-000000000011', '02100007-0000-4000-8000-000000000007', 'dataset', NULL, 'system@demo', NOW()),
+
+-- Inventory Levels (02100008) - deprecated, archived
+('0290001f-0000-4000-8000-000000000031', '02700004-0000-4000-8000-000000000004', '02100008-0000-4000-8000-000000000008', 'dataset', NULL, 'system@demo', NOW()),
+('02900020-0000-4000-8000-000000000032', '0270000e-0000-4000-8000-000000000014', '02100008-0000-4000-8000-000000000008', 'dataset', NULL, 'system@demo', NOW())
+
+ON CONFLICT (tag_id, entity_id, entity_type) DO NOTHING;
 
 
 COMMIT;

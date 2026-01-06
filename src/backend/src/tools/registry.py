@@ -189,7 +189,8 @@ def create_default_registry() -> ToolRegistry:
         SearchGlossaryTermsTool,
         AddSemanticLinkTool,
         ListSemanticLinksTool,
-        RemoveSemanticLinkTool
+        RemoveSemanticLinkTool,
+        FindEntitiesByConceptTool
     )
     from src.tools.analytics import (
         GetTableSchemaTool,
@@ -271,6 +272,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(AddSemanticLinkTool())
     registry.register(ListSemanticLinksTool())
     registry.register(RemoveSemanticLinkTool())
+    registry.register(FindEntitiesByConceptTool())
     
     # Analytics tools
     registry.register(GetTableSchemaTool())

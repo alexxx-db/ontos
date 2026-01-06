@@ -305,3 +305,65 @@ class RemoveSemanticLinkTool(BaseTool):
             logger.error(f"[remove_semantic_link] FAILED: {type(e).__name__}: {e}", exc_info=True)
             return ToolResult(success=False, error=f"{type(e).__name__}: {str(e)}")
 
+
+class FindEntitiesByConceptTool(BaseTool):
+    """Find all entities (data products, contracts, etc.) linked to a semantic concept."""
+    
+    name = "find_entities_by_concept"
+    description = "Given a concept IRI from the knowledge graph, find all data products, contracts, and other entities that are semantically linked to it. Use search_glossary_terms first to find the concept IRI."
+    parameters = {
+        "concept_iri": {
+            "type": "string",
+            "description": "IRI of the concept from the knowledge graph (from search_glossary_terms results)"
+        }
+    }
+    required_params = ["concept_iri"]
+    
+    async def execute(
+        self,
+        ctx: ToolContext,
+        concept_iri: str
+    ) -> ToolResult:
+        """Find all entities linked to a concept IRI."""
+        logger.info(f"[find_entities_by_concept] Starting - concept_iri={concept_iri}")
+        
+        try:
+            from src.controller.semantic_links_manager import SemanticLinksManager
+            
+            # Create manager instance
+            manager = SemanticLinksManager(
+                db=ctx.db,
+                semantic_models_manager=ctx.semantic_models_manager
+            )
+            
+            # Get all entities linked to this concept (explicit + inferred)
+            links = manager.list_for_iri(iri=concept_iri)
+            
+            entities = []
+            for link in links:
+                entities.append({
+                    "entity_type": link.entity_type,
+                    "entity_id": link.entity_id,
+                    "label": link.label,
+                    "link_id": link.id,
+                    "is_inferred": link.id.startswith("inferred:") if link.id else False
+                })
+            
+            logger.info(f"[find_entities_by_concept] SUCCESS: Found {len(entities)} entities linked to concept")
+            return ToolResult(
+                success=True,
+                data={
+                    "entities": entities,
+                    "total_found": len(entities),
+                    "concept_iri": concept_iri
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[find_entities_by_concept] FAILED: {type(e).__name__}: {e}", exc_info=True)
+            return ToolResult(
+                success=False,
+                error=f"{type(e).__name__}: {str(e)}",
+                data={"entities": []}
+            )
+

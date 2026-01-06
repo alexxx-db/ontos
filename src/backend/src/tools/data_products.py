@@ -26,6 +26,7 @@ class GetDataProductTool(BaseTool):
         }
     }
     required_params = ["product_id"]
+    required_scope = "data-products:read"
     
     async def execute(
         self,
@@ -101,6 +102,7 @@ class DeleteDataProductTool(BaseTool):
         }
     }
     required_params = ["product_id"]
+    required_scope = "data-products:write"
     
     async def execute(
         self,
@@ -161,6 +163,7 @@ class SearchDataProductsTool(BaseTool):
         }
     }
     required_params = ["query"]
+    required_scope = "data-products:read"
     
     async def execute(
         self,
@@ -300,6 +303,7 @@ class CreateDraftDataProductTool(BaseTool):
         }
     }
     required_params = ["name", "description", "domain"]
+    required_scope = "data-products:write"
     
     async def execute(
         self,
@@ -399,6 +403,7 @@ class UpdateDataProductTool(BaseTool):
         }
     }
     required_params = ["product_id"]
+    required_scope = "data-products:write"
     
     async def execute(
         self,
@@ -548,6 +553,7 @@ class ListDataProductsTool(BaseTool):
         }
     }
     required_params = []
+    required_scope = "data-products:read"
     
     async def execute(
         self,

@@ -28,6 +28,7 @@ class SearchTeamsTool(BaseTool):
         }
     }
     required_params = ["query"]
+    required_scope = "teams:read"
     
     async def execute(
         self,
@@ -102,6 +103,7 @@ class GetTeamTool(BaseTool):
         }
     }
     required_params = ["team_id"]
+    required_scope = "teams:read"
     
     async def execute(
         self,
@@ -175,6 +177,7 @@ class CreateTeamTool(BaseTool):
         }
     }
     required_params = ["name", "title"]
+    required_scope = "teams:write"
     
     async def execute(
         self,
@@ -252,6 +255,7 @@ class UpdateTeamTool(BaseTool):
         }
     }
     required_params = ["team_id"]
+    required_scope = "teams:write"
     
     async def execute(
         self,
@@ -332,6 +336,7 @@ class DeleteTeamTool(BaseTool):
         }
     }
     required_params = ["team_id"]
+    required_scope = "teams:write"
     
     async def execute(
         self,

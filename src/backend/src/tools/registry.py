@@ -190,8 +190,12 @@ def create_default_registry() -> ToolRegistry:
         AddSemanticLinkTool,
         ListSemanticLinksTool,
         RemoveSemanticLinkTool,
-        FindEntitiesByConceptTool
+        FindEntitiesByConceptTool,
+        ExecuteSparqlQueryTool,
+        GetConceptHierarchyTool,
+        GetConceptNeighborsTool
     )
+    from src.tools.search import GlobalSearchTool
     from src.tools.analytics import (
         GetTableSchemaTool,
         ExecuteAnalyticsQueryTool,
@@ -273,6 +277,12 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ListSemanticLinksTool())
     registry.register(RemoveSemanticLinkTool())
     registry.register(FindEntitiesByConceptTool())
+    registry.register(ExecuteSparqlQueryTool())
+    registry.register(GetConceptHierarchyTool())
+    registry.register(GetConceptNeighborsTool())
+    
+    # Search tools
+    registry.register(GlobalSearchTool())
     
     # Analytics tools
     registry.register(GetTableSchemaTool())

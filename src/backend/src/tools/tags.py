@@ -29,6 +29,7 @@ class SearchTagsTool(BaseTool):
         }
     }
     required_params = ["query"]
+    required_scope = "tags:read"
     
     async def execute(
         self,
@@ -93,6 +94,7 @@ class GetTagTool(BaseTool):
         }
     }
     required_params = []
+    required_scope = "tags:read"
     
     async def execute(
         self,
@@ -180,6 +182,7 @@ class CreateTagTool(BaseTool):
         }
     }
     required_params = ["name"]
+    required_scope = "tags:write"
     
     async def execute(
         self,
@@ -275,6 +278,7 @@ class UpdateTagTool(BaseTool):
         }
     }
     required_params = ["tag_id"]
+    required_scope = "tags:write"
     
     async def execute(
         self,
@@ -351,6 +355,7 @@ class DeleteTagTool(BaseTool):
         }
     }
     required_params = ["tag_id"]
+    required_scope = "tags:write"
     
     async def execute(
         self,
@@ -409,6 +414,7 @@ class ListEntityTagsTool(BaseTool):
         }
     }
     required_params = ["entity_type", "entity_id"]
+    required_scope = "tags:read"
     
     async def execute(
         self,
@@ -483,6 +489,7 @@ class AssignTagToEntityTool(BaseTool):
         }
     }
     required_params = ["entity_type", "entity_id", "tag_id"]
+    required_scope = "tags:write"
     
     async def execute(
         self,
@@ -549,6 +556,7 @@ class RemoveTagFromEntityTool(BaseTool):
         }
     }
     required_params = ["entity_type", "entity_id", "tag_id"]
+    required_scope = "tags:write"
     
     async def execute(
         self,

@@ -34,6 +34,7 @@ class SearchDataContractsTool(BaseTool):
         }
     }
     required_params = ["query"]
+    required_scope = "contracts:read"
     
     async def execute(
         self,
@@ -131,6 +132,7 @@ class GetDataContractTool(BaseTool):
         }
     }
     required_params = ["contract_id"]
+    required_scope = "contracts:read"
     
     async def execute(
         self,
@@ -192,6 +194,7 @@ class DeleteDataContractTool(BaseTool):
         }
     }
     required_params = ["contract_id"]
+    required_scope = "contracts:write"
     
     async def execute(
         self,
@@ -274,6 +277,7 @@ class CreateDraftDataContractTool(BaseTool):
         }
     }
     required_params = ["name", "description", "domain"]
+    required_scope = "contracts:write"
     
     async def execute(
         self,
@@ -379,6 +383,7 @@ class UpdateDataContractTool(BaseTool):
         }
     }
     required_params = ["contract_id"]
+    required_scope = "contracts:write"
     
     async def execute(
         self,
@@ -599,6 +604,7 @@ class ListDataContractsTool(BaseTool):
         }
     }
     required_params = []
+    required_scope = "contracts:read"
     
     async def execute(
         self,

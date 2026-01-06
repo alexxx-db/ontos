@@ -36,6 +36,8 @@ from src.routes import (
     estate_manager_routes,
     jobs_routes,
     llm_search_routes,
+    mcp_routes,
+    mcp_tokens_routes,
     mdm_routes,
     metadata_routes,
     notifications_routes,
@@ -203,6 +205,8 @@ comments_routes.register_routes(app)
 notifications_routes.register_routes(app)
 search_routes.register_routes(app)
 llm_search_routes.register_routes(app)
+mcp_routes.register_routes(app)
+mcp_tokens_routes.register_routes(app)
 jobs_routes.register_routes(app)
 settings_routes.register_routes(app)
 access_requests_routes.register_routes(app)

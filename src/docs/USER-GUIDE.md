@@ -14,7 +14,8 @@
 10. [Compliance Checks](#compliance-checks)
 11. [Asset Review Workflow](#asset-review-workflow)
 12. [User Roles and Permissions](#user-roles-and-permissions)
-13. [Best Practices](#best-practices)
+13. [MCP Integration (AI Assistants)](#mcp-integration-ai-assistants)
+14. [Best Practices](#best-practices)
 
 ---
 
@@ -30,6 +31,7 @@
 - **Semantic Models**: Link data assets to business concepts and maintain a knowledge graph
 - **Compliance Automation**: Enforce governance policies using a declarative rules language
 - **Review Workflows**: Manage data steward reviews and approvals for governance
+- **AI Integration (MCP)**: Enable AI assistants to discover and interact with your data governance platform via the Model Context Protocol
 
 ### Who Should Use This Guide
 
@@ -39,6 +41,7 @@ This guide is intended for:
 - **Data Stewards**: Ensuring governance, compliance, and quality
 - **Data Consumers**: Discovering and using data products
 - **Analytics Teams**: Working with curated data for insights
+- **Platform Engineers**: Integrating AI assistants and automating workflows via MCP
 
 ---
 
@@ -1904,6 +1907,459 @@ Users can have different roles in different teams:
 - In "finance-domain-team": **Data Steward** (override)
 
 This allows flexible, context-specific permissions.
+
+---
+
+## MCP Integration (AI Assistants)
+
+Ontos provides a **Model Context Protocol (MCP)** server that enables AI assistants (like Claude, GPT, or custom LLM agents) to programmatically discover and execute tools within your data governance platform.
+
+### What is MCP?
+
+The **Model Context Protocol** is a standard for AI assistants to interact with external systems. It allows:
+
+- **Tool Discovery**: AI assistants can discover what operations are available
+- **Secure Execution**: Tools are executed with scope-based authorization
+- **Programmatic Access**: Automate data governance workflows via AI
+
+### Use Cases
+
+| Use Case | Description |
+|----------|-------------|
+| **AI-Powered Search** | Ask "Find all data products related to customer analytics" |
+| **Automated Documentation** | Generate contract documentation from natural language |
+| **Governance Chatbot** | Answer questions about data lineage and ownership |
+| **Compliance Queries** | Check compliance status across domains |
+| **Semantic Discovery** | Find entities by business concept (e.g., "all tables with customer email") |
+
+### MCP Tokens
+
+MCP tokens are API keys that authenticate AI assistants to the MCP endpoint. Each token has:
+
+- **Name**: Descriptive identifier
+- **Scopes**: Permissions granted (what tools can be used)
+- **Expiration**: Optional time limit
+- **Audit Trail**: Last used timestamp and creation info
+
+#### Creating an MCP Token
+
+**Who**: Administrators
+
+1. Navigate to **Settings → MCP Tokens**
+2. Click **Create Token**
+3. Fill in the form:
+   - **Name**: Descriptive name (e.g., "Claude Assistant - Analytics Team")
+   - **Description**: Purpose of this token
+   - **Scopes**: Select required permissions (see [Available Scopes](#available-scopes))
+   - **Expiration**: Optional expiry time
+
+4. Click **Create**
+5. **IMPORTANT**: Copy the generated token immediately. It will only be shown once.
+
+**Example Token Configuration**:
+```yaml
+Name: claude-assistant-analytics
+Description: Claude assistant for analytics team queries
+Scopes:
+  - data-products:read
+  - contracts:read
+  - semantic:read
+  - search:read
+Expiration: 90 days
+```
+
+#### Managing Tokens
+
+**View Tokens**: Navigate to **Settings → MCP Tokens** to see all tokens with:
+- Name and description
+- Scopes granted
+- Created by and when
+- Last used timestamp
+- Expiration status
+
+**Revoke Token**: Click **Revoke** to immediately disable a token. Revoked tokens cannot be restored.
+
+**Delete Token**: Permanently remove a token and its audit history.
+
+### Available Scopes
+
+Scopes control which tools an MCP token can access. Use the principle of least privilege.
+
+#### Read Scopes
+
+| Scope | Tools Available |
+|-------|-----------------|
+| `data-products:read` | Search, get, list data products |
+| `contracts:read` | Search, get, list data contracts |
+| `domains:read` | Search, get domains |
+| `teams:read` | Search, get teams |
+| `projects:read` | Search, get projects |
+| `tags:read` | Search tags, list entity tags |
+| `semantic:read` | Search glossary terms, list semantic links, find entities by concept |
+| `analytics:read` | Get table schemas, explore catalogs, execute read-only queries |
+| `costs:read` | Get data product cost information |
+| `search:read` | Global search across all entities |
+
+#### Write Scopes
+
+| Scope | Tools Available |
+|-------|-----------------|
+| `data-products:write` | Create, update, delete data products |
+| `contracts:write` | Create, update, delete data contracts |
+| `domains:write` | Create, update, delete domains |
+| `teams:write` | Create, update, delete teams |
+| `projects:write` | Create, update, delete projects |
+| `tags:write` | Create, update, delete tags; assign/remove tags from entities |
+| `semantic:write` | Add/remove semantic links |
+
+#### Special Scopes
+
+| Scope | Description |
+|-------|-------------|
+| `sparql:query` | Execute SPARQL queries against the semantic model graph |
+| `*` | Full access to all tools (admin only) |
+
+#### Wildcard Scopes
+
+Use wildcards for broader access:
+
+- `data-products:*` → Both read and write for data products
+- `*:read` → Read access to all entities
+- `*` → Full access (use sparingly)
+
+### Using the MCP Endpoint
+
+The MCP endpoint uses JSON-RPC 2.0 over HTTP.
+
+#### Endpoint URL
+
+```
+POST /api/mcp
+```
+
+#### Authentication
+
+Include your MCP token in the `X-API-Key` header:
+
+```bash
+curl -X POST https://your-ontos-instance/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-mcp-token-here" \
+  -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+```
+
+#### Available Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Initialize MCP session |
+| `ping` | Health check |
+| `tools/list` | List available tools (filtered by token scopes) |
+| `tools/call` | Execute a specific tool |
+
+### Tool Discovery
+
+Use `tools/list` to discover available tools:
+
+**Request**:
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "id": 1
+}
+```
+
+**Response**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      {
+        "name": "search_data_products",
+        "description": "Search for data products by name, description, or tags",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query string"
+            }
+          },
+          "required": ["query"]
+        }
+      },
+      ...
+    ]
+  },
+  "id": 1
+}
+```
+
+**Note**: Only tools matching your token's scopes are returned.
+
+### Executing Tools
+
+Use `tools/call` to execute a tool:
+
+**Request**:
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "search_data_products",
+    "arguments": {
+      "query": "customer analytics"
+    }
+  },
+  "id": 2
+}
+```
+
+**Response**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"success\": true, \"data\": {\"products\": [...], \"total_found\": 5}}"
+      }
+    ]
+  },
+  "id": 2
+}
+```
+
+### Available Tools
+
+The following tools are available through the MCP endpoint:
+
+#### Data Products Tools
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `search_data_products` | Search products by query | `data-products:read` |
+| `get_data_product` | Get product details by ID | `data-products:read` |
+| `list_data_products` | List all products | `data-products:read` |
+| `create_draft_data_product` | Create a new draft product | `data-products:write` |
+| `update_data_product` | Update product details | `data-products:write` |
+| `delete_data_product` | Delete a product | `data-products:write` |
+
+#### Data Contracts Tools
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `search_data_contracts` | Search contracts by query | `contracts:read` |
+| `get_data_contract` | Get contract details by ID | `contracts:read` |
+| `list_data_contracts` | List all contracts | `contracts:read` |
+| `create_draft_data_contract` | Create a new draft contract | `contracts:write` |
+| `update_data_contract` | Update contract details | `contracts:write` |
+| `delete_data_contract` | Delete a contract | `contracts:write` |
+
+#### Semantic Tools
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `search_glossary_terms` | Search business concepts and properties | `semantic:read` |
+| `list_semantic_links` | List semantic links for an entity | `semantic:read` |
+| `find_entities_by_concept` | Find all entities linked to a concept | `semantic:read` |
+| `get_concept_hierarchy` | Navigate concept hierarchies | `semantic:read` |
+| `get_concept_neighbors` | Discover related concepts | `semantic:read` |
+| `add_semantic_link` | Link entity to business concept | `semantic:write` |
+| `remove_semantic_link` | Remove semantic link | `semantic:write` |
+| `execute_sparql_query` | Run SPARQL query | `sparql:query` |
+
+#### Organization Tools
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `search_domains` | Search domains | `domains:read` |
+| `get_domain` | Get domain details | `domains:read` |
+| `search_teams` | Search teams | `teams:read` |
+| `get_team` | Get team details | `teams:read` |
+| `search_projects` | Search projects | `projects:read` |
+| `get_project` | Get project details | `projects:read` |
+
+#### Analytics Tools
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `get_table_schema` | Get Unity Catalog table schema | `analytics:read` |
+| `explore_catalog_schema` | List tables in a schema | `analytics:read` |
+| `execute_analytics_query` | Execute SQL query | `analytics:read` |
+
+#### Other Tools
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `global_search` | Search across all indexed entities | `search:read` |
+| `get_data_product_costs` | Get cost information | `costs:read` |
+| `search_tags` | Search tags | `tags:read` |
+| `list_entity_tags` | List tags on an entity | `tags:read` |
+
+### Integration Examples
+
+#### Claude Desktop Configuration
+
+Add Ontos as an MCP server in your Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "ontos": {
+      "url": "https://your-ontos-instance/api/mcp",
+      "headers": {
+        "X-API-Key": "your-mcp-token-here"
+      }
+    }
+  }
+}
+```
+
+#### Python Integration
+
+```python
+import httpx
+
+MCP_URL = "https://your-ontos-instance/api/mcp"
+MCP_TOKEN = "your-mcp-token-here"
+
+def call_mcp_tool(tool_name: str, arguments: dict) -> dict:
+    response = httpx.post(
+        MCP_URL,
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": MCP_TOKEN
+        },
+        json={
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            },
+            "id": 1
+        }
+    )
+    return response.json()
+
+# Search for data products
+result = call_mcp_tool("search_data_products", {"query": "customer"})
+print(result)
+```
+
+#### cURL Examples
+
+**List available tools**:
+```bash
+curl -X POST https://your-ontos-instance/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $MCP_TOKEN" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+**Search data products**:
+```bash
+curl -X POST https://your-ontos-instance/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $MCP_TOKEN" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "search_data_products",
+      "arguments": {"query": "customer analytics"}
+    },
+    "id": 2
+  }'
+```
+
+**Find entities by concept**:
+```bash
+curl -X POST https://your-ontos-instance/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $MCP_TOKEN" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "find_entities_by_concept",
+      "arguments": {"concept_iri": "http://example.com/ontology#Customer"}
+    },
+    "id": 3
+  }'
+```
+
+### Security Best Practices
+
+#### Token Management
+
+1. **Principle of Least Privilege**: Grant only the scopes needed
+2. **Use Expiration**: Set expiration for temporary integrations
+3. **Regular Rotation**: Rotate tokens periodically (e.g., every 90 days)
+4. **Audit Usage**: Monitor `last_used_at` for unusual patterns
+5. **Revoke Immediately**: Revoke tokens when no longer needed or compromised
+
+#### Scope Recommendations
+
+| Integration Type | Recommended Scopes |
+|------------------|-------------------|
+| Discovery Chatbot | `*:read`, `search:read` |
+| Documentation Generator | `contracts:read`, `data-products:read`, `semantic:read` |
+| Compliance Monitor | `contracts:read`, `data-products:read`, `analytics:read` |
+| Full Automation | Specific write scopes as needed |
+
+#### Network Security
+
+- Use HTTPS in production
+- Consider IP allowlisting for sensitive integrations
+- Monitor for unusual request patterns
+
+### Error Handling
+
+The MCP endpoint returns standard JSON-RPC 2.0 errors:
+
+| Error Code | Meaning |
+|------------|---------|
+| `-32600` | Invalid request format |
+| `-32601` | Method not found |
+| `-32602` | Invalid params |
+| `-32603` | Internal error |
+| `-32000` | Tool execution error |
+| `-32001` | Unauthorized (invalid/missing token) |
+| `-32003` | Forbidden (insufficient scopes) |
+
+**Example Error Response**:
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32003,
+    "message": "Insufficient scope: requires 'data-products:write', token has ['data-products:read']"
+  },
+  "id": 1
+}
+```
+
+### Health Check
+
+Use the health endpoint to verify connectivity:
+
+```bash
+curl https://your-ontos-instance/api/mcp/health
+```
+
+**Response**:
+```json
+{
+  "status": "healthy",
+  "version": "1.0.0"
+}
+```
 
 ---
 

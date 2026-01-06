@@ -66,6 +66,7 @@ class BaseTool(ABC):
     - description: Human-readable description
     - parameters: JSON Schema for input parameters
     - required_params: List of required parameter names
+    - required_scope: MCP scope required to use this tool (e.g., 'data-products:read')
     - execute(): Async method that performs the tool's action
     
     Tools can be converted to OpenAI or MCP format for use with
@@ -77,6 +78,7 @@ class BaseTool(ABC):
     description: str = ""
     parameters: Dict[str, Any] = {}
     required_params: List[str] = []
+    required_scope: str = "*"  # Default: admin-only, subclasses should override
     
     @abstractmethod
     async def execute(self, ctx: ToolContext, **kwargs) -> ToolResult:

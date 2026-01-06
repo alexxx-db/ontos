@@ -16,6 +16,7 @@ import SemanticModelsSettings from '@/components/settings/semantic-models-settin
 import TagsSettings from '@/components/settings/tags-settings';
 import JobsSettings from '@/components/settings/jobs-settings';
 import SearchConfigEditor from '@/components/settings/search-config-editor';
+import MCPTokensSettings from '@/components/settings/mcp-tokens-settings';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
 import { useToast } from '@/hooks/use-toast';
@@ -54,7 +55,7 @@ export default function Settings() {
   const [searchParams] = useSearchParams();
   
   // Determine the active tab from URL param or default to 'general'
-  const validTabs = ['general', 'databricks', 'git', 'jobs', 'roles', 'tags', 'semantic-models', 'search'];
+  const validTabs = ['general', 'databricks', 'git', 'jobs', 'roles', 'tags', 'semantic-models', 'search', 'mcp-tokens'];
   const activeTab = urlTab && validTabs.includes(urlTab) ? urlTab : 'general';
   
   // Get tagId from query params for tags tab
@@ -231,6 +232,7 @@ export default function Settings() {
           <TabsTrigger value="tags">{t('settings:tabs.tags')}</TabsTrigger>
           <TabsTrigger value="semantic-models">{t('settings:tabs.semanticModels')}</TabsTrigger>
           <TabsTrigger value="search">{t('settings:tabs.search', 'Search')}</TabsTrigger>
+          <TabsTrigger value="mcp-tokens">{t('settings:tabs.mcpTokens', 'MCP Tokens')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general">
@@ -544,6 +546,9 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="search">
             <SearchConfigEditor />
+        </TabsContent>
+        <TabsContent value="mcp-tokens">
+            <MCPTokensSettings />
         </TabsContent>
       </Tabs>
 

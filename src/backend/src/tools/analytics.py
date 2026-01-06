@@ -26,6 +26,7 @@ class GetTableSchemaTool(BaseTool):
         }
     }
     required_params = ["table_fqn"]
+    required_scope = "analytics:read"
     
     def __init__(self):
         self._sql_validator = SQLValidator(max_row_limit=1000)
@@ -97,6 +98,7 @@ class ExecuteAnalyticsQueryTool(BaseTool):
         }
     }
     required_params = ["sql", "explanation"]
+    required_scope = "analytics:read"
     
     async def execute(
         self,
@@ -196,6 +198,7 @@ class ExploreCatalogSchemaTool(BaseTool):
         }
     }
     required_params = ["catalog", "schema"]
+    required_scope = "analytics:read"
     
     async def execute(
         self,

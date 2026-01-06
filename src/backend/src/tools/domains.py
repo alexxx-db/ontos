@@ -25,6 +25,7 @@ class SearchDomainsTool(BaseTool):
         }
     }
     required_params = ["query"]
+    required_scope = "domains:read"
     
     async def execute(
         self,
@@ -92,6 +93,7 @@ class GetDomainTool(BaseTool):
         }
     }
     required_params = ["domain_id"]
+    required_scope = "domains:read"
     
     async def execute(
         self,
@@ -160,6 +162,7 @@ class CreateDomainTool(BaseTool):
         }
     }
     required_params = ["name"]
+    required_scope = "domains:write"
     
     async def execute(
         self,
@@ -234,6 +237,7 @@ class UpdateDomainTool(BaseTool):
         }
     }
     required_params = ["domain_id"]
+    required_scope = "domains:write"
     
     async def execute(
         self,
@@ -313,6 +317,7 @@ class DeleteDomainTool(BaseTool):
         }
     }
     required_params = ["domain_id"]
+    required_scope = "domains:write"
     
     async def execute(
         self,

@@ -29,6 +29,7 @@ class GetDataProductCostsTool(BaseTool):
         }
     }
     required_params = []
+    required_scope = "costs:read"
     
     async def execute(
         self,

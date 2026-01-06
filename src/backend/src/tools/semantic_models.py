@@ -28,6 +28,7 @@ class SearchGlossaryTermsTool(BaseTool):
         }
     }
     required_params = ["term"]
+    required_scope = "semantic:read"
     
     async def execute(
         self,
@@ -113,6 +114,7 @@ class AddSemanticLinkTool(BaseTool):
         }
     }
     required_params = ["entity_type", "entity_id", "concept_iri", "concept_label"]
+    required_scope = "semantic:write"
     
     async def execute(
         self,
@@ -199,6 +201,7 @@ class ListSemanticLinksTool(BaseTool):
         }
     }
     required_params = ["entity_type", "entity_id"]
+    required_scope = "semantic:read"
     
     async def execute(
         self,
@@ -262,6 +265,7 @@ class RemoveSemanticLinkTool(BaseTool):
         }
     }
     required_params = ["link_id"]
+    required_scope = "semantic:write"
     
     async def execute(
         self,
@@ -318,6 +322,7 @@ class FindEntitiesByConceptTool(BaseTool):
         }
     }
     required_params = ["concept_iri"]
+    required_scope = "semantic:read"
     
     async def execute(
         self,
@@ -365,5 +370,250 @@ class FindEntitiesByConceptTool(BaseTool):
                 success=False,
                 error=f"{type(e).__name__}: {str(e)}",
                 data={"entities": []}
+            )
+
+
+class ExecuteSparqlQueryTool(BaseTool):
+    """Execute SPARQL queries against the semantic model graph."""
+    
+    name = "execute_sparql_query"
+    description = "Execute SPARQL queries against the semantic model graph with safety validation. Only SELECT, ASK, DESCRIBE, and CONSTRUCT queries are allowed."
+    parameters = {
+        "sparql": {
+            "type": "string",
+            "description": "SPARQL query to execute (SELECT, ASK, DESCRIBE, CONSTRUCT only)"
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum number of results to return (default: 100, max: 1000)"
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Query timeout in seconds (default: 30, max: 60)"
+        }
+    }
+    required_params = ["sparql"]
+    required_scope = "sparql:query"
+    
+    async def execute(
+        self,
+        ctx: ToolContext,
+        sparql: str,
+        max_results: int = 100,
+        timeout_seconds: int = 30
+    ) -> ToolResult:
+        """Execute a SPARQL query."""
+        logger.info(f"[execute_sparql_query] Starting - query length={len(sparql)}")
+        
+        if not ctx.semantic_models_manager:
+            logger.warning("[execute_sparql_query] FAILED: semantic_models_manager is None")
+            return ToolResult(
+                success=False,
+                error="Semantic models not available",
+                data={"results": []}
+            )
+        
+        # Enforce limits
+        max_results = min(max_results, 1000)
+        timeout_seconds = min(timeout_seconds, 60)
+        
+        try:
+            import time
+            start_time = time.time()
+            
+            # Execute query using existing validated query method
+            results = ctx.semantic_models_manager.query(
+                sparql,
+                max_results=max_results,
+                timeout_seconds=timeout_seconds
+            )
+            
+            query_time_ms = int((time.time() - start_time) * 1000)
+            
+            logger.info(f"[execute_sparql_query] SUCCESS: {len(results)} results in {query_time_ms}ms")
+            return ToolResult(
+                success=True,
+                data={
+                    "results": results,
+                    "count": len(results),
+                    "query_time_ms": query_time_ms,
+                    "truncated": len(results) >= max_results
+                }
+            )
+            
+        except ValueError as e:
+            # Validation errors from SPARQLQueryValidator
+            logger.warning(f"[execute_sparql_query] VALIDATION FAILED: {e}")
+            return ToolResult(
+                success=False,
+                error=str(e),
+                data={"results": []}
+            )
+        except Exception as e:
+            logger.error(f"[execute_sparql_query] FAILED: {type(e).__name__}: {e}", exc_info=True)
+            return ToolResult(
+                success=False,
+                error=f"{type(e).__name__}: {str(e)}",
+                data={"results": []}
+            )
+
+
+class GetConceptHierarchyTool(BaseTool):
+    """Navigate concept hierarchies to find parent, child, and sibling relationships."""
+    
+    name = "get_concept_hierarchy"
+    description = "Get hierarchical relationships for a concept including ancestors, descendants, and siblings. Use search_glossary_terms first to find the concept IRI."
+    parameters = {
+        "concept_iri": {
+            "type": "string",
+            "description": "IRI of the concept to explore (e.g., 'http://ontos.app/terms#Customer')"
+        }
+    }
+    required_params = ["concept_iri"]
+    required_scope = "semantic:read"
+    
+    async def execute(
+        self,
+        ctx: ToolContext,
+        concept_iri: str
+    ) -> ToolResult:
+        """Get concept hierarchy."""
+        logger.info(f"[get_concept_hierarchy] Starting - concept_iri={concept_iri}")
+        
+        if not ctx.semantic_models_manager:
+            logger.warning("[get_concept_hierarchy] FAILED: semantic_models_manager is None")
+            return ToolResult(
+                success=False,
+                error="Semantic models not available"
+            )
+        
+        try:
+            hierarchy = ctx.semantic_models_manager.get_concept_hierarchy(concept_iri)
+            
+            if not hierarchy:
+                return ToolResult(
+                    success=False,
+                    error=f"Concept not found: {concept_iri}"
+                )
+            
+            # Format the response
+            result = {
+                "concept": {
+                    "iri": hierarchy.concept.iri,
+                    "label": hierarchy.concept.label,
+                    "comment": hierarchy.concept.comment,
+                    "concept_type": hierarchy.concept.concept_type,
+                    "source_context": hierarchy.concept.source_context
+                },
+                "ancestors": [
+                    {
+                        "iri": a.iri,
+                        "label": a.label,
+                        "concept_type": a.concept_type
+                    }
+                    for a in hierarchy.ancestors
+                ],
+                "descendants": [
+                    {
+                        "iri": d.iri,
+                        "label": d.label,
+                        "concept_type": d.concept_type
+                    }
+                    for d in hierarchy.descendants
+                ],
+                "siblings": [
+                    {
+                        "iri": s.iri,
+                        "label": s.label,
+                        "concept_type": s.concept_type
+                    }
+                    for s in hierarchy.siblings
+                ]
+            }
+            
+            logger.info(f"[get_concept_hierarchy] SUCCESS: {len(hierarchy.ancestors)} ancestors, {len(hierarchy.descendants)} descendants, {len(hierarchy.siblings)} siblings")
+            return ToolResult(success=True, data=result)
+            
+        except Exception as e:
+            logger.error(f"[get_concept_hierarchy] FAILED: {type(e).__name__}: {e}", exc_info=True)
+            return ToolResult(success=False, error=f"{type(e).__name__}: {str(e)}")
+
+
+class GetConceptNeighborsTool(BaseTool):
+    """Discover related concepts through RDF graph relationships."""
+    
+    name = "get_concept_neighbors"
+    description = "Get neighboring concepts and properties connected to a concept via RDF predicates. Shows incoming and outgoing relationships."
+    parameters = {
+        "concept_iri": {
+            "type": "string",
+            "description": "IRI of the concept to explore"
+        },
+        "max_neighbors": {
+            "type": "integer",
+            "description": "Maximum number of neighbors to return (default: 50, max: 200)"
+        }
+    }
+    required_params = ["concept_iri"]
+    required_scope = "semantic:read"
+    
+    async def execute(
+        self,
+        ctx: ToolContext,
+        concept_iri: str,
+        max_neighbors: int = 50
+    ) -> ToolResult:
+        """Get concept neighbors."""
+        logger.info(f"[get_concept_neighbors] Starting - concept_iri={concept_iri}")
+        
+        if not ctx.semantic_models_manager:
+            logger.warning("[get_concept_neighbors] FAILED: semantic_models_manager is None")
+            return ToolResult(
+                success=False,
+                error="Semantic models not available"
+            )
+        
+        # Enforce limit
+        max_neighbors = min(max_neighbors, 200)
+        
+        try:
+            neighbors = ctx.semantic_models_manager.neighbors(concept_iri, limit=max_neighbors)
+            
+            # Separate into outgoing and incoming
+            outgoing = []
+            incoming = []
+            
+            for n in neighbors:
+                neighbor_info = {
+                    "predicate": n.get("predicate"),
+                    "display": n.get("display"),
+                    "display_type": n.get("displayType"),
+                    "step_iri": n.get("stepIri"),
+                    "is_resource": n.get("stepIsResource", False)
+                }
+                
+                if n.get("direction") == "outgoing":
+                    outgoing.append(neighbor_info)
+                elif n.get("direction") == "incoming":
+                    incoming.append(neighbor_info)
+            
+            logger.info(f"[get_concept_neighbors] SUCCESS: {len(outgoing)} outgoing, {len(incoming)} incoming")
+            return ToolResult(
+                success=True,
+                data={
+                    "concept_iri": concept_iri,
+                    "outgoing": outgoing,
+                    "incoming": incoming,
+                    "total_outgoing": len(outgoing),
+                    "total_incoming": len(incoming)
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[get_concept_neighbors] FAILED: {type(e).__name__}: {e}", exc_info=True)
+            return ToolResult(
+                success=False,
+                error=f"{type(e).__name__}: {str(e)}",
+                data={"outgoing": [], "incoming": []}
             )
 

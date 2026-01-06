@@ -24,6 +24,7 @@ class SearchProjectsTool(BaseTool):
         }
     }
     required_params = ["query"]
+    required_scope = "projects:read"
     
     async def execute(
         self,
@@ -93,6 +94,7 @@ class GetProjectTool(BaseTool):
         }
     }
     required_params = ["project_id"]
+    required_scope = "projects:read"
     
     async def execute(
         self,
@@ -177,6 +179,7 @@ class CreateProjectTool(BaseTool):
         }
     }
     required_params = ["name", "title"]
+    required_scope = "projects:write"
     
     async def execute(
         self,
@@ -258,6 +261,7 @@ class UpdateProjectTool(BaseTool):
         }
     }
     required_params = ["project_id"]
+    required_scope = "projects:write"
     
     async def execute(
         self,
@@ -338,6 +342,7 @@ class DeleteProjectTool(BaseTool):
         }
     }
     required_params = ["project_id"]
+    required_scope = "projects:write"
     
     async def execute(
         self,

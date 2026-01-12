@@ -116,17 +116,25 @@ export default function DatasetInstanceFormDialog({
     if (open) {
       fetch('/api/data-contracts')
         .then((res) => res.json())
-        .then((data) =>
-          setContracts(
-            data.map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              version: c.version,
-              status: c.status,
-            }))
-          )
-        )
-        .catch(console.error);
+        .then((data) => {
+          // Guard against null/undefined response
+          if (Array.isArray(data)) {
+            setContracts(
+              data.map((c: any) => ({
+                id: c.id,
+                name: c.name,
+                version: c.version,
+                status: c.status,
+              }))
+            );
+          } else {
+            setContracts([]);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to fetch contracts:', err);
+          setContracts([]);
+        });
     }
   }, [open]);
 

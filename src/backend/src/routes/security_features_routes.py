@@ -16,7 +16,7 @@ from src.models.security_features import SecurityFeature, SecurityFeatureType
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["security-features"])
+router = APIRouter(prefix="/api", tags=["Security Features"])
 
 # Create a single instance of the manager
 manager = SecurityFeaturesManager()

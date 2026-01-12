@@ -15,7 +15,7 @@ from src.models.entitlements_sync import EntitlementSyncConfig
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["entitlements-sync"])
+router = APIRouter(prefix="/api", tags=["Entitlements Sync"])
 
 # Create a function to get the manager with dependency injection
 def get_entitlements_sync_manager(workspace_client = Depends(get_workspace_client_dependency(timeout=30))):

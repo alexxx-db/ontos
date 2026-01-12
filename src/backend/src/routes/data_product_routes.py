@@ -44,7 +44,7 @@ from src.common.dependencies import NotificationsManagerDep, CurrentUserDep, DBS
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["data-products"])
+router = APIRouter(prefix="/api", tags=["Data Products"])
 
 DATA_PRODUCTS_FEATURE_ID = "data-products"
 

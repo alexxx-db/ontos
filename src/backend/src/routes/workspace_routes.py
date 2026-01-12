@@ -12,7 +12,7 @@ from src.common.features import FeatureAccessLevel
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["workspace"])
+router = APIRouter(prefix="/api", tags=["Workspace"])
 
 @router.get("/workspace/assets/search", response_model=List[WorkspaceAsset])
 async def search_workspace_assets(

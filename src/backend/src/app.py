@@ -146,6 +146,54 @@ logger.info(f"STATIC_ASSETS_PATH: {STATIC_ASSETS_PATH}")
 # Import version from package
 from src import __version__
 
+# Define API tags for Swagger UI ordering
+# Grouped by feature category for logical organization
+openapi_tags = [
+    # Data Products - Core data lifecycle
+    {"name": "Data Domains", "description": "Manage data domains for organizing data products"},
+    {"name": "Teams", "description": "Manage teams and team members"},
+    {"name": "Projects", "description": "Manage projects within teams"},
+    {"name": "Tags", "description": "Manage tags and tag namespaces"},
+    {"name": "Costs", "description": "Manage cost items and budgets"},
+    {"name": "Datasets", "description": "Manage datasets and dataset instances"},
+    {"name": "Data Contracts", "description": "Manage data contracts for data products"},
+    {"name": "Data Products", "description": "Manage data products and subscriptions"},
+    {"name": "Approvals", "description": "Manage approval workflows"},
+    
+    # Governance - Standards and approval workflows
+    {"name": "Semantic Models", "description": "Manage semantic models and ontologies"},
+    {"name": "Semantic Links", "description": "Manage semantic links between entities"},
+    {"name": "Data Asset Reviews", "description": "Manage data asset review workflows"},
+    
+    # Operations - Monitoring and technical management
+    {"name": "Compliance", "description": "Manage compliance policies and runs"},
+    {"name": "Estates", "description": "Manage data estates"},
+    {"name": "Master Data Management", "description": "Master data management features"},
+    {"name": "Catalog Commander", "description": "Dual-pane catalog explorer"},
+    
+    # Security - Access control and security features
+    {"name": "Security Features", "description": "Advanced security features"},
+    {"name": "Entitlements", "description": "Manage entitlements and personas"},
+    {"name": "Entitlements Sync", "description": "Sync entitlements from external sources"},
+    {"name": "Access Requests", "description": "Handle access requests"},
+    
+    # System - Utilities, configuration, auxiliary services
+    {"name": "Metadata", "description": "Manage metadata attachments"},
+    {"name": "Workspace", "description": "Workspace asset operations"},
+    {"name": "Comments", "description": "Manage comments and discussions"},
+    {"name": "Notifications", "description": "Manage user notifications"},
+    {"name": "Search", "description": "Search across all assets"},
+    {"name": "LLM Search", "description": "AI-powered search"},
+    {"name": "Jobs", "description": "Manage background jobs and workflows"},
+    {"name": "User", "description": "User information and permissions"},
+    {"name": "Audit Trail", "description": "View audit trail logs"},
+    {"name": "Change Log", "description": "View change history"},
+    {"name": "MCP Server", "description": "Model Context Protocol server"},
+    {"name": "MCP Tokens", "description": "Manage MCP access tokens"},
+    {"name": "Self Service", "description": "Self-service data product creation"},
+    {"name": "Settings", "description": "Application settings and configuration"},
+]
+
 # Create single FastAPI app with settings dependency
 app = FastAPI(
     title="Ontos",
@@ -153,7 +201,8 @@ app = FastAPI(
     version=__version__,
     dependencies=[Depends(get_settings)],
     on_startup=[startup_event],
-    on_shutdown=[shutdown_event]
+    on_shutdown=[shutdown_event],
+    openapi_tags=openapi_tags
 )
 
 # Configure CORS
@@ -184,44 +233,49 @@ app.add_middleware(LoggingMiddleware)
 if not os.environ.get('TESTING'):
     app.mount("/static", StaticFiles(directory=STATIC_ASSETS_PATH, html=True), name="static")
 
-# Data Management features
-data_product_routes.register_routes(app)
-data_contracts_routes.register_routes(app)
+# Data Products - Core data lifecycle
+data_domains_routes.register_routes(app)
+teams_routes.register_routes(app)
+projects_routes.register_routes(app)
+tags_routes.register_routes(app)
+costs_routes.register_routes(app)
 datasets_routes.register_routes(app)
+data_contracts_routes.register_routes(app)
+data_product_routes.register_routes(app)
+from src.routes import approvals_routes
+approvals_routes.register_routes(app)
+
+# Governance - Standards and approval workflows
 semantic_models_routes.register_routes(app)
-mdm_routes.register_routes(app)  # MDM integration with contracts/reviews
+semantic_links_routes.register_routes(app)
+data_asset_reviews_routes.register_routes(app)
+
+# Operations - Monitoring and technical management
 compliance_routes.register_routes(app)
 estate_manager_routes.register_routes(app)
-# Security features
+mdm_routes.register_routes(app)
+catalog_commander_routes.register_routes(app)
+
+# Security - Access control and security features
 security_features_routes.register_routes(app)
 entitlements_routes.register_routes(app)
 entitlements_sync_routes.register_routes(app)
-data_asset_reviews_routes.register_routes(app)
-# Tools features
-catalog_commander_routes.register_routes(app)
-# Auxiliary services
+access_requests_routes.register_routes(app)
+
+# System - Utilities, configuration, auxiliary services
 metadata_routes.register_routes(app)
+workspace_routes.register_routes(app)
 comments_routes.register_routes(app)
 notifications_routes.register_routes(app)
 search_routes.register_routes(app)
 llm_search_routes.register_routes(app)
-mcp_routes.register_routes(app)
-mcp_tokens_routes.register_routes(app)
 jobs_routes.register_routes(app)
-settings_routes.register_routes(app)
-access_requests_routes.register_routes(app)
-semantic_links_routes.register_routes(app)
 user_routes.register_routes(app)
 audit_routes.register_routes(app)
 change_log_routes.register_routes(app)
-data_domains_routes.register_routes(app)
-workspace_routes.register_routes(app)
-tags_routes.register_routes(app)
-teams_routes.register_routes(app)
-projects_routes.register_routes(app)
-costs_routes.register_routes(app)
-from src.routes import approvals_routes
-approvals_routes.register_routes(app)
+mcp_routes.register_routes(app)
+mcp_tokens_routes.register_routes(app)
+settings_routes.register_routes(app)
 
 # Define other specific API routes BEFORE the catch-all
 @app.get("/api/time")

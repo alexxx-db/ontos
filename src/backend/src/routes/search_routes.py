@@ -17,7 +17,7 @@ from src.common.dependencies import (
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["search"])
+router = APIRouter(prefix="/api", tags=["Search"])
 
 # --- Manager Dependency ---
 # Remove unused global variable

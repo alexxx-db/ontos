@@ -11,7 +11,7 @@ from src.common.logging import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["approvals"])
+router = APIRouter(prefix="/api", tags=["Approvals"])
 
 
 def get_approvals_manager(request: Request) -> ApprovalsManager:

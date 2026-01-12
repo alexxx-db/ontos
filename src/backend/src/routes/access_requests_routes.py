@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["access-requests"])
+router = APIRouter(prefix="/api", tags=["Access Requests"])
 
 
 class CreateAccessRequest(BaseModel):

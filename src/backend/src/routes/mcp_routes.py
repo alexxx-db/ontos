@@ -26,7 +26,7 @@ from src.tools.registry import create_default_registry
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/mcp", tags=["MCP"])
+router = APIRouter(prefix="/api/mcp", tags=["MCP Server"])
 
 
 def register_routes(app):

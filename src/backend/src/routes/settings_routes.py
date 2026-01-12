@@ -31,7 +31,7 @@ from ..common.search_config_loader import get_search_config_loader
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["settings"])
+router = APIRouter(prefix="/api", tags=["Settings"])
 
 SETTINGS_FEATURE_ID = "settings" # Define a feature ID for settings
 

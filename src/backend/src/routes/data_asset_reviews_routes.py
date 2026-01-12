@@ -37,7 +37,7 @@ from src.common.dependencies import (
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["data-asset-reviews"])
+router = APIRouter(prefix="/api", tags=["Data Asset Reviews"])
 
 # --- Routes (using Annotated Types directly) --- #
 

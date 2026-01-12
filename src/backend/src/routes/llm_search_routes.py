@@ -28,7 +28,7 @@ from src.common.logging import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/llm-search", tags=["llm-search"])
+router = APIRouter(prefix="/api/llm-search", tags=["LLM Search"])
 
 
 # ============================================================================

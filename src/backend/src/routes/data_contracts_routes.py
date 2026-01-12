@@ -63,7 +63,7 @@ import yaml
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["data-contracts"])
+router = APIRouter(prefix="/api", tags=["Data Contracts"])
 
 def get_data_contracts_manager(request: Request) -> DataContractsManager:
     """Retrieves the DataContractsManager singleton from app.state."""

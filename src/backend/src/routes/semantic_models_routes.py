@@ -22,7 +22,7 @@ from rdflib import ConjunctiveGraph, RDF
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["semantic-models"])
+router = APIRouter(prefix="/api", tags=["Semantic Models"])
 
 def get_semantic_models_manager(request: Request) -> SemanticModelsManager:
     """Retrieves the SemanticModelsManager singleton from app.state."""

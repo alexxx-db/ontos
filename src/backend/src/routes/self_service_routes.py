@@ -33,7 +33,7 @@ from src.repositories.data_contracts_repository import data_contract_repo
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["self-service"])
+router = APIRouter(prefix="/api", tags=["Self Service"])
 
 FEATURE_ID = "data-contracts"  # Reuse data-contracts feature for RW permission
 

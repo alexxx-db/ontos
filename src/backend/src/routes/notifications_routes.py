@@ -16,7 +16,7 @@ from src.models.notifications import Notification
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["notifications"])
+router = APIRouter(prefix="/api", tags=["Notifications"])
 
 @router.get('/notifications', response_model=List[Notification])
 async def get_notifications(

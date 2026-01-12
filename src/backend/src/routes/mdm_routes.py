@@ -36,7 +36,7 @@ from src.models.mdm import (
 )
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/api/mdm", tags=["master-data-management"])
+router = APIRouter(prefix="/api/mdm", tags=["Master Data Management"])
 
 MDM_FEATURE_ID = "master-data"
 

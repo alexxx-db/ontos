@@ -28,7 +28,7 @@ from src.controller.deployment_policy_manager import DeploymentPolicyManager
 logger = get_logger(__name__)
 
 # Define router at the module level with /api prefix
-router = APIRouter(prefix="/api", tags=["user"])
+router = APIRouter(prefix="/api", tags=["User"])
 
 # Original endpoint: Get user info directly from headers (with local dev check)
 @router.get("/user/info", response_model=UserInfo)

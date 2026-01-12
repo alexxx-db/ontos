@@ -11,7 +11,7 @@ from src.models.semantic_links import EntitySemanticLink, EntitySemanticLinkCrea
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["semantic-links"])
+router = APIRouter(prefix="/api", tags=["Semantic Links"])
 
 
 def get_manager(request: Request, db: DBSessionDep) -> SemanticLinksManager:

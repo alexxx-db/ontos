@@ -23,7 +23,7 @@ from src.models.workflow_configurations import (
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["jobs"])
+router = APIRouter(prefix="/api", tags=["Jobs"])
 
 @router.get('/jobs/runs')
 async def get_job_runs(

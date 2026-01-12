@@ -9,7 +9,7 @@ from src.controller.entitlements_manager import EntitlementsManager
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["entitlements"])
+router = APIRouter(prefix="/api", tags=["Entitlements"])
 
 # Create a single instance of the manager (YAML loaded automatically in __init__)
 entitlements_manager = EntitlementsManager()

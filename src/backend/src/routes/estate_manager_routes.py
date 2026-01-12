@@ -11,7 +11,7 @@ from src.controller.estate_manager import EstateManager
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["estates"])
+router = APIRouter(prefix="/api", tags=["Estates"])
 
 def get_estate_manager(client: WorkspaceClient = Depends(get_workspace_client), settings: Settings = Depends(get_settings)) -> EstateManager:
     """Dependency provider for EstateManager.

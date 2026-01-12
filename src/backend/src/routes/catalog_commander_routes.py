@@ -13,7 +13,7 @@ from src.common.features import FeatureAccessLevel
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["catalog-commander"])
+router = APIRouter(prefix="/api", tags=["Catalog Commander"])
 
 # Define the feature ID for permission checks
 CATALOG_COMMANDER_FEATURE_ID = 'catalog-commander'

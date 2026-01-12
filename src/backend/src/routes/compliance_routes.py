@@ -20,7 +20,7 @@ from src.common.compliance_dsl import evaluate_rule_on_object as eval_dsl
 from src.common.logging import get_logger
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api", tags=["compliance"])
+router = APIRouter(prefix="/api", tags=["Compliance"])
 manager = ComplianceManager()
 
 FEATURE_ID = 'compliance'

@@ -5,17 +5,19 @@
 1. [Introduction](#introduction)
 2. [Core Concepts](#core-concepts)
 3. [Getting Started](#getting-started)
-4. [Working with Domains](#working-with-domains)
-5. [Managing Teams](#managing-teams)
-6. [Organizing Projects](#organizing-projects)
-7. [Creating Data Contracts](#creating-data-contracts)
-8. [Building Data Products](#building-data-products)
-9. [Semantic Models](#semantic-models)
-10. [Compliance Checks](#compliance-checks)
-11. [Asset Review Workflow](#asset-review-workflow)
-12. [User Roles and Permissions](#user-roles-and-permissions)
-13. [MCP Integration (AI Assistants)](#mcp-integration-ai-assistants)
-14. [Best Practices](#best-practices)
+4. [Growing with Ontos](#growing-with-ontos)
+5. [Working with Domains](#working-with-domains)
+6. [Managing Teams](#managing-teams)
+7. [Organizing Projects](#organizing-projects)
+8. [Managing Datasets](#managing-datasets)
+9. [Creating Data Contracts](#creating-data-contracts)
+10. [Building Data Products](#building-data-products)
+11. [Semantic Models](#semantic-models)
+12. [Compliance Checks](#compliance-checks)
+13. [Asset Review Workflow](#asset-review-workflow)
+14. [User Roles and Permissions](#user-roles-and-permissions)
+15. [MCP Integration (AI Assistants)](#mcp-integration-ai-assistants)
+16. [Best Practices](#best-practices)
 
 ---
 
@@ -26,6 +28,7 @@
 ### Key Capabilities
 
 - **Organizational Structure**: Organize data work using domains, teams, and projects
+- **Datasets**: Register and group existing data assets (tables, views) across systems and environments
 - **Data Contracts**: Define formal specifications for data assets with schema, quality rules, and semantic meaning
 - **Data Products**: Group and manage related Databricks assets as cohesive products
 - **Semantic Models**: Link data assets to business concepts and maintain a knowledge graph
@@ -75,6 +78,18 @@ Understanding these foundational concepts will help you effectively use Ontos.
   - **Team**: Shared workspaces for collaborative work
 - **Team Assignment**: Multiple teams can collaborate on a project
 - **Isolation**: Provides logical boundaries for development work
+
+### Datasets
+
+**Datasets** are logical groupings of related data assets that represent physical implementations in your data platform.
+
+- **Logical Grouping**: Combine related tables (main table + dimensions + lookups) into a cohesive unit
+- **Physical Instances**: Each dataset can have multiple physical implementations across different systems (Unity Catalog, Snowflake) and environments (dev, staging, prod)
+- **Contract Linking**: Datasets can implement Data Contracts, ensuring they meet defined specifications
+- **Lifecycle**: Draft → Active → Deprecated → Retired
+- **Marketplace Ready**: Published datasets appear in the data marketplace for discovery
+
+**Key Concept**: A Dataset is the "what exists" (physical reality), while a Data Contract is the "what should exist" (specification).
 
 ### Data Contracts
 
@@ -127,7 +142,9 @@ When you first access Ontos as an enterprise, the application will be empty. Her
 4. **Define Initial Projects**
 5. **Load Semantic Models** (Optional)
 6. **Create Compliance Policies**
-7. **Begin Creating Contracts and Products**
+7. **Begin Creating Datasets, Contracts, and Products**
+
+**Tip**: See the [Growing with Ontos](#growing-with-ontos) section for a recommended progression path from datasets → contracts → products → compliance.
 
 ### Step 1: Configure Roles and Permissions
 
@@ -315,6 +332,267 @@ This policy ensures all production tables and views are organized into data prod
 
 ---
 
+## Growing with Ontos
+
+Ontos is designed to support your data governance journey at any stage. Whether you're just starting to catalog existing data assets or building a mature data mesh, Ontos provides a natural progression path.
+
+### The Growth Journey
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   1. DISCOVER          2. FORMALIZE         3. PRODUCTIZE     4. GOVERN    │
+│   ───────────          ────────────         ─────────────     ─────────    │
+│                                                                             │
+│   ┌─────────┐         ┌─────────────┐       ┌───────────┐    ┌──────────┐  │
+│   │ Datasets│   →     │   Data      │   →   │   Data    │ →  │Compliance│  │
+│   │         │         │  Contracts  │       │ Products  │    │  Checks  │  │
+│   └─────────┘         └─────────────┘       └───────────┘    └──────────┘  │
+│                                                                             │
+│   Register your       Define specs         Package for       Automate      │
+│   existing tables     and quality          business value    quality       │
+│   and views           guarantees           delivery          monitoring    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Stage 1: Discover with Datasets
+
+**Goal**: Catalog your existing data assets and understand what you have.
+
+**Who**: Data Engineers, Data Producers
+
+**What to Do**:
+1. Navigate to **Datasets** → **Create Dataset**
+2. Give your dataset a meaningful name (e.g., "Customer Master Data")
+3. Add physical instances pointing to your Unity Catalog tables
+4. Group related tables together (main + dimensions + lookups)
+5. Assign ownership to a team
+6. Add tags for discoverability
+
+**Example**:
+```yaml
+Dataset: Customer Master Data
+Description: Core customer information across all systems
+
+Instances:
+  - Main Table: prod_catalog.crm.customers (Production)
+  - Dimension: prod_catalog.crm.customer_addresses (Production)
+  - Lookup: prod_catalog.reference.countries (Production)
+  - Main Table: dev_catalog.crm.customers (Development)
+
+Owner: data-engineering
+Tags: customer, pii, crm
+```
+
+**Benefits at This Stage**:
+- ✅ Central registry of data assets
+- ✅ Team ownership visibility
+- ✅ Basic discoverability via search
+- ✅ Foundation for governance
+
+### Stage 2: Formalize with Data Contracts
+
+**Goal**: Define specifications, quality guarantees, and semantic meaning for your data.
+
+**Who**: Data Producers, Data Stewards
+
+**What to Do**:
+1. From a Dataset, click **Create Contract from Dataset**
+2. Ontos infers schema from Unity Catalog (if UC-backed)
+3. Enrich with:
+   - Column descriptions and business meaning
+   - Data quality rules (not null, valid ranges, patterns)
+   - SLOs (freshness, availability, accuracy targets)
+   - Semantic links to business concepts
+4. Submit for Data Steward review
+5. Link the approved contract back to your dataset
+
+**Example**:
+```yaml
+Contract: Customer Data Contract v1.0.0
+Status: Active
+Implements Schema: customers
+
+Properties:
+  - customer_id (string, required, unique)
+    → Linked to: "customerId" business property
+  
+  - email (string, required, unique, PII)
+    → Linked to: "email" business property
+    Quality Rule: Must match email pattern
+  
+  - created_at (timestamp, required)
+    Quality Rule: Cannot be in the future
+
+SLOs:
+  - Freshness: Updated daily by 6 AM UTC
+  - Completeness: >99% for required fields
+```
+
+**Benefits at This Stage**:
+- ✅ Formal quality commitments
+- ✅ Schema documentation
+- ✅ Semantic clarity via business concepts
+- ✅ Breaking change prevention
+- ✅ Consumer expectations are clear
+
+### Stage 3: Productize with Data Products
+
+**Goal**: Package datasets and contracts into consumable, value-delivering products.
+
+**Who**: Data Product Owners, Data Engineers
+
+**What to Do**:
+1. Navigate to **Products** → **Create Product**
+2. Define product metadata:
+   - Name, description, owner team
+   - Product type (Source, Aggregate, Consumer-Aligned)
+3. Link to your data contracts
+4. Define input/output ports:
+   - Where data comes from
+   - What data is delivered
+5. Add tags and documentation
+6. Submit for review and publish to marketplace
+
+**Example**:
+```yaml
+Product: Customer 360 View
+Type: Aggregate
+Status: Active
+
+Description: Comprehensive customer profile combining 
+  CRM, transactions, and support interactions.
+
+Implements Contracts:
+  - Customer Data Contract v1.0.0
+  - Transaction Data Contract v2.0.0
+
+Input Ports:
+  - customer-master-dataset (Dataset)
+  - transaction-history (Table)
+  
+Output Ports:
+  - customer_360_enriched (Delta Table)
+    Location: main.analytics.customer_360
+    Contract: Customer 360 Contract v1.0.0
+```
+
+**Benefits at This Stage**:
+- ✅ Clear value proposition for consumers
+- ✅ Self-service discovery in marketplace
+- ✅ Defined data lineage
+- ✅ Product-oriented thinking
+- ✅ Formalized input/output contracts
+
+### Stage 4: Govern with Compliance Checks
+
+**Goal**: Automate quality monitoring and policy enforcement.
+
+**Who**: Data Governance Officers, Data Stewards
+
+**What to Do**:
+1. Navigate to **Compliance** → **Create Policy**
+2. Write rules using the Compliance DSL:
+   - Naming conventions
+   - Documentation requirements
+   - Security policies (PII handling)
+   - Quality thresholds
+3. Schedule automated runs
+4. Set up notifications for violations
+5. Track compliance scores over time
+
+**Example Policies**:
+
+**Policy 1: All Production Assets Must Have Contracts**
+```
+MATCH (obj:Object)
+WHERE obj.type IN ['table', 'view'] AND obj.catalog = 'prod'
+ASSERT HAS_TAG('data-contract')
+ON_FAIL FAIL 'Production assets must be linked to a data contract'
+ON_FAIL ASSIGN_TAG compliance_issue: 'missing_contract'
+```
+
+**Policy 2: Dataset Ownership Required**
+```
+MATCH (ds:dataset)
+WHERE ds.status = 'active'
+ASSERT ds.owner_team != '' AND ds.owner_team != null
+ON_FAIL FAIL 'Active datasets must have an owner team assigned'
+ON_FAIL NOTIFY 'data-governance@company.com'
+```
+
+**Policy 3: Contract Quality SLOs**
+```
+MATCH (contract:data_contract)
+WHERE contract.status = 'active'
+ASSERT HAS_TAG('slo_defined') AND TAG('slo_freshness') != ''
+ON_FAIL FAIL 'Active contracts must have freshness SLOs defined'
+```
+
+**Benefits at This Stage**:
+- ✅ Automated policy enforcement
+- ✅ Proactive issue detection
+- ✅ Continuous quality monitoring
+- ✅ Compliance reporting
+- ✅ Reduced manual review burden
+
+### The Complete Picture
+
+When all stages are in place, you have a complete data governance ecosystem:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        DATA GOVERNANCE                           │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐                                                │
+│  │   Datasets   │ ←── Physical reality                           │
+│  │  (Instances) │     What exists in UC/Snowflake                │
+│  └──────┬───────┘                                                │
+│         │ implements                                             │
+│         ▼                                                        │
+│  ┌──────────────┐                                                │
+│  │    Data      │ ←── Specification                              │
+│  │  Contracts   │     Quality, schema, semantics                 │
+│  └──────┬───────┘                                                │
+│         │ packages                                               │
+│         ▼                                                        │
+│  ┌──────────────┐                                                │
+│  │    Data      │ ←── Value delivery                             │
+│  │  Products    │     Business-ready data                        │
+│  └──────┬───────┘                                                │
+│         │ monitored by                                           │
+│         ▼                                                        │
+│  ┌──────────────┐                                                │
+│  │  Compliance  │ ←── Continuous governance                      │
+│  │   Policies   │     Automated quality checks                   │
+│  └──────────────┘                                                │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Starting Points Based on Your Maturity
+
+| Current State | Recommended Starting Point |
+|---------------|---------------------------|
+| No catalog, scattered data | Start with **Datasets** to inventory assets |
+| Have catalog, no contracts | Add **Data Contracts** to formalize specs |
+| Have contracts, no products | Build **Data Products** for value delivery |
+| Have products, no automation | Add **Compliance Policies** for governance |
+| Everything in place | Focus on **optimization and adoption** |
+
+### Tips for Success
+
+1. **Start Small**: Begin with one domain or team
+2. **Quick Wins First**: Catalog high-value datasets that teams use daily
+3. **Iterate**: Don't aim for perfection; improve incrementally
+4. **Involve Stakeholders**: Get buy-in from data producers and consumers
+5. **Measure Progress**: Track metrics like catalog coverage, contract adoption
+6. **Celebrate Milestones**: Recognize teams that adopt governance practices
+
+---
+
 ## Working with Domains
 
 Domains provide the top-level organizational structure for your data assets.
@@ -488,6 +766,253 @@ Personal projects are automatically created for each user when they first use ce
 4. **Production**: Deploy and monitor
 5. **Maintenance**: Ongoing updates and support
 6. **Sunset**: Deprecate and archive when no longer needed
+
+---
+
+## Managing Datasets
+
+Datasets are the entry point for bringing your existing data assets into Ontos. They represent logical groupings of related physical tables and views.
+
+### What is a Dataset?
+
+A Dataset is:
+- A **logical container** for related data assets (main table + dimensions + lookups)
+- A **registry** of physical implementations across systems and environments
+- A **bridge** between raw assets and formal Data Contracts
+- A **discoverable entity** in the data marketplace
+
+**Key Distinction**:
+- **Dataset** = What physically exists (tables, views in UC/Snowflake)
+- **Data Contract** = What should exist (specification, quality rules)
+- **Data Product** = How value is delivered (packaged, documented, monitored)
+
+### Viewing Datasets
+
+Navigate to **Datasets** in the sidebar to see all registered datasets:
+
+- Dataset name and description
+- Status (Draft, Active, Deprecated, Retired)
+- Associated data contract (if linked)
+- Owner team
+- Number of physical instances
+- Subscriber count
+
+### Creating a Dataset
+
+**Who**: Data Producers, Data Engineers
+
+1. Click **Create Dataset**
+2. Fill in basic information:
+   - **Name**: Descriptive name (e.g., "Customer Master Data")
+   - **Description**: Purpose and contents
+   - **Status**: Draft (initially)
+   - **Owner Team**: Responsible team
+   - **Project**: Optional project assignment
+   
+3. Click **Create**
+
+**Note**: Physical instances are added from the dataset details page after creation.
+
+### Adding Physical Instances
+
+Physical instances represent actual tables/views in your data platform.
+
+#### From the Dataset Details Page
+
+1. Open a dataset
+2. In the **Physical Instances** section, click **Add Instance**
+3. Fill in instance details:
+
+   **Contract Version** (optional):
+   - Select a data contract this instance implements
+   - Enables compliance checking
+   
+   **Server** (if contract selected):
+   - Choose from servers defined in the contract
+   - Provides system type (Databricks, Snowflake) and environment
+   
+   **Physical Path** (required):
+   - Full path to the object
+   - Format: `catalog.schema.table` for Unity Catalog
+   - Format: `DATABASE.SCHEMA.TABLE` for Snowflake
+   
+   **Role**:
+   - **Main Table**: Primary data in the dataset
+   - **Dimension**: Related dimension table
+   - **Lookup**: Reference/lookup table
+   - **Reference**: External reference data
+   - **Staging**: Intermediate staging table
+   
+   **Environment**:
+   - Development, Staging, Production, Test, QA, UAT
+   
+   **Display Name**:
+   - Human-readable name for this specific instance
+   
+   **Status**:
+   - Active, Deprecated, Retired
+
+4. Click **Create**
+
+#### Example Instance Configuration
+
+```yaml
+Instance: Customers Master Table
+Role: Main Table
+Environment: Production
+Physical Path: prod_catalog.crm.customers_master
+Contract: Customer Data Contract v1.0.0
+Server: databricks-prod
+Status: Active
+Tags: delta-table, partitioned
+```
+
+### Grouping Related Tables
+
+A key strength of Datasets is grouping related tables:
+
+**Example: Customer Master Dataset**
+
+```
+Customer Master Data (Dataset)
+├── Main Table
+│   ├── prod_catalog.crm.customers_master (Production)
+│   └── dev_catalog.crm.customers_master (Development)
+├── Dimension
+│   └── prod_catalog.crm.customer_addresses (Production)
+└── Lookup
+    ├── prod_catalog.reference.countries (Production)
+    └── prod_catalog.reference.regions (Production)
+```
+
+**Benefits**:
+- Single point of discovery for related data
+- Clear ownership across all related assets
+- Consistent contract application
+- Simplified impact analysis
+
+### Multi-System Support
+
+Datasets support multiple data systems:
+
+| System | Physical Path Format | Example |
+|--------|---------------------|---------|
+| Unity Catalog | `catalog.schema.table` | `prod.crm.customers` |
+| Snowflake | `DATABASE.SCHEMA.TABLE` | `ANALYTICS.CRM.CUSTOMERS` |
+| PostgreSQL | `schema.table` | `public.customers` |
+| Custom | Free-form string | `s3://bucket/path/` |
+
+Instances can span multiple systems within the same dataset, enabling cross-platform data governance.
+
+### Linking to Data Contracts
+
+Connect your dataset to a formal specification:
+
+#### Method 1: From Dataset Details
+
+1. Open dataset details
+2. Click **Edit** on the dataset
+3. Select a **Data Contract** from the dropdown
+4. Save
+
+#### Method 2: From Instance Creation
+
+1. Add a new instance
+2. Select the **Contract Version** it implements
+3. The instance is now linked to that contract version
+
+#### Method 3: Create Contract from Dataset
+
+1. Open dataset details
+2. Click **Create Contract from Dataset** (if UC-backed)
+3. Ontos infers schema from Unity Catalog
+4. Enrich and submit for review
+5. Contract is automatically linked
+
+### Dataset Subscriptions
+
+Users can subscribe to datasets for notifications:
+
+**For Consumers**:
+1. Open dataset details
+2. Click **Subscribe**
+3. Enter reason for subscription
+4. Click **Subscribe**
+
+**For Producers**:
+- View subscribers in the **Subscribers** section
+- Notify subscribers of changes
+- Track adoption and usage
+
+### Dataset Lifecycle
+
+#### Draft
+
+- Initial state after creation
+- Add instances and metadata
+- Private to team
+
+#### Active
+
+- Published for discovery
+- Visible in marketplace
+- Contract enforcement active
+
+#### Deprecated
+
+- Being phased out
+- Show deprecation warnings
+- Guide to replacement
+
+#### Retired
+
+- No longer available
+- Archived for history
+- Cannot be reactivated
+
+### Publishing to Marketplace
+
+Make your dataset discoverable:
+
+1. Open dataset details (status must be Active)
+2. Click **Publish** toggle
+3. Dataset appears in Home → Marketplace
+4. Consumers can discover and subscribe
+
+**Requirements for Publishing**:
+- Status must be "Active"
+- Must have at least one physical instance
+- Recommended: Link to a data contract
+
+### Tags and Metadata
+
+Enhance discoverability with rich metadata:
+
+#### Tags
+- Add tags for categorization
+- Use consistent taxonomy
+- Include data classification (pii, confidential)
+
+#### Semantic Links
+- Link to business concepts
+- Enable semantic search
+- Provide business context
+
+#### Custom Properties
+- Add domain-specific metadata
+- Store operational information
+- Track lineage information
+
+### Dataset Best Practices
+
+1. **Group Logically**: Include all related tables in one dataset
+2. **Name Clearly**: Use descriptive, searchable names
+3. **Document Well**: Add descriptions to dataset and instances
+4. **Tag Consistently**: Use organization-wide tag taxonomy
+5. **Assign Ownership**: Every dataset needs a responsible team
+6. **Link Contracts**: Connect to contracts for quality governance
+7. **Track Environments**: Register instances for each SDLC stage
+8. **Keep Updated**: Remove retired instances, update paths when changed
 
 ---
 
@@ -2595,10 +3120,15 @@ Ontos provides comprehensive tools for data governance and management at enterpr
 ### Next Steps
 
 1. **Complete Initial Setup**: Follow the "Getting Started" section
-2. **Run Pilot**: Choose one domain and build 2-3 products end-to-end
-3. **Establish Standards**: Document your naming conventions and policies
-4. **Scale Adoption**: Expand to additional domains and teams
-5. **Continuous Improvement**: Iterate based on user feedback
+2. **Register Existing Assets**: Create datasets for your most important data
+3. **Formalize Specifications**: Build data contracts for key datasets
+4. **Run Pilot**: Choose one domain and build 2-3 products end-to-end
+5. **Add Compliance**: Create policies to automate governance
+6. **Establish Standards**: Document your naming conventions and policies
+7. **Scale Adoption**: Expand to additional domains and teams
+8. **Continuous Improvement**: Iterate based on user feedback
+
+**Recommended Path**: Follow the [Growing with Ontos](#growing-with-ontos) journey for a structured adoption approach.
 
 ### Getting Help
 
@@ -2621,7 +3151,7 @@ Ontos provides comprehensive tools for data governance and management at enterpr
 
 *This user guide covers the stable, non-beta/alpha features of Ontos. Features marked as "alpha" or "beta" in the UI may have incomplete documentation or evolving functionality.*
 
-**Document Version**: 1.0  
-**Last Updated**: October 2025  
+**Document Version**: 1.1  
+**Last Updated**: January 2026  
 **Target Audience**: Ontos End Users (Data Product Teams, Data Stewards, Data Consumers)
 

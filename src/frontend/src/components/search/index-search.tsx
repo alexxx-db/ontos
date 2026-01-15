@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Search, FileText, Database, Book, Shield, Loader2 } from 'lucide-react';
 import { features } from '@/config/features';
 
-type AppSearchResult = {
+type IndexSearchResult = {
   id: string;
   type: string;
   title: string;
@@ -15,66 +15,65 @@ type AppSearchResult = {
   tags?: string[];
 };
 
-interface AppSearchProps {
+interface IndexSearchProps {
   initialQuery?: string;
 }
 
-export default function AppSearch({ initialQuery = '' }: AppSearchProps) {
+export default function IndexSearch({ initialQuery = '' }: IndexSearchProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [appQuery, setAppQuery] = useState(initialQuery);
-  const [appResults, setAppResults] = useState<AppSearchResult[]>([]);
-  const [appLoading, setAppLoading] = useState(false);
+  const [query, setQuery] = useState(initialQuery);
+  const [results, setResults] = useState<IndexSearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  // Update URL when state changes
-  const updateUrl = (query: string) => {
-    const params = new URLSearchParams(location.search);
-    if (query) {
-      params.set('app_query', query);
-    } else {
-      params.delete('app_query');
+  // Update URL with query param (simple - only manages its own params)
+  const updateUrl = (q: string) => {
+    const params = new URLSearchParams();
+    if (q) {
+      params.set('query', q);
     }
-    const newUrl = `${location.pathname}?${params.toString()}`;
+    const queryString = params.toString();
+    const newUrl = queryString ? `/search/index?${queryString}` : '/search/index';
     navigate(newUrl, { replace: true });
   };
 
   // Load initial state from URL
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const urlQuery = params.get('app_query');
+    const urlQuery = params.get('query');
     if (urlQuery && urlQuery !== initialQuery) {
-      setAppQuery(urlQuery);
+      setQuery(urlQuery);
     }
-  }, [location.search]);
+  }, [location.search, initialQuery]);
 
   // Perform search
   useEffect(() => {
     const run = async () => {
-      const q = appQuery.trim();
+      const q = query.trim();
       if (!q) {
-        setAppResults([]);
+        setResults([]);
         updateUrl('');
         return;
       }
-      setAppLoading(true);
+      setLoading(true);
       try {
         const resp = await fetch(`/api/search?search_term=${encodeURIComponent(q)}`);
         const data = resp.ok ? await resp.json() : [];
-        setAppResults(Array.isArray(data) ? data : []);
+        setResults(Array.isArray(data) ? data : []);
         updateUrl(q);
       } catch {
-        setAppResults([]);
+        setResults([]);
       } finally {
-        setAppLoading(false);
+        setLoading(false);
       }
     };
     const t = setTimeout(run, 300);
     return () => clearTimeout(t);
-  }, [appQuery]);
+  }, [query]);
 
   // Get icon for result based on feature_id or type fallback
-  const getIcon = (result: AppSearchResult) => {
+  const getIcon = (result: IndexSearchResult) => {
     // Prefer explicit feature-based icon mapping to keep UI consistent with navigation
     if (result.feature_id) {
       const feature = features.find((f) => f.id === result.feature_id);
@@ -102,28 +101,28 @@ export default function AppSearch({ initialQuery = '' }: AppSearchProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Application Search</CardTitle>
-        <CardDescription className="text-xs">Type to search. Results appear below.</CardDescription>
+        <CardTitle className="text-base">Index Search</CardTitle>
+        <CardDescription className="text-xs">Search across all indexed application data. Type to search.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="relative">
           <Input
-            value={appQuery}
-            onChange={(e) => setAppQuery(e.target.value)}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search for data products, terms, contracts..."
             className="h-9 text-sm"
           />
         </div>
         <div className="space-y-2 text-sm">
-          {appLoading ? (
+          {loading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading...
             </div>
-          ) : appResults.length === 0 ? (
+          ) : results.length === 0 ? (
             <div className="text-xs text-muted-foreground">No results</div>
           ) : (
-            appResults.map(r => (
+            results.map(r => (
               <a 
                 key={r.id} 
                 href={r.link} 

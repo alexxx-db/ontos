@@ -4,7 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Database, Search, Bell, Bookmark, X, LayoutList, Network, Package, Table2, Grid2X2 } from 'lucide-react';
+import { Loader2, Database, Search, Bell, Bookmark, X, LayoutList, Network, Package, Table2, Grid2X2, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useDomains } from '@/hooks/use-domains';
 import { type DataProduct } from '@/types/data-product';
 import { type DataDomain } from '@/types/data-domain';
@@ -30,6 +31,7 @@ interface MarketplaceViewProps {
 
 export default function MarketplaceView({ className }: MarketplaceViewProps) {
   const { t } = useTranslation('home');
+  const navigate = useNavigate();
   const { domains, loading: domainsLoading, getDomainName } = useDomains();
   const { userInfo } = useUserStore();
   const { domainBrowserStyle, setDomainBrowserStyle, tilesPerRow, setTilesPerRow } = useViewModeStore();
@@ -461,6 +463,18 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
     return '';
   }, [userInfo]);
 
+  // Handle opening product in details view
+  const handleOpenProductDetails = (e: React.MouseEvent, productId: string) => {
+    e.stopPropagation();
+    navigate(`/data-products/${productId}`);
+  };
+
+  // Handle opening dataset in details view
+  const handleOpenDatasetDetails = (e: React.MouseEvent, datasetId: string) => {
+    e.stopPropagation();
+    navigate(`/datasets/${datasetId}`);
+  };
+
   // Render product card
   const renderProductCard = (product: DataProduct, isSubscribed: boolean = false) => {
     const domainRaw = product?.domain;
@@ -484,9 +498,20 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
               <Package className="h-4 w-4 text-primary flex-shrink-0" />
               <CardTitle className="text-base truncate">{product.name || 'Untitled'}</CardTitle>
             </div>
-            {isSubscribed && (
-              <Bell className="h-4 w-4 text-primary flex-shrink-0" />
-            )}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {isSubscribed && (
+                <Bell className="h-4 w-4 text-primary" />
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 hover:bg-primary/10"
+                onClick={(e) => handleOpenProductDetails(e, product.id || '')}
+                title={t('marketplace.openInDetails')}
+              >
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-primary" />
+              </Button>
+            </div>
           </div>
           {description && (
             <CardDescription className="line-clamp-2 text-sm">{description}</CardDescription>
@@ -531,9 +556,20 @@ export default function MarketplaceView({ className }: MarketplaceViewProps) {
               <Table2 className="h-4 w-4 text-primary flex-shrink-0" />
               <CardTitle className="text-base truncate">{dataset.name || 'Untitled'}</CardTitle>
             </div>
-            {isSubscribed && (
-              <Bell className="h-4 w-4 text-primary flex-shrink-0" />
-            )}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {isSubscribed && (
+                <Bell className="h-4 w-4 text-primary" />
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 hover:bg-primary/10"
+                onClick={(e) => handleOpenDatasetDetails(e, dataset.id || '')}
+                title={t('marketplace.openInDetails')}
+              >
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-primary" />
+              </Button>
+            </div>
           </div>
           {dataset.description && (
             <CardDescription className="line-clamp-2 text-sm">

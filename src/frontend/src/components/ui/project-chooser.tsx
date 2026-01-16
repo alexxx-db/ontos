@@ -135,7 +135,7 @@ export function ProjectChooser() {
 
       <DropdownMenuContent align="start" className="w-[280px]">
         <DropdownMenuLabel>
-          <span>{t('projectContext')}</span>
+          <span>{t('projectMenu.projectContext')}</span>
         </DropdownMenuLabel>
 
         <DropdownMenuSeparator />

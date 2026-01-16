@@ -217,6 +217,7 @@
       "two": "2 per row",
       "three": "3 per row",
       "four": "4 per row"
-    }
+    },
+    "openInDetails": "Open in details view"
   }
 }

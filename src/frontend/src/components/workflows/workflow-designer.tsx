@@ -468,7 +468,7 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => navigate('/settings/workflows')}>
+          <Button variant="outline" size="sm" onClick={() => navigate('/compliance#workflows')}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Button>

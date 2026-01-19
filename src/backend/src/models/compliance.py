@@ -9,6 +9,7 @@ class CompliancePolicy(BaseModel):
     id: UUID = Field(..., description="Unique identifier for the policy (UUID)")
     name: str = Field(..., description="Name of the compliance policy")
     description: str = Field(..., description="Description of what the policy checks")
+    failure_message: Optional[str] = Field(default=None, description="Human-readable message shown when policy fails")
     rule: str = Field(..., description="Policy rule using the compliance DSL")
     compliance: float = Field(..., description="Current compliance score (0-100)")
     history: List[float] = Field(default_factory=list, description="Historical compliance scores")

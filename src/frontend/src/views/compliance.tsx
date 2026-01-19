@@ -52,6 +52,7 @@ interface CompliancePolicy {
   id: string; // UUID
   name: string;
   description: string;
+  failure_message?: string;  // Human-readable message shown when policy fails
   rule: string;
   compliance: number;
   history: number[];
@@ -212,6 +213,7 @@ export default function Compliance() {
       const policyData: Omit<CompliancePolicy, 'id' | 'created_at' | 'updated_at' | 'compliance' | 'history'> & Partial<Pick<CompliancePolicy, 'id' | 'compliance' | 'history' | 'created_at' | 'updated_at'>> = {
         name: (form.querySelector('#name') as HTMLInputElement).value,
         description: (form.querySelector('#description') as HTMLTextAreaElement).value,
+        failure_message: (form.querySelector('#failure_message') as HTMLTextAreaElement)?.value || undefined,
         category: (form.querySelector('select[name="category"]') as HTMLSelectElement)?.value || 'General',
         severity: (form.querySelector('select[name="severity"]') as HTMLSelectElement)?.value as CompliancePolicy['severity'] || 'medium',
         rule: (form.querySelector('#rule') as HTMLTextAreaElement).value,
@@ -805,6 +807,18 @@ export default function Compliance() {
                     required
                     placeholder={t('compliance:form.rulePlaceholder')}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="failure_message">{t('compliance:form.failureMessage')}</Label>
+                  <Textarea
+                    id="failure_message"
+                    defaultValue={selectedPolicy?.failure_message}
+                    rows={3}
+                    placeholder={t('compliance:form.failureMessagePlaceholder')}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('compliance:form.failureMessageHint')}
+                  </p>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} disabled={apiIsLoading}>

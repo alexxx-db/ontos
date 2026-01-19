@@ -294,7 +294,9 @@ class TriggerRegistry:
             scope_type=scope_type,
             scope_id=scope_id,
         )
+        logger.info(f"before_create called for {entity_type.value} '{entity_name}' with data: {entity_data}")
         executions = self.fire_trigger(event, blocking=True)
+        logger.info(f"before_create returned {len(executions)} executions")
         
         # Check if all workflows passed
         all_passed = all(

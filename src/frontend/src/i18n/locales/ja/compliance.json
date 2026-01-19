@@ -25,7 +25,10 @@
     "severity": "重大度",
     "selectSeverity": "重大度を選択",
     "ruleCode": "ルールコード",
-    "rulePlaceholder": "コンプライアンスDSL形式でルールを入力"
+    "rulePlaceholder": "コンプライアンスDSL形式でルールを入力",
+    "failureMessage": "失敗メッセージ",
+    "failureMessagePlaceholder": "例: 名前はスネークケース（小文字とアンダースコア）を使用する必要があります",
+    "failureMessageHint": "このポリシーが失敗した場合にユーザーに表示される分かりやすいメッセージ。問題点と修正方法を説明します。"
   },
   "categories": {
     "security": "セキュリティ",

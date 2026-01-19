@@ -114,7 +114,8 @@
     "concepts": "概念",
     "securableId": "セキュリティ対象ID",
     "securableType": "セキュリティ対象タイプ",
-    "permission": "権限"
+    "permission": "権限",
+    "editDescription": "{{name}}を編集"
   },
   "placeholders": {
     "search": "検索...",

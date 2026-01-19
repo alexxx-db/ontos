@@ -25,7 +25,10 @@
     "severity": "Schweregrad",
     "selectSeverity": "Schweregrad auswählen",
     "ruleCode": "Regelcode",
-    "rulePlaceholder": "Compliance-Regel im DSL-Format eingeben"
+    "rulePlaceholder": "Compliance-Regel im DSL-Format eingeben",
+    "failureMessage": "Fehlermeldung",
+    "failureMessagePlaceholder": "z.B. Namen müssen snake_case verwenden (Kleinbuchstaben mit Unterstrichen)",
+    "failureMessageHint": "Benutzerfreundliche Nachricht, die angezeigt wird, wenn diese Richtlinie fehlschlägt. Erklärt, was falsch ist und wie es behoben werden kann."
   },
   "categories": {
     "security": "Sicherheit",

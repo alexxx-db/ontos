@@ -7,8 +7,14 @@ import { Badge } from '@/components/ui/badge';
 import { DataTable } from '@/components/ui/data-table';
 import { ColumnDef } from '@tanstack/react-table';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, ArrowLeft, PlayCircle, Loader2, Scale } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { AlertCircle, ArrowLeft, PlayCircle, Loader2, Scale, Pencil } from 'lucide-react';
 import { useApi } from '@/hooks/use-api';
+import { useToast } from '@/hooks/use-toast';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { CommentSidebar } from '@/components/comments';
 import EntityMetadataPanel from '@/components/metadata/entity-metadata-panel';
@@ -17,6 +23,7 @@ type Policy = {
   id: string; // UUID
   name: string;
   description?: string;
+  failure_message?: string;  // Human-readable message shown when policy fails
   rule: string;
   category?: string;
   severity?: string;
@@ -54,7 +61,8 @@ export default function CompliancePolicyDetails() {
   const { t } = useTranslation(['compliance', 'common']);
   const { policyId } = useParams<{ policyId: string }>();
   const navigate = useNavigate();
-  const { get, post } = useApi();
+  const { get, post, put } = useApi();
+  const { toast } = useToast();
   const setStaticSegments = useBreadcrumbStore((s) => s.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((s) => s.setDynamicTitle);
 
@@ -66,6 +74,8 @@ export default function CompliancePolicyDetails() {
   const [results, setResults] = useState<Result[]>([]);
   const [onlyFailed, setOnlyFailed] = useState(false);
   const [isCommentSidebarOpen, setIsCommentSidebarOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const resultsColumns: ColumnDef<Result>[] = useMemo(() => [
     { accessorKey: 'object_type', header: 'Type' },
@@ -152,6 +162,50 @@ export default function CompliancePolicyDetails() {
     }
   };
 
+  const handleSave = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!policyId || !policy) return;
+    
+    setIsSaving(true);
+    try {
+      const form = event.target as HTMLFormElement;
+      const updatedPolicy = {
+        ...policy,
+        name: (form.querySelector('#edit-name') as HTMLInputElement).value,
+        description: (form.querySelector('#edit-description') as HTMLTextAreaElement).value,
+        failure_message: (form.querySelector('#edit-failure-message') as HTMLTextAreaElement)?.value || undefined,
+        category: (form.querySelector('[name="edit-category"]') as HTMLInputElement)?.value || policy.category,
+        severity: (form.querySelector('[name="edit-severity"]') as HTMLInputElement)?.value || policy.severity,
+        rule: (form.querySelector('#edit-rule') as HTMLTextAreaElement).value,
+        updated_at: new Date().toISOString(),
+      };
+
+      const response = await put<Policy>(`/api/compliance/policies/${policyId}`, updatedPolicy);
+      
+      if (response.error || !response.data) {
+        throw new Error(response.error || 'Failed to save policy');
+      }
+      
+      setPolicy(response.data);
+      setDynamicTitle(response.data.name);
+      toast({
+        title: t('common:toast.success'),
+        description: t('compliance:toast.policySaved', { name: response.data.name })
+      });
+      
+      setIsEditDialogOpen(false);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save policy';
+      toast({
+        variant: 'destructive',
+        title: t('compliance:errors.savingPolicy'),
+        description: errorMessage
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -183,6 +237,9 @@ export default function CompliancePolicyDetails() {
             onToggle={() => setIsCommentSidebarOpen(!isCommentSidebarOpen)}
             className="h-8"
           />
+          <Button variant="outline" onClick={() => setIsEditDialogOpen(true)} size="sm">
+            <Pencil className="mr-2 h-4 w-4" /> Edit
+          </Button>
           <Button variant="outline" onClick={runNow} size="sm"><PlayCircle className="mr-2 h-4 w-4" /> Run</Button>
         </div>
       </div>
@@ -360,6 +417,97 @@ export default function CompliancePolicyDetails() {
       )}
 
       <EntityMetadataPanel entityId={policyId!} entityType="compliance_policy" />
+
+      {/* Edit Policy Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('compliance:editRule')}</DialogTitle>
+            <DialogDescription>
+              {t('common:labels.editDescription', { name: policy.name })}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">{t('common:labels.name')}</Label>
+              <Input
+                id="edit-name"
+                defaultValue={policy.name}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">{t('common:labels.description')}</Label>
+              <Textarea
+                id="edit-description"
+                defaultValue={policy.description}
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>{t('common:labels.category')}</Label>
+                <Select name="edit-category" defaultValue={policy.category || 'General'}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('common:placeholders.selectCategory')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="security">{t('compliance:categories.security')}</SelectItem>
+                    <SelectItem value="data_quality">{t('compliance:categories.dataQuality')}</SelectItem>
+                    <SelectItem value="privacy">{t('compliance:categories.privacy')}</SelectItem>
+                    <SelectItem value="governance">{t('compliance:categories.governance')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('common:labels.severity')}</Label>
+                <Select name="edit-severity" defaultValue={policy.severity || 'medium'}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('common:placeholders.selectSeverity')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-rule">{t('compliance:form.ruleCode')}</Label>
+              <Textarea
+                id="edit-rule"
+                defaultValue={policy.rule}
+                className="font-mono text-sm"
+                rows={8}
+                required
+                placeholder={t('compliance:form.rulePlaceholder')}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-failure-message">{t('compliance:form.failureMessage')}</Label>
+              <Textarea
+                id="edit-failure-message"
+                defaultValue={policy.failure_message}
+                rows={3}
+                placeholder={t('compliance:form.failureMessagePlaceholder')}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('compliance:form.failureMessageHint')}
+              </p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>
+                {t('common:actions.cancel')}
+              </Button>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? t('common:states.saving') : t('common:actions.save')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

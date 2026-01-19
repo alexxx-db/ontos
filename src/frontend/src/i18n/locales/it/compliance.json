@@ -25,7 +25,10 @@
     "severity": "Gravità",
     "selectSeverity": "Seleziona gravità",
     "ruleCode": "Codice Regola",
-    "rulePlaceholder": "Inserisci la regola di conformità in formato DSL"
+    "rulePlaceholder": "Inserisci la regola di conformità in formato DSL",
+    "failureMessage": "Messaggio di Errore",
+    "failureMessagePlaceholder": "es. I nomi devono usare snake_case (minuscole con underscore)",
+    "failureMessageHint": "Messaggio leggibile mostrato agli utenti quando questa policy fallisce. Aiuta a spiegare cosa è andato storto e come correggerlo."
   },
   "categories": {
     "security": "Sicurezza",

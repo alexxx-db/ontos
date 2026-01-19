@@ -444,7 +444,17 @@ class PolicyCheckStepHandler(StepHandler):
                 )
             
             # Evaluate the policy's rule against the entity
-            passed, message = evaluate_rule_on_object(policy.rule, context.entity)
+            passed, technical_message = evaluate_rule_on_object(policy.rule, context.entity)
+            
+            # Combine human-readable failure message with technical details
+            if passed:
+                message = technical_message
+            else:
+                # Show human-readable message first, then technical details
+                if policy.failure_message:
+                    message = f"{policy.failure_message}\n\nTechnical: {technical_message}"
+                else:
+                    message = technical_message
             
             return StepResult(
                 passed=passed,
@@ -454,6 +464,8 @@ class PolicyCheckStepHandler(StepHandler):
                     'policy_name': policy.name, 
                     'rule': policy.rule,
                     'severity': policy.severity,
+                    'failure_message': policy.failure_message,
+                    'technical_message': technical_message,
                 }
             )
         except Exception as e:

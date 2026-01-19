@@ -14,6 +14,7 @@ class CompliancePolicyDb(Base):
     slug = Column(String, nullable=True, index=True, unique=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
+    failure_message = Column(Text, nullable=True)  # Human-readable message shown when policy fails
     rule = Column(Text, nullable=False)
     category = Column(String, nullable=True)
     severity = Column(String, nullable=True)

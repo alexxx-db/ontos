@@ -172,6 +172,7 @@ class ComplianceManager:
             id=str(policy.id),  # Convert UUID to string for SQLite
             name=policy.name,
             description=policy.description,
+            failure_message=policy.failure_message,
             rule=policy.rule,
             category=policy.category,
             severity=policy.severity,
@@ -188,6 +189,7 @@ class ComplianceManager:
             return None
         existing.name = policy.name
         existing.description = policy.description
+        existing.failure_message = policy.failure_message
         existing.rule = policy.rule
         existing.category = policy.category
         existing.severity = policy.severity
@@ -260,6 +262,7 @@ class ComplianceManager:
                 'id': r.id,
                 'name': r.name,
                 'description': r.description,
+                'failure_message': r.failure_message,
                 'rule': r.rule,
                 'created_at': r.created_at,
                 'updated_at': r.updated_at,
@@ -314,6 +317,7 @@ class ComplianceManager:
             'id': r.id,
             'name': r.name,
             'description': r.description,
+            'failure_message': r.failure_message,
             'rule': r.rule,
             'created_at': r.created_at,
             'updated_at': r.updated_at,

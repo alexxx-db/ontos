@@ -114,7 +114,8 @@
     "concepts": "conceptos",
     "securableId": "ID de seguridad",
     "securableType": "Tipo de seguridad",
-    "permission": "Permiso"
+    "permission": "Permiso",
+    "editDescription": "Realizar cambios en {{name}}"
   },
   "placeholders": {
     "search": "Buscar...",

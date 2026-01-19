@@ -25,7 +25,10 @@
     "severity": "Severidad",
     "selectSeverity": "Seleccionar severidad",
     "ruleCode": "Código de Regla",
-    "rulePlaceholder": "Ingrese la regla de cumplimiento en formato DSL"
+    "rulePlaceholder": "Ingrese la regla de cumplimiento en formato DSL",
+    "failureMessage": "Mensaje de Error",
+    "failureMessagePlaceholder": "ej. Los nombres deben usar snake_case (minúsculas con guiones bajos)",
+    "failureMessageHint": "Mensaje legible mostrado a los usuarios cuando esta política falla. Ayuda a explicar qué salió mal y cómo solucionarlo."
   },
   "categories": {
     "security": "Seguridad",

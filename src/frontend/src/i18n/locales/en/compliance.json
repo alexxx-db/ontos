@@ -25,7 +25,10 @@
     "severity": "Severity",
     "selectSeverity": "Select severity",
     "ruleCode": "Rule Code",
-    "rulePlaceholder": "Enter the compliance rule in Compliance DSL format"
+    "rulePlaceholder": "Enter the compliance rule in Compliance DSL format",
+    "failureMessage": "Failure Message",
+    "failureMessagePlaceholder": "e.g., Names must use snake_case (lowercase with underscores)",
+    "failureMessageHint": "Human-readable message shown to users when this policy fails. Helps explain what went wrong and how to fix it."
   },
   "categories": {
     "security": "Security",

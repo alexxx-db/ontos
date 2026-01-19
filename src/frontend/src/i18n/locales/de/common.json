@@ -114,7 +114,8 @@
     "concepts": "Konzepte",
     "securableId": "Sicherbare ID",
     "securableType": "Sicherbarer Typ",
-    "permission": "Berechtigung"
+    "permission": "Berechtigung",
+    "editDescription": "Änderungen an {{name}} vornehmen"
   },
   "placeholders": {
     "search": "Suchen...",

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -11,7 +11,7 @@ from src.models.audit_log import PaginatedAuditLogResponse
 router = APIRouter(prefix="/api/audit", tags=["Audit Trail"])
 
 @router.get(
-    "/",
+    "",
     response_model=PaginatedAuditLogResponse,
 )
 async def get_audit_trail(

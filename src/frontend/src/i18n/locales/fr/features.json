@@ -24,8 +24,8 @@
     "description": "Regroupez et gérez les actifs Databricks liés avec des tags."
   },
   "semantic-models": {
-    "name": "Modèles sémantiques",
-    "description": "Explorez les modèles sémantiques et leurs termes (concepts et propriétés)."
+    "name": "Glossaire Métier",
+    "description": "Explorez les termes du glossaire métier, concepts et leurs relations."
   },
   "data-asset-reviews": {
     "name": "Révision d'actifs",
@@ -65,7 +65,7 @@
   },
   "search": {
     "name": "Recherche",
-    "description": "Recherchez parmi les produits de données, les contrats et le graphe de connaissances."
+    "description": "Recherchez parmi les produits de données, les contrats et le graphe de concepts."
   },
   "audit": {
     "name": "Journal d'audit",

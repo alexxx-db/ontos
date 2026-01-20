@@ -35,7 +35,7 @@
       "• Agrupar activos Databricks (tablas, vistas, funciones, modelos, dashboards, jobs, notebooks).",
       "• Usar etiquetas (ej., data-product-name, data-product-domain)."
     ],
-    "semantic-models": [
+    "business-glossary": [
       "• Glosarios jerárquicos por unidad organizativa (empresa, LOB, departamento, equipo, proyecto).",
       "• Fusionados de abajo hacia arriba para usuarios, permitiendo sobrescrituras.",
       "• Los términos tienen etiquetas, descripciones markdown, estado del ciclo de vida, activos asignados."

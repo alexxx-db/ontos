@@ -1,5 +1,5 @@
 {
-  "title": "Modelos Semánticos",
+  "title": "Glosario de Negocio",
   "subtitle": "Gestiona glosarios de negocio y definiciones semánticas",
   "newModel": "Nuevo Glosario",
   "newTerm": "Nuevo Término",
@@ -7,7 +7,11 @@
   "loading": "Cargando modelos semánticos...",
   "filters": {
     "allGlossaries": "Todos los Glosarios",
-    "allStatus": "Todos los Estados"
+    "allStatus": "Todos los Estados",
+    "bySource": "Filtrar por Fuente",
+    "all": "Todos",
+    "none": "Ninguno",
+    "groupBySource": "Agrupar por Fuente"
   },
   "table": {
     "name": "Nombre",

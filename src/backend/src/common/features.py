@@ -119,7 +119,7 @@ APP_FEATURES: Dict[str, Dict[str, str | List[FeatureAccessLevel]]] = {
         'allowed_levels': ADMIN_ONLY_LEVELS # Only Admins change settings
     },
     'semantic-models': {
-        'name': 'Semantic Models',
+        'name': 'Business Glossary',
         'allowed_levels': READ_WRITE_ADMIN_LEVELS
     },
     'tags': {

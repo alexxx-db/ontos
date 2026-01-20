@@ -22,6 +22,10 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DataTable } from '@/components/ui/data-table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ColumnDef } from '@tanstack/react-table';
 import {
   AlertCircle,
@@ -33,11 +37,14 @@ import {
   Network,
   Loader2,
   ExternalLink,
+  Filter,
+  FolderTree,
 } from 'lucide-react';
 import ReactFlow, { Node, Edge, Background, MarkerType, Controls, ConnectionMode } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { KnowledgeGraph } from '@/components/semantic-models/knowledge-graph';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
+import { useGlossaryPreferencesStore } from '@/stores/glossary-preferences-store';
 import { cn } from '@/lib/utils';
 
 
@@ -59,8 +66,12 @@ const ConceptTreeItem: React.FC<ConceptTreeItemProps> = ({ item, selectedConcept
   const concept = item.getItemData() as OntologyConcept;
   const isSelected = selectedConcept?.iri === concept.iri;
   const level = item.getItemMeta().level;
+  const isSourceGroup = concept.iri.startsWith('source:');
   
   const getConceptIcon = () => {
+    if (isSourceGroup) {
+      return <FolderTree className="h-4 w-4 shrink-0 text-orange-500" />;
+    }
     switch (concept.concept_type) {
       case 'class':
         return <Layers className="h-4 w-4 shrink-0 text-blue-500" />;
@@ -75,16 +86,24 @@ const ConceptTreeItem: React.FC<ConceptTreeItemProps> = ({ item, selectedConcept
     return concept.label || concept.iri.split(/[/#]/).pop() || concept.iri;
   };
 
+  const handleClick = () => {
+    // Don't trigger concept selection for source group nodes
+    if (!isSourceGroup) {
+      onSelectConcept(concept);
+    }
+  };
+
   return (
     <div
       {...item.getProps()}
       className={cn(
         "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer w-full text-left",
         "hover:bg-accent hover:text-accent-foreground transition-colors",
-        isSelected && "bg-accent text-accent-foreground"
+        isSelected && !isSourceGroup && "bg-accent text-accent-foreground",
+        isSourceGroup && "font-semibold bg-muted/50"
       )}
       style={{ paddingLeft: `${level * 12 + 8}px` }}
-      onClick={() => onSelectConcept(concept)}
+      onClick={handleClick}
     >
       <div className="flex items-center w-5 justify-center">
         {item.isFolder() && (
@@ -111,7 +130,7 @@ const ConceptTreeItem: React.FC<ConceptTreeItemProps> = ({ item, selectedConcept
         {getConceptIcon()}
         <span 
           className="truncate text-sm font-medium" 
-          title={`${getDisplayName()}${concept.source_context ? ` (${concept.source_context})` : ''}`}
+          title={`${getDisplayName()}${!isSourceGroup && concept.source_context ? ` (${concept.source_context})` : ''}`}
         >
           {getDisplayName()}
         </span>
@@ -126,6 +145,7 @@ interface UnifiedConceptTreeProps {
   onSelectConcept: (concept: OntologyConcept) => void;
   searchQuery: string;
   onShowKnowledgeGraph?: () => void;
+  groupBySource?: boolean;
 }
 
 const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
@@ -133,7 +153,8 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
   selectedConcept,
   onSelectConcept,
   searchQuery,
-  onShowKnowledgeGraph
+  onShowKnowledgeGraph,
+  groupBySource = false
 }) => {
   const { t } = useTranslation(['semantic-models', 'common']);
   
@@ -168,6 +189,7 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
   const treeData = useMemo(() => {
     const conceptMap = new Map<string, OntologyConcept>();
     const hierarchy = new Map<string, string[]>();
+    const sourceContexts = new Set<string>();
 
     // Only show classes and concepts (explicit positive filtering to match graph)
     const baseConcepts = concepts.filter(concept => {
@@ -179,6 +201,10 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
     baseConcepts.forEach(concept => {
       conceptMap.set(concept.iri, concept);
       
+      // Track source contexts
+      if (concept.source_context) {
+        sourceContexts.add(concept.source_context);
+      }
 
       // Build parent-child relationships from parent_concepts
       concept.parent_concepts.forEach(parentIri => {
@@ -198,7 +224,7 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
       }
     });
     
-    return { conceptMap, hierarchy };
+    return { conceptMap, hierarchy, sourceContexts: Array.from(sourceContexts).sort() };
   }, [concepts]);
   
   const tree = useTree<OntologyConcept>({
@@ -209,6 +235,10 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
     },
     isItemFolder: (item) => {
       const concept = item.getItemData();
+      // Check if it's a source group node
+      if (concept.iri.startsWith('source:')) {
+        return true;
+      }
       const children = treeData.hierarchy.get(concept.iri) || [];
       const hasChildConcepts = concept.child_concepts && concept.child_concepts.length > 0;
       return children.length > 0 || hasChildConcepts;
@@ -226,6 +256,20 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
             properties: {},
             tagged_assets: [],
             source_context: 'root'
+          } as unknown as OntologyConcept;
+        }
+        // Handle source group nodes
+        if (itemId.startsWith('source:')) {
+          const sourceName = itemId.substring(7);
+          return {
+            iri: itemId,
+            label: sourceName,
+            concept_type: 'source_group' as any,
+            parent_concepts: [],
+            child_concepts: [],
+            properties: {},
+            tagged_assets: [],
+            source_context: sourceName
           } as unknown as OntologyConcept;
         }
         const found = treeData.conceptMap.get(itemId);
@@ -246,6 +290,10 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
       },
       getChildren: (itemId: string) => {
         if (itemId === 'root') {
+          if (groupBySource && treeData.sourceContexts.length > 0) {
+            // Return source context nodes as children of root
+            return treeData.sourceContexts.map(source => `source:${source}`);
+          }
           // Return root-level concepts (those with no parents or parents not in our dataset)
           const rootConcepts = Array.from(treeData.conceptMap.values())
             .filter(concept => {
@@ -254,6 +302,19 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
             })
             .map(concept => concept.iri);
           return rootConcepts;
+        }
+        // Handle source group nodes - return root concepts from that source
+        if (itemId.startsWith('source:')) {
+          const sourceName = itemId.substring(7);
+          const sourceRootConcepts = Array.from(treeData.conceptMap.values())
+            .filter(concept => {
+              const matchesSource = concept.source_context === sourceName;
+              const isRootLevel = concept.parent_concepts.length === 0 || 
+                     !concept.parent_concepts.some(parentIri => treeData.conceptMap.has(parentIri));
+              return matchesSource && isRootLevel;
+            })
+            .map(concept => concept.iri);
+          return sourceRootConcepts;
         }
         return treeData.hierarchy.get(itemId) || [];
       },
@@ -316,7 +377,7 @@ const UnifiedConceptTree: React.FC<UnifiedConceptTreeProps> = ({
         }}
       >
         <Network className="h-4 w-4 text-blue-600" />
-        <span className="font-medium">{t('common:labels.knowledgeGraph')}</span>
+        <span className="font-medium">{t('common:labels.conceptGraph')}</span>
         <Badge variant="secondary" className="text-xs">
           {treeData.conceptMap.size} concepts
         </Badge>
@@ -362,6 +423,7 @@ interface ConceptDetailsProps {
 }
 
 const ConceptDetails: React.FC<ConceptDetailsProps> = ({ concept, concepts, onSelectConcept }) => {
+  const { t } = useTranslation(['semantic-models', 'common']);
   const navigate = useNavigate();
   
   // Helper function to resolve IRI to concept label
@@ -579,6 +641,42 @@ export default function SemanticModelsView() {
 
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
+
+  // Glossary preferences from persistent store
+  const glossaryPrefs = useGlossaryPreferencesStore();
+  const { 
+    hiddenSources, 
+    groupBySource, 
+    isFilterExpanded,
+    toggleSource, 
+    selectAllSources, 
+    selectNoneSources, 
+    setGroupBySource,
+    setFilterExpanded
+  } = glossaryPrefs;
+
+  // Extract unique source contexts from concepts
+  const availableSources = useMemo(() => {
+    const allConcepts = Object.values(groupedConcepts).flat();
+    const sources = new Set<string>();
+    allConcepts.forEach((concept) => {
+      if (concept.source_context) {
+        sources.add(concept.source_context);
+      }
+    });
+    return Array.from(sources).sort();
+  }, [groupedConcepts]);
+
+  // Filter concepts based on hidden sources
+  const filteredConcepts = useMemo(() => {
+    const allConcepts = Object.values(groupedConcepts).flat();
+    if (hiddenSources.length === 0) {
+      return allConcepts;
+    }
+    return allConcepts.filter(
+      (concept) => !concept.source_context || !hiddenSources.includes(concept.source_context)
+    );
+  }, [groupedConcepts, hiddenSources]);
 
   useEffect(() => {
     fetchData();
@@ -1110,15 +1208,108 @@ export default function SemanticModelsView() {
               </Button>
             </div>
           </div>
+          
+          {/* Filter by Source - Collapsible */}
+          {availableSources.length > 0 && (
+            <Collapsible
+              open={isFilterExpanded}
+              onOpenChange={setFilterExpanded}
+              className="border-b"
+            >
+              <div className="px-4 py-2 flex items-center justify-between">
+                <CollapsibleTrigger asChild>
+                  <button className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors">
+                    {isFilterExpanded ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                    <Filter className="h-4 w-4" />
+                    {t('semantic-models:filters.bySource')}
+                    {hiddenSources.length > 0 && (
+                      <Badge variant="secondary" className="h-5 text-[10px] px-1.5">
+                        {availableSources.length - hiddenSources.length}/{availableSources.length}
+                      </Badge>
+                    )}
+                  </button>
+                </CollapsibleTrigger>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={selectAllSources}
+                  >
+                    {t('semantic-models:filters.all')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={() => selectNoneSources(availableSources)}
+                  >
+                    {t('semantic-models:filters.none')}
+                  </Button>
+                </div>
+              </div>
+              <CollapsibleContent>
+                <div className="px-4 pb-3 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {availableSources.map((source) => {
+                      const isVisible = !hiddenSources.includes(source);
+                      const conceptCount = Object.values(groupedConcepts)
+                        .flat()
+                        .filter((c) => c.source_context === source).length;
+                      return (
+                        <label
+                          key={source}
+                          className={cn(
+                            "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer transition-colors",
+                            "border hover:bg-accent",
+                            isVisible ? "bg-accent/50 border-primary/30" : "opacity-60"
+                          )}
+                        >
+                          <Checkbox
+                            checked={isVisible}
+                            onCheckedChange={() => toggleSource(source)}
+                            className="h-3.5 w-3.5"
+                          />
+                          <span>{source}</span>
+                          <Badge variant="secondary" className="h-4 text-[10px] px-1">
+                            {conceptCount}
+                          </Badge>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Group by Source Toggle */}
+                  <div className="flex items-center justify-between pt-2 border-t">
+                    <Label htmlFor="group-by-source" className="text-sm flex items-center gap-2 cursor-pointer">
+                      <FolderTree className="h-4 w-4" />
+                      {t('semantic-models:filters.groupBySource')}
+                    </Label>
+                    <Switch
+                      id="group-by-source"
+                      checked={groupBySource}
+                      onCheckedChange={setGroupBySource}
+                    />
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+          
           <ScrollArea className="flex-1">
             <div className="p-4 h-full">
               <UnifiedConceptTree
-                key={Object.values(groupedConcepts).flat().length}
-                concepts={Object.values(groupedConcepts).flat()}
+                key={`${filteredConcepts.length}-${groupBySource}`}
+                concepts={filteredConcepts}
                 selectedConcept={selectedConcept}
                 onSelectConcept={handleSelectConcept}
                 onShowKnowledgeGraph={handleShowKnowledgeGraph}
                 searchQuery={searchQuery}
+                groupBySource={groupBySource}
               />
             </div>
           </ScrollArea>
@@ -1133,7 +1324,7 @@ export default function SemanticModelsView() {
                   <div>
                     <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
                       <Network className="h-6 w-6" />
-                      Knowledge Graph
+                      Concept Graph
                     </h2>
                     <p className="text-muted-foreground">
                       Interactive visualization of all concepts and their relationships. Click legend items to toggle visibility.
@@ -1143,7 +1334,7 @@ export default function SemanticModelsView() {
               </div>
               <div className="flex-1 min-h-[900px]">
                 <KnowledgeGraph
-                  concepts={Object.values(groupedConcepts).flat()}
+                  concepts={filteredConcepts}
                   hiddenRoots={hiddenRoots}
                   onToggleRoot={handleToggleRoot}
                   onNodeClick={handleSelectConcept}
@@ -1207,7 +1398,7 @@ export default function SemanticModelsView() {
             <div className="h-full flex items-center justify-center text-muted-foreground">
               <div className="text-center">
                 <Network className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>Select a concept or click Knowledge Graph to view details</p>
+                <p>Select a concept or click Concept Graph to view details</p>
               </div>
             </div>
           )}

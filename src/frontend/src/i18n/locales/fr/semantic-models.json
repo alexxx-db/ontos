@@ -1,5 +1,5 @@
 {
-  "title": "Modèles Sémantiques",
+  "title": "Glossaire Métier",
   "subtitle": "Gérez les glossaires métier et les définitions sémantiques",
   "newModel": "Nouveau Glossaire",
   "newTerm": "Nouveau Terme",
@@ -7,7 +7,11 @@
   "loading": "Chargement des modèles sémantiques...",
   "filters": {
     "allGlossaries": "Tous les Glossaires",
-    "allStatus": "Tous les Statuts"
+    "allStatus": "Tous les Statuts",
+    "bySource": "Filtrer par Source",
+    "all": "Tous",
+    "none": "Aucun",
+    "groupBySource": "Grouper par Source"
   },
   "table": {
     "name": "Nom",

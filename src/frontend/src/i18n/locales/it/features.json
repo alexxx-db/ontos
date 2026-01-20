@@ -24,8 +24,8 @@
     "description": "Raggruppa e gestisci risorse Databricks correlate con tag."
   },
   "semantic-models": {
-    "name": "Modelli semantici",
-    "description": "Esplora modelli semantici e i loro termini (concetti e proprietà)."
+    "name": "Glossario Aziendale",
+    "description": "Esplora i termini del glossario aziendale, concetti e le loro relazioni."
   },
   "data-asset-reviews": {
     "name": "Revisione risorse",
@@ -65,7 +65,7 @@
   },
   "search": {
     "name": "Ricerca",
-    "description": "Cerca tra prodotti dati, contratti e grafo della conoscenza."
+    "description": "Cerca tra prodotti dati, contratti e grafo dei concetti."
   },
   "audit": {
     "name": "Registro audit",

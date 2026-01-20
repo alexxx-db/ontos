@@ -1,8 +1,8 @@
 {
   "title": "Benvenuto in Ontos",
-  "tagline": "Gestisci modelli semantici, contratti dati, prodotti dati, personas e altro ancora",
+  "tagline": "Gestisci glossario aziendale, contratti dati, prodotti dati, personas e altro ancora",
   "search": {
-    "placeholder": "Cerca prodotti dati, modelli semantici, contratti..."
+    "placeholder": "Cerca prodotti dati, termini del glossario, contratti..."
   },
   "overview": {
     "title": "Panoramica",
@@ -24,7 +24,7 @@
         "description": "Totale prodotti dati"
       },
       "semanticModels": {
-        "title": "Modelli semantici",
+        "title": "Glossario Aziendale",
         "description": "Modelli / Termini"
       },
       "estates": {
@@ -69,7 +69,7 @@
     "noActions": "Nessuna azione disponibile.",
     "actions": {
       "browseProducts": "Sfoglia prodotti dati",
-      "browseGlossary": "Sfoglia modelli semantici",
+      "browseGlossary": "Sfoglia glossario aziendale",
       "createProduct": "Crea prodotto dati",
       "defineContract": "Definisci contratto dati",
       "reviewAssets": "Rivedi risorse dati",

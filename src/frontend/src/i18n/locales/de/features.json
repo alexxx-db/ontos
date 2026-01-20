@@ -24,8 +24,8 @@
     "description": "Verwandte Databricks-Assets mit Tags gruppieren und verwalten."
   },
   "semantic-models": {
-    "name": "Semantische Modelle",
-    "description": "Semantische Modelle und ihre Begriffe (Konzepte und Eigenschaften) erkunden."
+    "name": "Business Glossar",
+    "description": "Erkunden Sie Geschäftsglossar-Begriffe, Konzepte und ihre Beziehungen."
   },
   "data-asset-reviews": {
     "name": "Asset-Prüfung",
@@ -65,7 +65,7 @@
   },
   "search": {
     "name": "Suche",
-    "description": "Über Datenprodukte, Verträge und den Knowledge Graph suchen."
+    "description": "Über Datenprodukte, Verträge und Konzeptgraph suchen."
   },
   "audit": {
     "name": "Audit-Protokoll",

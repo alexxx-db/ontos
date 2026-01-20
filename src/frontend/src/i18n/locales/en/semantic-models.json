@@ -1,5 +1,5 @@
 {
-  "title": "Semantic Models",
+  "title": "Business Glossary",
   "subtitle": "Manage business glossaries and semantic definitions",
   "newModel": "New Glossary",
   "newTerm": "New Term",
@@ -7,7 +7,11 @@
   "loading": "Loading semantic models...",
   "filters": {
     "allGlossaries": "All Glossaries",
-    "allStatus": "All Status"
+    "allStatus": "All Status",
+    "bySource": "Filter by Source",
+    "all": "All",
+    "none": "None",
+    "groupBySource": "Group by Source"
   },
   "table": {
     "name": "Name",

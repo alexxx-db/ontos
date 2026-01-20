@@ -1,8 +1,8 @@
 {
   "title": "Ontosへようこそ",
-  "tagline": "セマンティックモデル、データ契約、データ製品、ペルソナなどを管理",
+  "tagline": "ビジネス用語集、データ契約、データ製品、ペルソナなどを管理",
   "search": {
-    "placeholder": "データ製品、セマンティックモデル、契約を検索..."
+    "placeholder": "データ製品、用語集の用語、契約を検索..."
   },
   "overview": {
     "title": "概要",
@@ -24,7 +24,7 @@
         "description": "データ製品の合計"
       },
       "semanticModels": {
-        "title": "セマンティックモデル",
+        "title": "ビジネス用語集",
         "description": "モデル / 用語"
       },
       "estates": {
@@ -69,7 +69,7 @@
     "noActions": "利用可能なアクションはありません。",
     "actions": {
       "browseProducts": "データ製品を参照",
-      "browseGlossary": "セマンティックモデルを参照",
+      "browseGlossary": "ビジネス用語集を参照",
       "createProduct": "データ製品を作成",
       "defineContract": "データ契約を定義",
       "reviewAssets": "データアセットをレビュー",

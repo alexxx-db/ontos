@@ -1,8 +1,8 @@
 {
   "title": "Bienvenido a Ontos",
-  "tagline": "Gestiona modelos semánticos, contratos de datos, productos de datos, personas y más",
+  "tagline": "Gestiona glosario de negocio, contratos de datos, productos de datos, personas y más",
   "search": {
-    "placeholder": "Buscar productos de datos, modelos semánticos, contratos..."
+    "placeholder": "Buscar productos de datos, términos de glosario, contratos..."
   },
   "overview": {
     "title": "Resumen",
@@ -24,7 +24,7 @@
         "description": "Total de productos de datos"
       },
       "semanticModels": {
-        "title": "Modelos semánticos",
+        "title": "Glosario de Negocio",
         "description": "Modelos / Términos"
       },
       "estates": {
@@ -69,7 +69,7 @@
     "noActions": "No hay acciones disponibles.",
     "actions": {
       "browseProducts": "Explorar productos de datos",
-      "browseGlossary": "Explorar modelos semánticos",
+      "browseGlossary": "Explorar glosario de negocio",
       "createProduct": "Crear producto de datos",
       "defineContract": "Definir contrato de datos",
       "reviewAssets": "Revisar activos de datos",

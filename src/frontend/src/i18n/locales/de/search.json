@@ -4,7 +4,7 @@
   "tabs": {
     "askOntos": "Ontos fragen",
     "indexSearch": "Index-Suche",
-    "knowledgeGraph": "Wissensgraph",
+    "conceptGraph": "Konzeptgraph",
     "concepts": "Konzepte"
   },
   "noResults": "Keine Ergebnisse gefunden",

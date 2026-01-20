@@ -634,9 +634,9 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
           <DialogHeader className="px-6 py-4 border-b flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
-                <DialogTitle className="text-xl font-semibold">Knowledge Graph</DialogTitle>
+                <DialogTitle className="text-xl font-semibold">Concept Graph</DialogTitle>
                 <DialogDescription className="sr-only">
-                  Fullscreen view of the knowledge graph visualization
+                  Fullscreen view of the concept graph visualization
                 </DialogDescription>
               </div>
               <div className="flex items-center gap-2">

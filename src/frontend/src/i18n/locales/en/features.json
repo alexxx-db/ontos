@@ -24,8 +24,8 @@
     "description": "Group and manage related Databricks assets with tags."
   },
   "semantic-models": {
-    "name": "Semantic Models",
-    "description": "Explore semantic models and their terms (concepts and properties)."
+    "name": "Business Glossary",
+    "description": "Explore business glossary terms, concepts, and their relationships."
   },
   "data-asset-reviews": {
     "name": "Asset Review",

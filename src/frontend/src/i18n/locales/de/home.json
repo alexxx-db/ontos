@@ -1,8 +1,8 @@
 {
   "title": "Willkommen bei Ontos",
-  "tagline": "Verwalten Sie semantische Modelle, Datenverträge, Datenprodukte, Personas und mehr",
+  "tagline": "Verwalten Sie Business Glossar, Datenverträge, Datenprodukte, Personas und mehr",
   "search": {
-    "placeholder": "Suche nach Datenprodukten, semantischen Modellen, Verträgen..."
+    "placeholder": "Suche nach Datenprodukten, Glossarbegriffen, Verträgen..."
   },
   "overview": {
     "title": "Übersicht",
@@ -24,7 +24,7 @@
         "description": "Gesamtzahl Datenprodukte"
       },
       "semanticModels": {
-        "title": "Semantische Modelle",
+        "title": "Business Glossar",
         "description": "Modelle / Begriffe"
       },
       "estates": {
@@ -69,7 +69,7 @@
     "noActions": "Keine Aktionen verfügbar.",
     "actions": {
       "browseProducts": "Datenprodukte durchsuchen",
-      "browseGlossary": "Semantische Modelle durchsuchen",
+      "browseGlossary": "Business Glossar durchsuchen",
       "createProduct": "Datenprodukt erstellen",
       "defineContract": "Datenvertrag definieren",
       "reviewAssets": "Daten-Assets überprüfen",

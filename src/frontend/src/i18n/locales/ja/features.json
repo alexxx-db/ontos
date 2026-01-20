@@ -24,8 +24,8 @@
     "description": "関連する Databricks アセットをタグでグループ化して管理します。"
   },
   "semantic-models": {
-    "name": "セマンティックモデル",
-    "description": "セマンティックモデルとその用語（概念とプロパティ）を探索します。"
+    "name": "ビジネス用語集",
+    "description": "ビジネス用語集の用語、概念、およびその関係を探索します。"
   },
   "data-asset-reviews": {
     "name": "アセットレビュー",
@@ -65,7 +65,7 @@
   },
   "search": {
     "name": "検索",
-    "description": "データ製品、契約、ナレッジグラフを横断検索します。"
+    "description": "データ製品、契約、コンセプトグラフを横断検索します。"
   },
   "audit": {
     "name": "監査ログ",

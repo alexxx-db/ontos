@@ -110,7 +110,7 @@
     "columns": "columns",
     "tables": "tables",
     "relationships": "relationships",
-    "knowledgeGraph": "Knowledge Graph",
+    "conceptGraph": "Concept Graph",
     "concepts": "concepts",
     "securableId": "Securable ID",
     "securableType": "Securable Type",

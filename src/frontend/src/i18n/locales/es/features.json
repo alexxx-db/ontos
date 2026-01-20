@@ -24,8 +24,8 @@
     "description": "Agrupa y gestiona activos Databricks relacionados con etiquetas."
   },
   "semantic-models": {
-    "name": "Modelos semánticos",
-    "description": "Explora modelos semánticos y sus términos (conceptos y propiedades)."
+    "name": "Glosario de Negocio",
+    "description": "Explora términos del glosario de negocio, conceptos y sus relaciones."
   },
   "data-asset-reviews": {
     "name": "Revisión de activos",
@@ -65,7 +65,7 @@
   },
   "search": {
     "name": "Búsqueda",
-    "description": "Busca entre productos de datos, contratos y grafo de conocimiento."
+    "description": "Busca entre productos de datos, contratos y grafo de conceptos."
   },
   "audit": {
     "name": "Registro de auditoría",

@@ -8,7 +8,7 @@ import { ColumnDef, Column } from '@tanstack/react-table';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Upload, ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
+import { Upload, ChevronDown, RefreshCw, Trash2, Loader2 } from 'lucide-react';
 import type { SemanticModel } from '@/types/ontology';
 import {
   AlertDialog,
@@ -55,6 +55,7 @@ export default function SemanticModelsSettings() {
     const formData = new FormData();
     formData.append('file', file);
 
+    setUploadingId('uploading');
     try {
       const res = await post<{ model: SemanticModel; message: string }>('/api/semantic-models/upload', formData);
       
@@ -78,6 +79,7 @@ export default function SemanticModelsSettings() {
         variant: 'destructive' 
       });
     } finally {
+      setUploadingId(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -282,8 +284,16 @@ export default function SemanticModelsSettings() {
         </div>
         <div className="flex items-center gap-2">
           <Input ref={fileInputRef} type="file" accept=".ttl,.rdf,.xml,.skos,.rdfs,.owl,.nt,.n3,.trig,.trix,.jsonld,.json" className="hidden" onChange={onUpload} />
-          <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-            <Upload className="h-4 w-4 mr-2" /> Upload
+          <Button 
+            variant="outline" 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingId === 'uploading'}
+          >
+            {uploadingId === 'uploading' ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Uploading...</>
+            ) : (
+              <><Upload className="h-4 w-4 mr-2" /> Upload</>
+            )}
           </Button>
           <Button variant="ghost" onClick={fetchItems}>
             <RefreshCw className="h-4 w-4" />

@@ -1,5 +1,5 @@
 {
-  "title": "Semantische Modelle",
+  "title": "Business Glossar",
   "subtitle": "Verwalten Sie Geschäftsglossare und semantische Definitionen",
   "newModel": "Neues Glossar",
   "newTerm": "Neuer Begriff",
@@ -7,7 +7,11 @@
   "loading": "Semantische Modelle werden geladen...",
   "filters": {
     "allGlossaries": "Alle Glossare",
-    "allStatus": "Alle Status"
+    "allStatus": "Alle Status",
+    "bySource": "Nach Quelle filtern",
+    "all": "Alle",
+    "none": "Keine",
+    "groupBySource": "Nach Quelle gruppieren"
   },
   "table": {
     "name": "Name",

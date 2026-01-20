@@ -4,7 +4,7 @@
   "tabs": {
     "askOntos": "Preguntar a Ontos",
     "indexSearch": "Búsqueda de Índice",
-    "knowledgeGraph": "Grafo de Conocimiento",
+    "conceptGraph": "Grafo de Conceptos",
     "concepts": "Conceptos"
   },
   "noResults": "No se encontraron resultados",

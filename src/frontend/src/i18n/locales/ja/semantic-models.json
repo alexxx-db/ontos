@@ -1,5 +1,5 @@
 {
-  "title": "セマンティックモデル",
+  "title": "ビジネス用語集",
   "subtitle": "ビジネス用語集とセマンティック定義の管理",
   "newModel": "新規用語集",
   "newTerm": "新規用語",
@@ -7,7 +7,11 @@
   "loading": "セマンティックモデルを読み込み中...",
   "filters": {
     "allGlossaries": "すべての用語集",
-    "allStatus": "すべてのステータス"
+    "allStatus": "すべてのステータス",
+    "bySource": "ソースでフィルター",
+    "all": "すべて",
+    "none": "なし",
+    "groupBySource": "ソースでグループ化"
   },
   "table": {
     "name": "名前",

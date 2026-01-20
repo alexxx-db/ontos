@@ -1,8 +1,8 @@
 {
   "title": "Bienvenue sur Ontos",
-  "tagline": "Gérez les modèles sémantiques, les contrats de données, les produits de données, les personas et plus encore",
+  "tagline": "Gérez le glossaire métier, les contrats de données, les produits de données, les personas et plus encore",
   "search": {
-    "placeholder": "Rechercher des produits de données, modèles sémantiques, contrats..."
+    "placeholder": "Rechercher des produits de données, termes du glossaire, contrats..."
   },
   "overview": {
     "title": "Aperçu",
@@ -24,7 +24,7 @@
         "description": "Total des produits de données"
       },
       "semanticModels": {
-        "title": "Modèles sémantiques",
+        "title": "Glossaire Métier",
         "description": "Modèles / Termes"
       },
       "estates": {
@@ -69,7 +69,7 @@
     "noActions": "Aucune action disponible.",
     "actions": {
       "browseProducts": "Parcourir les produits de données",
-      "browseGlossary": "Parcourir les modèles sémantiques",
+      "browseGlossary": "Parcourir le glossaire métier",
       "createProduct": "Créer un produit de données",
       "defineContract": "Définir un contrat de données",
       "reviewAssets": "Examiner les actifs de données",

@@ -1,5 +1,5 @@
 {
-  "title": "Modelli Semantici",
+  "title": "Glossario Aziendale",
   "subtitle": "Gestisci glossari aziendali e definizioni semantiche",
   "newModel": "Nuovo Glossario",
   "newTerm": "Nuovo Termine",
@@ -7,7 +7,11 @@
   "loading": "Caricamento modelli semantici...",
   "filters": {
     "allGlossaries": "Tutti i Glossari",
-    "allStatus": "Tutti gli Stati"
+    "allStatus": "Tutti gli Stati",
+    "bySource": "Filtra per Fonte",
+    "all": "Tutti",
+    "none": "Nessuno",
+    "groupBySource": "Raggruppa per Fonte"
   },
   "table": {
     "name": "Nome",

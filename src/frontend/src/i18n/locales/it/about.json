@@ -35,7 +35,7 @@
       "• Raggruppare risorse Databricks (tabelle, viste, funzioni, modelli, dashboard, job, notebook).",
       "• Utilizzare tag (es., data-product-name, data-product-domain)."
     ],
-    "semantic-models": [
+    "business-glossary": [
       "• Glossari gerarchici per unità organizzativa (azienda, LOB, dipartimento, team, progetto).",
       "• Uniti dal basso verso l'alto per gli utenti, consentendo sovrascritture.",
       "• I termini hanno tag, descrizioni markdown, stato del ciclo di vita, risorse assegnate."

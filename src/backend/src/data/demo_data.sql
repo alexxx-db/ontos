@@ -66,6 +66,7 @@
 --   029 = entity_tag_associations
 --   02a = process_workflows
 --   02b = workflow_steps
+--   02c = comments/ratings
 -- ============================================================================
 
 BEGIN;
@@ -1482,6 +1483,78 @@ NULL, NULL, 6, '{"x": 400, "y": 230}', NOW(), NOW()),
 ('02b00015-0000-4000-8000-000000000021', '02a00005-0000-4000-8000-000000000005', 'fail-access', 'Access Check Failed', 'fail', 
 '{"message": "Access controls must be properly configured"}',
 NULL, NULL, 7, '{"x": 400, "y": 330}', NOW(), NOW())
+
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================================================
+-- 21. RATINGS (Comments with rating type) (type=02c)
+-- ============================================================================
+-- Star ratings for data products and datasets in the marketplace
+
+INSERT INTO comments (id, entity_type, entity_id, comment, comment_type, rating, status, created_by, created_at, updated_at) VALUES
+-- Data Product ratings
+-- POS Transaction Stream (00700001) - 3 ratings, avg ~4.3
+('02c00001-0000-4000-8000-000000000001', 'data_product', '00700001-0000-4000-8000-000000000001', 'Excellent real-time data quality and low latency.', 'rating', 5, 'active', 'alice.johnson@company.com', NOW() - INTERVAL '20 days', NOW() - INTERVAL '20 days'),
+('02c00002-0000-4000-8000-000000000002', 'data_product', '00700001-0000-4000-8000-000000000001', 'Good stream but documentation could be better.', 'rating', 4, 'active', 'bob.wilson@company.com', NOW() - INTERVAL '15 days', NOW() - INTERVAL '15 days'),
+('02c00003-0000-4000-8000-000000000003', 'data_product', '00700001-0000-4000-8000-000000000001', 'Works well for our use case.', 'rating', 4, 'active', 'carol.brown@company.com', NOW() - INTERVAL '10 days', NOW() - INTERVAL '10 days'),
+
+-- Prepared Sales Transactions (00700002) - 4 ratings, avg 4.0
+('02c00004-0000-4000-8000-000000000004', 'data_product', '00700002-0000-4000-8000-000000000002', 'Clean data, easy to integrate.', 'rating', 5, 'active', 'alice.johnson@company.com', NOW() - INTERVAL '25 days', NOW() - INTERVAL '25 days'),
+('02c00005-0000-4000-8000-000000000005', 'data_product', '00700002-0000-4000-8000-000000000002', 'Useful for analytics but 1-hour lag is limiting.', 'rating', 3, 'active', 'david.garcia@company.com', NOW() - INTERVAL '18 days', NOW() - INTERVAL '18 days'),
+('02c00006-0000-4000-8000-000000000006', 'data_product', '00700002-0000-4000-8000-000000000002', 'Great for BI reporting.', 'rating', 4, 'active', 'bob.wilson@company.com', NOW() - INTERVAL '12 days', NOW() - INTERVAL '12 days'),
+('02c00007-0000-4000-8000-000000000007', 'data_product', '00700002-0000-4000-8000-000000000002', 'Solid data product.', 'rating', 4, 'active', 'jane.smith@company.com', NOW() - INTERVAL '5 days', NOW() - INTERVAL '5 days'),
+
+-- Demand Forecast Model Output (00700003) - 2 ratings, avg 3.5
+('02c00008-0000-4000-8000-000000000008', 'data_product', '00700003-0000-4000-8000-000000000003', 'Forecasts are helpful but accuracy degrades after 2 weeks.', 'rating', 3, 'active', 'ops-lead@example.com', NOW() - INTERVAL '14 days', NOW() - INTERVAL '14 days'),
+('02c00009-0000-4000-8000-000000000009', 'data_product', '00700003-0000-4000-8000-000000000003', 'Good for inventory planning.', 'rating', 4, 'active', 'analyst@example.com', NOW() - INTERVAL '7 days', NOW() - INTERVAL '7 days'),
+
+-- Inventory Optimization Recommendations (00700004) - 1 rating
+('02c0000a-0000-4000-8000-000000000010', 'data_product', '00700004-0000-4000-8000-000000000004', 'API integrates well with our systems.', 'rating', 4, 'active', 'ops-lead@example.com', NOW() - INTERVAL '21 days', NOW() - INTERVAL '21 days'),
+
+-- Price Optimization Model Output (00700005) - 2 ratings, avg 4.5
+('02c0000b-0000-4000-8000-000000000011', 'data_product', '00700005-0000-4000-8000-000000000005', 'Pricing recommendations are spot on!', 'rating', 5, 'active', 'pricing-analyst@example.com', NOW() - INTERVAL '16 days', NOW() - INTERVAL '16 days'),
+('02c0000c-0000-4000-8000-000000000012', 'data_product', '00700005-0000-4000-8000-000000000005', 'Good model, needs more competitive data.', 'rating', 4, 'active', 'analyst@example.com', NOW() - INTERVAL '8 days', NOW() - INTERVAL '8 days'),
+
+-- Customer Marketing Recommendations (00700006) - 3 ratings, avg ~4.7
+('02c0000d-0000-4000-8000-000000000013', 'data_product', '00700006-0000-4000-8000-000000000006', 'Exactly what we needed for campaign targeting!', 'rating', 5, 'active', 'marketing-lead@example.com', NOW() - INTERVAL '19 days', NOW() - INTERVAL '19 days'),
+('02c0000e-0000-4000-8000-000000000014', 'data_product', '00700006-0000-4000-8000-000000000006', 'Great recommendations, API works well.', 'rating', 5, 'active', 'alice.johnson@company.com', NOW() - INTERVAL '11 days', NOW() - INTERVAL '11 days'),
+('02c0000f-0000-4000-8000-000000000015', 'data_product', '00700006-0000-4000-8000-000000000006', 'Good segmentation, occasional misses.', 'rating', 4, 'active', 'carol.brown@company.com', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'),
+
+-- Retail Performance Dashboard Data (00700007) - 2 ratings, avg 5.0
+('02c00010-0000-4000-8000-000000000016', 'data_product', '00700007-0000-4000-8000-000000000007', 'Perfect for executive dashboards.', 'rating', 5, 'active', 'analyst@example.com', NOW() - INTERVAL '13 days', NOW() - INTERVAL '13 days'),
+('02c00011-0000-4000-8000-000000000017', 'data_product', '00700007-0000-4000-8000-000000000007', 'Love the data freshness and aggregations.', 'rating', 5, 'active', 'bi-dev@example.com', NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days'),
+
+-- Dataset ratings
+-- Customer Master Data (02100001) - 4 ratings, avg ~4.5
+('02c00012-0000-4000-8000-000000000018', 'dataset', '02100001-0000-4000-8000-000000000001', 'Comprehensive customer data, well maintained.', 'rating', 5, 'active', 'alice.johnson@company.com', NOW() - INTERVAL '28 days', NOW() - INTERVAL '28 days'),
+('02c00013-0000-4000-8000-000000000019', 'dataset', '02100001-0000-4000-8000-000000000001', 'Great data quality and documentation.', 'rating', 5, 'active', 'bob.wilson@company.com', NOW() - INTERVAL '22 days', NOW() - INTERVAL '22 days'),
+('02c00014-0000-4000-8000-000000000020', 'dataset', '02100001-0000-4000-8000-000000000001', 'Useful for ML training.', 'rating', 4, 'active', 'carol.brown@company.com', NOW() - INTERVAL '15 days', NOW() - INTERVAL '15 days'),
+('02c00015-0000-4000-8000-000000000021', 'dataset', '02100001-0000-4000-8000-000000000001', 'Solid customer master data.', 'rating', 4, 'active', 'data.scientist@example.com', NOW() - INTERVAL '6 days', NOW() - INTERVAL '6 days'),
+
+-- Customer Engagement Analytics (02100002) - 1 rating
+('02c00016-0000-4000-8000-000000000022', 'dataset', '02100002-0000-4000-8000-000000000002', 'Good engagement metrics.', 'rating', 4, 'active', 'marketing-lead@example.com', NOW() - INTERVAL '17 days', NOW() - INTERVAL '17 days'),
+
+-- Customer Preferences (02100003) - 2 ratings, avg 4.0
+('02c00017-0000-4000-8000-000000000023', 'dataset', '02100003-0000-4000-8000-000000000003', 'Useful preference aggregations.', 'rating', 4, 'active', 'alice.johnson@company.com', NOW() - INTERVAL '12 days', NOW() - INTERVAL '12 days'),
+('02c00018-0000-4000-8000-000000000024', 'dataset', '02100003-0000-4000-8000-000000000003', 'Good for personalization.', 'rating', 4, 'active', 'marketing-lead@example.com', NOW() - INTERVAL '5 days', NOW() - INTERVAL '5 days'),
+
+-- IoT Device Management (02100004) - 2 ratings, avg 4.5
+('02c00019-0000-4000-8000-000000000025', 'dataset', '02100004-0000-4000-8000-000000000004', 'Complete device registry, well structured.', 'rating', 5, 'active', 'bob.wilson@company.com', NOW() - INTERVAL '18 days', NOW() - INTERVAL '18 days'),
+('02c0001a-0000-4000-8000-000000000026', 'dataset', '02100004-0000-4000-8000-000000000004', 'Good for device tracking.', 'rating', 4, 'active', 'carol.brown@company.com', NOW() - INTERVAL '9 days', NOW() - INTERVAL '9 days'),
+
+-- IoT Telemetry (02100005) - 3 ratings, avg ~4.3
+('02c0001b-0000-4000-8000-000000000027', 'dataset', '02100005-0000-4000-8000-000000000005', 'Real-time data is accurate and reliable.', 'rating', 5, 'active', 'bob.wilson@company.com', NOW() - INTERVAL '24 days', NOW() - INTERVAL '24 days'),
+('02c0001c-0000-4000-8000-000000000028', 'dataset', '02100005-0000-4000-8000-000000000005', 'Works well for anomaly detection.', 'rating', 4, 'active', 'david.garcia@company.com', NOW() - INTERVAL '14 days', NOW() - INTERVAL '14 days'),
+('02c0001d-0000-4000-8000-000000000029', 'dataset', '02100005-0000-4000-8000-000000000005', 'Good streaming data quality.', 'rating', 4, 'active', 'data.engineer@example.com', NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days'),
+
+-- Sales Analytics (02100007) - 3 ratings, avg ~4.7
+('02c0001e-0000-4000-8000-000000000030', 'dataset', '02100007-0000-4000-8000-000000000007', 'Excellent for sales trend analysis.', 'rating', 5, 'active', 'analyst@example.com', NOW() - INTERVAL '20 days', NOW() - INTERVAL '20 days'),
+('02c0001f-0000-4000-8000-000000000031', 'dataset', '02100007-0000-4000-8000-000000000007', 'Good aggregations, easy to consume.', 'rating', 5, 'active', 'frank.finance@example.com', NOW() - INTERVAL '10 days', NOW() - INTERVAL '10 days'),
+('02c00020-0000-4000-8000-000000000032', 'dataset', '02100007-0000-4000-8000-000000000007', 'Reliable for weekly reporting.', 'rating', 4, 'active', 'alice.johnson@company.com', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'),
+
+-- Inventory Levels (02100008) - deprecated, 1 old rating
+('02c00021-0000-4000-8000-000000000033', 'dataset', '02100008-0000-4000-8000-000000000008', 'Was useful, now deprecated.', 'rating', 3, 'active', 'ops-lead@example.com', NOW() - INTERVAL '45 days', NOW() - INTERVAL '45 days')
 
 ON CONFLICT (id) DO NOTHING;
 

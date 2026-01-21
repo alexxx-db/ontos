@@ -193,7 +193,8 @@
     "validationError": "検証エラー",
     "permissionDenied": "権限がありません",
     "notFound": "見つかりません",
-    "required": "この項目は必須です"
+    "required": "この項目は必須です",
+    "invalidDate": "無効な日付"
   },
   "tooltips": {
     "zoomIn": "拡大",
@@ -219,7 +220,8 @@
     "deleteRequest": "リクエストを削除",
     "createDataContract": "データ契約を作成",
     "requestAccessForSelected": "選択したものへのアクセスを要求",
-    "deleteSelected": "選択を削除"
+    "deleteSelected": "選択を削除",
+    "noDateProvided": "日付が指定されていません"
   },
   "pagination": {
     "previous": "前へ",
@@ -237,7 +239,9 @@
     "tomorrow": "明日",
     "now": "今",
     "ago": "前",
-    "in": "後"
+    "in": "後",
+    "daysAgo_one": "{{count}}日前",
+    "daysAgo_other": "{{count}}日前"
   },
   "header": {
     "searchPlaceholder": "データ製品、契約、用語を検索...",

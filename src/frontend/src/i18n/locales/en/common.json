@@ -153,6 +153,7 @@
     "warning": "Warning",
     "info": "Info",
     "notAvailable": "N/A",
+    "notAssigned": "Not assigned",
     "unknown": "Unknown",
     "none": "None",
     "all": "All",
@@ -191,7 +192,8 @@
     "validationError": "Validation error",
     "permissionDenied": "Permission denied",
     "notFound": "Not found",
-    "required": "This field is required"
+    "required": "This field is required",
+    "invalidDate": "Invalid Date"
   },
   "tooltips": {
     "zoomIn": "Zoom In",
@@ -217,7 +219,8 @@
     "unlinkContract": "Unlink contract",
     "createDataContract": "Create Data Contract",
     "requestAccessForSelected": "Request access for selected",
-    "deleteSelected": "Delete selected"
+    "deleteSelected": "Delete selected",
+    "noDateProvided": "No date provided"
   },
   "pagination": {
     "previous": "Previous",
@@ -235,7 +238,9 @@
     "tomorrow": "Tomorrow",
     "now": "Now",
     "ago": "ago",
-    "in": "in"
+    "in": "in",
+    "daysAgo_one": "{{count}} day ago",
+    "daysAgo_other": "{{count}} days ago"
   },
   "header": {
     "searchPlaceholder": "Search data products, contracts, terms...",

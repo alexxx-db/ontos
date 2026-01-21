@@ -193,7 +193,8 @@
     "validationError": "Error de validación",
     "permissionDenied": "Permiso denegado",
     "notFound": "No encontrado",
-    "required": "Este campo es obligatorio"
+    "required": "Este campo es obligatorio",
+    "invalidDate": "Fecha inválida"
   },
   "tooltips": {
     "zoomIn": "Acercar",
@@ -219,7 +220,8 @@
     "deleteRequest": "Eliminar solicitud",
     "createDataContract": "Crear contrato de datos",
     "requestAccessForSelected": "Solicitar acceso para seleccionados",
-    "deleteSelected": "Eliminar seleccionados"
+    "deleteSelected": "Eliminar seleccionados",
+    "noDateProvided": "Sin fecha proporcionada"
   },
   "pagination": {
     "previous": "Anterior",
@@ -237,7 +239,9 @@
     "tomorrow": "Mañana",
     "now": "Ahora",
     "ago": "hace",
-    "in": "en"
+    "in": "en",
+    "daysAgo_one": "hace {{count}} día",
+    "daysAgo_other": "hace {{count}} días"
   },
   "header": {
     "searchPlaceholder": "Buscar productos de datos, contratos, términos...",

@@ -193,7 +193,8 @@
     "validationError": "Errore di validazione",
     "permissionDenied": "Permesso negato",
     "notFound": "Non trovato",
-    "required": "Questo campo è obbligatorio"
+    "required": "Questo campo è obbligatorio",
+    "invalidDate": "Data non valida"
   },
   "tooltips": {
     "zoomIn": "Zoom avanti",
@@ -219,7 +220,8 @@
     "deleteRequest": "Elimina richiesta",
     "createDataContract": "Crea contratto dati",
     "requestAccessForSelected": "Richiedi accesso per i selezionati",
-    "deleteSelected": "Elimina selezionati"
+    "deleteSelected": "Elimina selezionati",
+    "noDateProvided": "Nessuna data fornita"
   },
   "pagination": {
     "previous": "Precedente",
@@ -237,7 +239,9 @@
     "tomorrow": "Domani",
     "now": "Ora",
     "ago": "fa",
-    "in": "tra"
+    "in": "tra",
+    "daysAgo_one": "{{count}} giorno fa",
+    "daysAgo_other": "{{count}} giorni fa"
   },
   "header": {
     "searchPlaceholder": "Cerca prodotti dati, contratti, termini...",

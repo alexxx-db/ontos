@@ -191,7 +191,8 @@
     "validationError": "Validierungsfehler",
     "permissionDenied": "Zugriff verweigert",
     "notFound": "Nicht gefunden",
-    "required": "Dieses Feld ist erforderlich"
+    "required": "Dieses Feld ist erforderlich",
+    "invalidDate": "Ungültiges Datum"
   },
   "tooltips": {
     "zoomIn": "Vergrößern",
@@ -217,7 +218,8 @@
     "unlinkContract": "Vertrag-Verknüpfung lösen",
     "createDataContract": "Datenvertrag erstellen",
     "requestAccessForSelected": "Zugriff für Ausgewählte anfordern",
-    "deleteSelected": "Ausgewählte löschen"
+    "deleteSelected": "Ausgewählte löschen",
+    "noDateProvided": "Kein Datum angegeben"
   },
   "pagination": {
     "previous": "Zurück",
@@ -235,7 +237,9 @@
     "tomorrow": "Morgen",
     "now": "Jetzt",
     "ago": "vor",
-    "in": "in"
+    "in": "in",
+    "daysAgo_one": "vor {{count}} Tag",
+    "daysAgo_other": "vor {{count}} Tagen"
   },
   "header": {
     "searchPlaceholder": "Datenprodukte, Verträge, Begriffe suchen...",

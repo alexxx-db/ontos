@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ZoomIn, ZoomOut, Maximize, RotateCcw, Expand, X } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize, RotateCcw, Expand, Group, Ungroup } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Dialog,
@@ -37,7 +37,7 @@ interface KnowledgeGraphProps {
   hiddenRoots: Set<string>;
   onToggleRoot: (rootIri: string) => void;
   onNodeClick: (concept: OntologyConcept) => void;
-  showDomainBoxes?: boolean;
+  showRootBadges?: boolean; // Controls visibility of root node filter badges (tied to Group by Source)
 }
 
 interface GraphData {
@@ -52,14 +52,28 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
   hiddenRoots,
   onToggleRoot,
   onNodeClick,
-  showDomainBoxes = true,
+  showRootBadges = true,
 }) => {
   const cyRef = useRef<Core | null>(null);
   const fullscreenCyRef = useRef<Core | null>(null);
   const layoutRef = useRef<{ stop: () => void } | null>(null);
+  const initialLayoutDoneRef = useRef(false);
+  const fullscreenInitialLayoutDoneRef = useRef(false);
   const [layout, setLayout] = useState<LayoutType>('cose');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showDomainBoxes, setShowDomainBoxes] = useState(true);
+  
+  // Handler for toggling domain boxes
+  const handleToggleDomainBoxes = useCallback(() => {
+    setShowDomainBoxes(prev => !prev);
+  }, []);
+
+  // Reset layout done ref when showDomainBoxes changes (component will remount)
+  useEffect(() => {
+    initialLayoutDoneRef.current = false;
+    fullscreenInitialLayoutDoneRef.current = false;
+  }, [showDomainBoxes]);
 
   // Detect dark mode
   useEffect(() => {
@@ -451,12 +465,12 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
     };
   }, [onNodeClick]);
 
-  // Run layout after mount and when layout type or elements change
+  // Run layout only when layout type changes (not on every element change)
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
     
-    // Small delay to ensure cytoscape is fully initialized after mount
+    // Small delay to ensure cytoscape is fully initialized
     const timeoutId = setTimeout(() => {
       const currentCy = cyRef.current;
       if (!currentCy || currentCy.elements().length === 0) return;
@@ -480,7 +494,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
         layoutRef.current = null;
       }
     };
-  }, [layout, getLayoutConfig, graphData.elements]);
+  }, [layout, getLayoutConfig]);
 
   // Control handlers
   const handleFit = () => {
@@ -517,49 +531,51 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
 
   return (
     <div className="h-full min-h-[900px] flex flex-col border rounded-lg bg-background overflow-hidden">
-      {/* Legend with toggleable roots */}
-      <div className="px-6 py-3 border-b bg-muted/30">
-        <div className="flex flex-wrap gap-2 text-xs">
-          {graphData.rootNodes.map(root => {
-            const color = graphData.rootColors.get(root.iri) || '#64748b';
-            const label = root.label || root.iri.split(/[/#]/).pop() || 'Unknown';
-            const isHidden = hiddenRoots.has(root.iri);
-            const descendants = graphData.getRootDescendants(root.iri);
-            
-            return (
-              <button
-                key={root.iri}
-                onClick={() => onToggleRoot(root.iri)}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all",
-                  "hover:shadow-md hover:scale-105",
-                  "bg-card border-2",
-                  isHidden ? "opacity-40 hover:opacity-60" : "opacity-100"
-                )}
-                style={{
-                  borderColor: color,
-                  backgroundColor: isHidden ? undefined : `${color}15`
-                }}
-                title={`${isHidden ? 'Show' : 'Hide'} ${label} (${descendants.size} concepts)`}
-              >
-                <div 
-                  className="w-3 h-3 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: color }}
-                />
-                <span className={cn(
-                  "font-medium text-foreground",
-                  isHidden && "line-through"
-                )}>
-                  {label}
-                </span>
-                <span className="text-muted-foreground">
-                  ({descendants.size})
-                </span>
-              </button>
-            );
-          })}
+      {/* Legend with toggleable roots - shown when Group by Source is OFF */}
+      {showRootBadges && (
+        <div className="px-6 py-3 border-b bg-muted/30">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {graphData.rootNodes.map(root => {
+              const color = graphData.rootColors.get(root.iri) || '#64748b';
+              const label = root.label || root.iri.split(/[/#]/).pop() || 'Unknown';
+              const isHidden = hiddenRoots.has(root.iri);
+              const descendants = graphData.getRootDescendants(root.iri);
+              
+              return (
+                <button
+                  key={root.iri}
+                  onClick={() => onToggleRoot(root.iri)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all",
+                    "hover:shadow-md hover:scale-105",
+                    "bg-card border-2",
+                    isHidden ? "opacity-40 hover:opacity-60" : "opacity-100"
+                  )}
+                  style={{
+                    borderColor: color,
+                    backgroundColor: isHidden ? undefined : `${color}15`
+                  }}
+                  title={`${isHidden ? 'Show' : 'Hide'} ${label} (${descendants.size} concepts)`}
+                >
+                  <div 
+                    className="w-3 h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className={cn(
+                    "font-medium text-foreground",
+                    isHidden && "line-through"
+                  )}>
+                    {label}
+                  </span>
+                  <span className="text-muted-foreground">
+                    ({descendants.size})
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Toolbar */}
       <div className="px-4 py-2 border-b flex items-center justify-between bg-muted/20">
@@ -576,6 +592,16 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
               <SelectItem value="concentric">Concentric</SelectItem>
             </SelectContent>
           </Select>
+          
+          <Button
+            variant={showDomainBoxes ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={handleToggleDomainBoxes}
+            title={showDomainBoxes ? "Hide domain groups" : "Show domain groups"}
+          >
+            {showDomainBoxes ? <Group className="h-4 w-4" /> : <Ungroup className="h-4 w-4" />}
+          </Button>
           
           <Badge variant="secondary" className="text-xs">
             {graphData.elements.filter(e => e.classes === 'concept-node').length} concepts
@@ -611,8 +637,19 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       {/* Graph */}
       <div className="flex-1 min-h-[700px] relative">
         <CytoscapeComponent
+          key={`graph-${showDomainBoxes}`}
           cy={(cy: Core) => {
             cyRef.current = cy;
+            // Run initial layout only once after mounting
+            if (!initialLayoutDoneRef.current) {
+              initialLayoutDoneRef.current = true;
+              setTimeout(() => {
+                if (cyRef.current && cyRef.current.elements().length > 0) {
+                  const layoutConfig = getLayoutConfig(layout, true);
+                  cyRef.current.layout(layoutConfig).run();
+                }
+              }, 50);
+            }
           }}
           elements={graphData.elements}
           stylesheet={stylesheet}
@@ -652,6 +689,15 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
                     <SelectItem value="concentric">Concentric</SelectItem>
                   </SelectContent>
                 </Select>
+                <Button
+                  variant={showDomainBoxes ? "secondary" : "ghost"}
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={handleToggleDomainBoxes}
+                  title={showDomainBoxes ? "Hide domain groups" : "Show domain groups"}
+                >
+                  {showDomainBoxes ? <Group className="h-4 w-4" /> : <Ungroup className="h-4 w-4" />}
+                </Button>
                 <Badge variant="secondary" className="text-xs">
                   {graphData.elements.filter(e => e.classes === 'concept-node').length} concepts
                 </Badge>
@@ -659,65 +705,71 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
             </div>
           </DialogHeader>
           
-          {/* Legend in modal */}
-          <div className="px-6 py-3 border-b bg-muted/30 flex-shrink-0">
-            <div className="flex flex-wrap gap-2 text-xs">
-              {graphData.rootNodes.map(root => {
-                const color = graphData.rootColors.get(root.iri) || '#64748b';
-                const label = root.label || root.iri.split(/[/#]/).pop() || 'Unknown';
-                const isHidden = hiddenRoots.has(root.iri);
-                const descendants = graphData.getRootDescendants(root.iri);
-                
-                return (
-                  <button
-                    key={root.iri}
-                    onClick={() => onToggleRoot(root.iri)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all",
-                      "hover:shadow-md hover:scale-105",
-                      "bg-card border-2",
-                      isHidden ? "opacity-40 hover:opacity-60" : "opacity-100"
-                    )}
-                    style={{
-                      borderColor: color,
-                      backgroundColor: isHidden ? undefined : `${color}15`
-                    }}
-                    title={`${isHidden ? 'Show' : 'Hide'} ${label} (${descendants.size} concepts)`}
-                  >
-                    <div 
-                      className="w-3 h-3 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className={cn(
-                      "font-medium text-foreground",
-                      isHidden && "line-through"
-                    )}>
-                      {label}
-                    </span>
-                    <span className="text-muted-foreground">
-                      ({descendants.size})
-                    </span>
-                  </button>
-                );
-              })}
+          {/* Legend in modal - shown when Group by Source is OFF */}
+          {showRootBadges && (
+            <div className="px-6 py-3 border-b bg-muted/30 flex-shrink-0">
+              <div className="flex flex-wrap gap-2 text-xs">
+                {graphData.rootNodes.map(root => {
+                  const color = graphData.rootColors.get(root.iri) || '#64748b';
+                  const label = root.label || root.iri.split(/[/#]/).pop() || 'Unknown';
+                  const isHidden = hiddenRoots.has(root.iri);
+                  const descendants = graphData.getRootDescendants(root.iri);
+                  
+                  return (
+                    <button
+                      key={root.iri}
+                      onClick={() => onToggleRoot(root.iri)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all",
+                        "hover:shadow-md hover:scale-105",
+                        "bg-card border-2",
+                        isHidden ? "opacity-40 hover:opacity-60" : "opacity-100"
+                      )}
+                      style={{
+                        borderColor: color,
+                        backgroundColor: isHidden ? undefined : `${color}15`
+                      }}
+                      title={`${isHidden ? 'Show' : 'Hide'} ${label} (${descendants.size} concepts)`}
+                    >
+                      <div 
+                        className="w-3 h-3 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className={cn(
+                        "font-medium text-foreground",
+                        isHidden && "line-through"
+                      )}>
+                        {label}
+                      </span>
+                      <span className="text-muted-foreground">
+                        ({descendants.size})
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Fullscreen Graph */}
           <div className="flex-1 relative">
             {isFullscreen && (
               <CytoscapeComponent
+                key={`fullscreen-graph-${showDomainBoxes}`}
                 cy={(cy: Core) => {
                   fullscreenCyRef.current = cy;
-                  // Run layout after mounting in fullscreen with proper delay
-                  const timeoutId = setTimeout(() => {
-                    if (fullscreenCyRef.current && fullscreenCyRef.current.elements().length > 0) {
-                      const layoutConfig = getLayoutConfig(layout, true);
-                      fullscreenCyRef.current.layout(layoutConfig).run();
-                    }
-                  }, 150);
-                  // Store cleanup
-                  cy.scratch('_layoutTimeout', timeoutId);
+                  // Run layout only once after mounting in fullscreen
+                  if (!fullscreenInitialLayoutDoneRef.current) {
+                    fullscreenInitialLayoutDoneRef.current = true;
+                    const timeoutId = setTimeout(() => {
+                      if (fullscreenCyRef.current && fullscreenCyRef.current.elements().length > 0) {
+                        const layoutConfig = getLayoutConfig(layout, true);
+                        fullscreenCyRef.current.layout(layoutConfig).run();
+                      }
+                    }, 150);
+                    // Store cleanup
+                    cy.scratch('_layoutTimeout', timeoutId);
+                  }
                 }}
                 elements={graphData.elements}
                 stylesheet={stylesheet}

@@ -1338,6 +1338,7 @@ export default function SemanticModelsView() {
                   hiddenRoots={hiddenRoots}
                   onToggleRoot={handleToggleRoot}
                   onNodeClick={handleSelectConcept}
+                  showRootBadges={!groupBySource}
                 />
               </div>
             </div>

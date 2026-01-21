@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ontos"
-version = "0.4.0"
+version = "0.4.1"
 description = "A Business Catalog for the Databricks Platform"
 readme = "../README.md"
 authors = [
@@ -51,6 +51,8 @@ deploy-and-run = [
   'databricks bundle deploy --var="catalog=app_data" --var="schema=app_ontos"',
   "databricks bundle run app_ontos",
 ]
+version-bump = "python3 scripts/bump_version.py {args}"
+version-show = "python3 scripts/bump_version.py"
 test = "pytest"
 test-cov = "pytest --cov=backend/src --cov-report=html --cov-report=term"
 test-unit = "pytest backend/src/tests/unit"

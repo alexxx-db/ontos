@@ -1,7 +1,7 @@
 {
   "name": "ontos-backend-build",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Builds frontend and copies assets into backend static directory.",
   "engines": {
     "node": ">=18"
@@ -16,5 +16,3 @@
     "license-check:all": "cd frontend && yarn license-check && echo '\n--- Backend Licenses ---\n' && cd ../backend && pip-licenses --format=markdown --order=license"
   }
 }
-
-

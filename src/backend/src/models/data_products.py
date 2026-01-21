@@ -326,17 +326,18 @@ class DataProduct(BaseModel):
         # If it's already a list of AssignedTag objects, return as-is
         if isinstance(value, list) and value and hasattr(value[0], 'tag_id'):
             return value
-        # Handle list of string IDs from frontend (convert to dicts for AssignedTagCreate)
+        # Handle list of strings (tag FQNs or simple names) - pass directly to AssignedTagCreate
+        # AssignedTagCreate's model_validator handles string -> {'tag_fqn': string} conversion
         if isinstance(value, list) and value and isinstance(value[0], str):
-            return [{'tag_id': tag_id} for tag_id in value]
+            return value
         # Legacy support for JSON strings (should not be used anymore)
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, list):
-                    # Handle if parsed is a list of strings
+                    # Handle if parsed is a list of strings - pass directly
                     if parsed and isinstance(parsed[0], str):
-                        return [{'tag_id': tag_id} for tag_id in parsed]
+                        return parsed
                     return parsed
             except (json.JSONDecodeError, ValueError):
                 pass
@@ -403,9 +404,10 @@ class DataProductCreate(BaseModel):
         # If it's already a list of tag objects, return as-is
         if isinstance(value, list) and value and (hasattr(value[0], 'tag_id') or isinstance(value[0], dict)):
             return value
-        # Handle list of string IDs from frontend (convert to dicts for AssignedTagCreate)
+        # Handle list of strings (tag FQNs or simple names) - pass directly to AssignedTagCreate
+        # AssignedTagCreate's model_validator handles string -> {'tag_fqn': string} conversion
         if isinstance(value, list) and value and isinstance(value[0], str):
-            return [{'tag_id': tag_id} for tag_id in value]
+            return value
         return value
 
     model_config = {
@@ -442,9 +444,10 @@ class DataProductUpdate(BaseModel):
         # If it's already a list of tag objects, return as-is
         if isinstance(value, list) and value and (hasattr(value[0], 'tag_id') or isinstance(value[0], dict)):
             return value
-        # Handle list of string IDs from frontend (convert to dicts for AssignedTagCreate)
+        # Handle list of strings (tag FQNs or simple names) - pass directly to AssignedTagCreate
+        # AssignedTagCreate's model_validator handles string -> {'tag_fqn': string} conversion
         if isinstance(value, list) and value and isinstance(value[0], str):
-            return [{'tag_id': tag_id} for tag_id in value]
+            return value
         return value
 
     model_config = {

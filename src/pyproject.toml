@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ontos"
-version = "0.4.4"
+version = "0.4.6"
 description = "A Business Catalog for the Databricks Platform"
 readme = "../README.md"
 authors = [

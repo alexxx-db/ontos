@@ -74,9 +74,9 @@
     "noRelatedProperties": "No related properties found.",
     "linkedCatalogObjects": "Linked Catalog Objects",
     "noCatalogObjects": "No catalog objects assigned.",
-    "assignToObject": "Assign to Object",
+    "assignToConcept": "Assign to Concept",
     "assignDialog": {
-      "title": "Assign Concept to Object",
+      "title": "Assign Object to Concept",
       "entityType": "Entity Type",
       "selectEntityType": "Select entity type...",
       "dataProduct": "Data Product",

@@ -26,6 +26,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ColumnDef } from '@tanstack/react-table';
 import {
   AlertCircle,
@@ -39,12 +41,17 @@ import {
   ExternalLink,
   Filter,
   FolderTree,
+  Link2,
 } from 'lucide-react';
 import ReactFlow, { Node, Edge, Background, MarkerType, Controls, ConnectionMode } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { KnowledgeGraph } from '@/components/semantic-models/knowledge-graph';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { useGlossaryPreferencesStore } from '@/stores/glossary-preferences-store';
+import { usePermissions } from '@/stores/permissions-store';
+import { FeatureAccessLevel } from '@/types/feature-access-levels';
+import { useApi } from '@/hooks/use-api';
+import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
 
@@ -618,8 +625,11 @@ const TaggedAssetsView: React.FC<TaggedAssetsViewProps> = ({ concept }) => {
 };
 
 export default function SemanticModelsView() {
-  const { t } = useTranslation(['semantic-models', 'common']);
+  const { t } = useTranslation(['semantic-models', 'common', 'search']);
   const [searchParams, setSearchParams] = useSearchParams();
+  const { get, post } = useApi();
+  const { toast } = useToast();
+  const { hasPermission, isLoading: permissionsLoading } = usePermissions();
   const [taxonomies, setTaxonomies] = useState<SemanticModel[]>([]);
   const [groupedConcepts, setGroupedConcepts] = useState<GroupedConcepts>({});
   const [selectedConcept, setSelectedConcept] = useState<OntologyConcept | null>(null);
@@ -636,6 +646,12 @@ export default function SemanticModelsView() {
   const [showKnowledgeGraph, setShowKnowledgeGraph] = useState(false);
   const [hiddenRoots, setHiddenRoots] = useState<Set<string>>(new Set());
   // const [graphExpanded, setGraphExpanded] = useState<Set<string>>(new Set());
+
+  // Link Object dialog state
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [selectedEntityType, setSelectedEntityType] = useState<string>('');
+  const [selectedEntityId, setSelectedEntityId] = useState<string>('');
+  const [availableEntities, setAvailableEntities] = useState<any[]>([]);
 
   // Legacy form state removed - Phase 0 (read-only ontologies)
 
@@ -677,6 +693,9 @@ export default function SemanticModelsView() {
       (concept) => !concept.source_context || !hiddenSources.includes(concept.source_context)
     );
   }, [groupedConcepts, hiddenSources]);
+
+  // Permission check for write access
+  const canWrite = !permissionsLoading && hasPermission('semantic-models', FeatureAccessLevel.READ_WRITE);
 
   useEffect(() => {
     fetchData();
@@ -855,6 +874,89 @@ export default function SemanticModelsView() {
       return newSet;
     });
   }, []);
+
+  // Load entities for the link dialog based on entity type
+  const loadEntitiesForType = async (entityType: string) => {
+    try {
+      let endpoint = '';
+      switch (entityType) {
+        case 'data_product':
+          endpoint = '/api/data-products';
+          break;
+        case 'data_contract':
+          endpoint = '/api/data-contracts';
+          break;
+        case 'data_domain':
+          endpoint = '/api/data-domains';
+          break;
+        default:
+          return;
+      }
+
+      const res = await get<any[]>(endpoint);
+      setAvailableEntities(res.data || []);
+    } catch (error) {
+      console.error('Error loading entities:', error);
+      setAvailableEntities([]);
+    }
+  };
+
+  // Handle entity type selection in link dialog
+  const handleEntityTypeChange = (entityType: string) => {
+    setSelectedEntityType(entityType);
+    setSelectedEntityId('');
+    loadEntitiesForType(entityType);
+  };
+
+  // Handle linking concept to object
+  const handleLinkToObject = async () => {
+    if (!selectedConcept || !selectedEntityType || !selectedEntityId) {
+      toast({
+        title: t('common:toast.error'),
+        description: t('search:concepts.messages.assignError'),
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    try {
+      const res = await post('/api/semantic-links/', {
+        entity_id: selectedEntityId,
+        entity_type: selectedEntityType,
+        iri: selectedConcept.iri,
+      });
+
+      if (res.error) {
+        throw new Error(res.error);
+      }
+
+      const entityTypeLabel = selectedEntityType === 'data_product' ? t('search:concepts.assignDialog.dataProduct') :
+                              selectedEntityType === 'data_contract' ? t('search:concepts.assignDialog.dataContract') :
+                              t('search:concepts.assignDialog.dataDomain');
+
+      toast({
+        title: t('common:toast.success'),
+        description: t('search:concepts.messages.linkedSuccess', {
+          label: selectedConcept.label || selectedConcept.iri,
+          entityType: entityTypeLabel,
+          entityId: selectedEntityId
+        }),
+      });
+
+      setLinkDialogOpen(false);
+      setSelectedEntityType('');
+      setSelectedEntityId('');
+
+      // Refresh tagged assets by re-selecting the concept
+      await handleSelectConcept(selectedConcept);
+    } catch (error: any) {
+      toast({
+        title: t('common:toast.error'),
+        description: error.message || t('search:concepts.messages.assignFailed'),
+        variant: 'destructive'
+      });
+    }
+  };
 
   const renderLineage = (hierarchy: ConceptHierarchy, selectedConcept: OntologyConcept | null = null) => {
     const nodes: Node[] = [];
@@ -1392,6 +1494,21 @@ export default function SemanticModelsView() {
                 {/* Tagged Assets Section */}
                 <div className="border rounded-lg p-4">
                   <TaggedAssetsView concept={selectedConcept} />
+                  
+                  {/* Link Object Button - only visible with write access */}
+                  {canWrite && (
+                    <div className="pt-4 mt-4 border-t">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setLinkDialogOpen(true)}
+                        disabled={!selectedConcept}
+                      >
+                        <Link2 className="h-4 w-4 mr-2" />
+                        {t('search:concepts.assignToConcept')}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1406,6 +1523,75 @@ export default function SemanticModelsView() {
         </div>
       </div>
       )}
+
+      {/* Link Object Dialog */}
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('search:concepts.assignDialog.title')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {selectedConcept && (
+              <div className="text-sm">
+                <p className="font-medium">{selectedConcept.label || selectedConcept.iri.split(/[/#]/).pop()}</p>
+                <p className="text-muted-foreground font-mono text-xs">{selectedConcept.iri}</p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('search:concepts.assignDialog.entityType')}</label>
+              <Select value={selectedEntityType} onValueChange={handleEntityTypeChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('search:concepts.assignDialog.selectEntityType')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="data_product">{t('search:concepts.assignDialog.dataProduct')}</SelectItem>
+                  <SelectItem value="data_contract">{t('search:concepts.assignDialog.dataContract')}</SelectItem>
+                  <SelectItem value="data_domain">{t('search:concepts.assignDialog.dataDomain')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedEntityType && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {selectedEntityType === 'data_product' ? t('search:concepts.assignDialog.dataProduct') :
+                   selectedEntityType === 'data_contract' ? t('search:concepts.assignDialog.dataContract') :
+                   t('search:concepts.assignDialog.dataDomain')}
+                </label>
+                <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('search:concepts.assignDialog.selectEntity', { 
+                      entityType: selectedEntityType === 'data_product' ? t('search:concepts.assignDialog.dataProduct') :
+                                  selectedEntityType === 'data_contract' ? t('search:concepts.assignDialog.dataContract') :
+                                  t('search:concepts.assignDialog.dataDomain')
+                    })} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableEntities.map((entity) => (
+                      <SelectItem key={entity.id} value={entity.id}>
+                        {entity.name || entity.info?.title || entity.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="flex justify-end space-x-2 pt-4">
+              <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>
+                {t('common:actions.cancel')}
+              </Button>
+              <Button
+                onClick={handleLinkToObject}
+                disabled={!selectedEntityType || !selectedEntityId}
+              >
+                {t('common:actions.assign')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

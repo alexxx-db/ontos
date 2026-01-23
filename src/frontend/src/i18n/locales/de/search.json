@@ -74,9 +74,9 @@
     "noRelatedProperties": "Keine verwandten Eigenschaften gefunden.",
     "linkedCatalogObjects": "Verknüpfte Katalog-Objekte",
     "noCatalogObjects": "Keine Katalog-Objekte zugewiesen.",
-    "assignToObject": "Objekt zuweisen",
+    "assignToConcept": "Konzept zuweisen",
     "assignDialog": {
-      "title": "Konzept einem Objekt zuweisen",
+      "title": "Objekt einem Konzept zuweisen",
       "entityType": "Entitätstyp",
       "selectEntityType": "Entitätstyp auswählen...",
       "dataProduct": "Datenprodukt",

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
-import { Shapes, Columns2, FileText, Package, Globe, X } from 'lucide-react';
+import { Shapes, Columns2, FileText, Package, Globe, X, Link2 } from 'lucide-react';
 
 type ConceptItem = { value: string; label: string; type: 'class' };
 type Neighbor = {
@@ -600,20 +600,21 @@ export default function ConceptsSearch({
             </Card>
           </div>
 
-          {/* Assign to Object Button */}
+          {/* Assign to Concept Button */}
           <div className="pt-4">
             <Button
               variant="outline"
               onClick={() => setAssignDialogOpen(true)}
               disabled={!selectedConcept}
             >
-              {t('search:concepts.assignToObject')}
+              <Link2 className="h-4 w-4 mr-2" />
+              {t('search:concepts.assignToConcept')}
             </Button>
           </div>
         </div>
       )}
 
-      {/* Assign to Object Dialog */}
+      {/* Assign to Concept Dialog */}
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>

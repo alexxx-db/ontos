@@ -74,9 +74,9 @@
     "noRelatedProperties": "関連プロパティが見つかりません。",
     "linkedCatalogObjects": "リンクされたカタログオブジェクト",
     "noCatalogObjects": "カタログオブジェクトは割り当てられていません。",
-    "assignToObject": "オブジェクトに割り当て",
+    "assignToConcept": "概念に割り当て",
     "assignDialog": {
-      "title": "概念をオブジェクトに割り当て",
+      "title": "オブジェクトを概念に割り当て",
       "entityType": "エンティティタイプ",
       "selectEntityType": "エンティティタイプを選択...",
       "dataProduct": "データ製品",

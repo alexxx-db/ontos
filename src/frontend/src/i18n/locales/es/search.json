@@ -74,9 +74,9 @@
     "noRelatedProperties": "No se encontraron propiedades relacionadas.",
     "linkedCatalogObjects": "Objetos de Catálogo Vinculados",
     "noCatalogObjects": "No hay objetos de catálogo asignados.",
-    "assignToObject": "Asignar a Objeto",
+    "assignToConcept": "Asignar a Concepto",
     "assignDialog": {
-      "title": "Asignar Concepto a Objeto",
+      "title": "Asignar Objeto a Concepto",
       "entityType": "Tipo de Entidad",
       "selectEntityType": "Seleccionar tipo de entidad...",
       "dataProduct": "Producto de Datos",

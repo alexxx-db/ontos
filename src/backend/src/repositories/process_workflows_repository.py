@@ -382,6 +382,122 @@ class WorkflowExecutionRepository:
         db.refresh(db_step_exec)
         return db_step_exec
 
+    def cancel(
+        self,
+        db: Session,
+        execution_id: str,
+        *,
+        cancelled_by: Optional[str] = None,
+    ) -> Optional[WorkflowExecutionDb]:
+        """Cancel a running or paused execution."""
+        from datetime import datetime
+        
+        db_execution = db.get(WorkflowExecutionDb, execution_id)
+        if not db_execution:
+            return None
+        
+        # Only cancel if running or paused
+        if db_execution.status not in ('running', 'paused'):
+            logger.warning(f"Cannot cancel execution {execution_id} with status {db_execution.status}")
+            return None
+        
+        db_execution.status = 'cancelled'
+        db_execution.error_message = f"Cancelled by {cancelled_by or 'admin'}"
+        db_execution.finished_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(db_execution)
+        return db_execution
+
+    def delete(self, db: Session, execution_id: str) -> bool:
+        """Delete an execution and its step executions."""
+        db_execution = db.get(WorkflowExecutionDb, execution_id)
+        if not db_execution:
+            return False
+        
+        # Delete step executions first (cascade should handle this, but be explicit)
+        db.query(WorkflowStepExecutionDb).filter(
+            WorkflowStepExecutionDb.execution_id == execution_id
+        ).delete()
+        
+        db.delete(db_execution)
+        db.commit()
+        return True
+
+    def delete_bulk(
+        self,
+        db: Session,
+        *,
+        older_than_days: Optional[int] = None,
+        status: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+    ) -> int:
+        """Delete multiple executions matching criteria. Returns count deleted."""
+        from datetime import datetime, timedelta
+        
+        query = db.query(WorkflowExecutionDb)
+        
+        if older_than_days is not None:
+            cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+            query = query.filter(WorkflowExecutionDb.started_at < cutoff)
+        
+        if status:
+            query = query.filter(WorkflowExecutionDb.status == status)
+        
+        if workflow_id:
+            query = query.filter(WorkflowExecutionDb.workflow_id == workflow_id)
+        
+        # Don't delete running or paused executions
+        query = query.filter(WorkflowExecutionDb.status.notin_(['running', 'paused']))
+        
+        # Get IDs to delete step executions
+        execution_ids = [e.id for e in query.all()]
+        
+        if execution_ids:
+            # Delete step executions
+            db.query(WorkflowStepExecutionDb).filter(
+                WorkflowStepExecutionDb.execution_id.in_(execution_ids)
+            ).delete(synchronize_session=False)
+            
+            # Delete executions
+            count = query.delete(synchronize_session=False)
+            db.commit()
+            return count
+        
+        return 0
+
+    def reset_for_retry(
+        self,
+        db: Session,
+        execution_id: str,
+    ) -> Optional[WorkflowExecutionDb]:
+        """Reset a failed execution to allow retry from the beginning."""
+        db_execution = db.get(WorkflowExecutionDb, execution_id)
+        if not db_execution:
+            return None
+        
+        # Only retry failed executions
+        if db_execution.status != 'failed':
+            logger.warning(f"Cannot retry execution {execution_id} with status {db_execution.status}")
+            return None
+        
+        # Delete step executions
+        db.query(WorkflowStepExecutionDb).filter(
+            WorkflowStepExecutionDb.execution_id == execution_id
+        ).delete()
+        
+        # Reset execution state
+        db_execution.status = 'running'
+        db_execution.current_step_id = None
+        db_execution.success_count = 0
+        db_execution.failure_count = 0
+        db_execution.error_message = None
+        db_execution.finished_at = None
+        
+        db.commit()
+        db.refresh(db_execution)
+        return db_execution
+
 
 # Global repository instances
 process_workflow_repo = ProcessWorkflowRepository()

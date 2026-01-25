@@ -26,6 +26,8 @@ import {
   Pause,
   AlertCircle,
   ArrowUpDown,
+  XCircle,
+  RotateCcw,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -116,6 +118,11 @@ export default function Workflows() {
   // Execution detail dialog state
   const [selectedExecution, setSelectedExecution] = useState<WorkflowExecution | null>(null);
   const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
+  
+  // Execution action states
+  const [deleteExecutionDialogOpen, setDeleteExecutionDialogOpen] = useState(false);
+  const [executionToDelete, setExecutionToDelete] = useState<WorkflowExecution | null>(null);
+  const [isActionInProgress, setIsActionInProgress] = useState(false);
 
   const loadWorkflows = useCallback(async () => {
     setIsLoadingWorkflows(true);
@@ -291,6 +298,98 @@ export default function Workflows() {
         variant: 'destructive',
       });
     }
+  };
+
+  // Execution administration handlers
+  const handleCancelExecution = async (execution: WorkflowExecution) => {
+    if (!canEdit) {
+      toast({
+        title: 'Permission Denied',
+        description: 'You do not have permission to cancel executions.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsActionInProgress(true);
+    try {
+      const response = await apiPost<{ message: string }>(`/api/workflows/executions/${execution.id}/cancel`, {});
+      if (response.data) {
+        toast({
+          title: t('common:toast.success'),
+          description: 'Execution cancelled successfully',
+        });
+        loadExecutions();
+      }
+    } catch (error) {
+      toast({
+        title: t('common:toast.error'),
+        description: 'Failed to cancel execution',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionInProgress(false);
+    }
+  };
+
+  const handleRetryExecution = async (execution: WorkflowExecution) => {
+    if (!canEdit) {
+      toast({
+        title: 'Permission Denied',
+        description: 'You do not have permission to retry executions.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsActionInProgress(true);
+    try {
+      const response = await apiPost<{ message: string }>(`/api/workflows/executions/${execution.id}/retry`, {});
+      if (response.data) {
+        toast({
+          title: t('common:toast.success'),
+          description: 'Execution retry started',
+        });
+        loadExecutions();
+      }
+    } catch (error) {
+      toast({
+        title: t('common:toast.error'),
+        description: 'Failed to retry execution',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionInProgress(false);
+    }
+  };
+
+  const handleDeleteExecution = async () => {
+    if (!executionToDelete) return;
+    
+    setIsActionInProgress(true);
+    try {
+      await apiDeleteApi(`/api/workflows/executions/${executionToDelete.id}`);
+      toast({
+        title: t('common:toast.success'),
+        description: 'Execution deleted successfully',
+      });
+      setDeleteExecutionDialogOpen(false);
+      setExecutionToDelete(null);
+      loadExecutions();
+    } catch (error) {
+      toast({
+        title: t('common:toast.error'),
+        description: 'Failed to delete execution',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionInProgress(false);
+    }
+  };
+
+  const openDeleteExecutionDialog = (execution: WorkflowExecution) => {
+    setExecutionToDelete(execution);
+    setDeleteExecutionDialogOpen(true);
   };
 
   const workflowColumns: ColumnDef<ProcessWorkflow>[] = [
@@ -516,6 +615,64 @@ export default function Workflows() {
         ) : null
       ),
     },
+    {
+      id: 'actions',
+      header: '',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const execution = row.original;
+        const canCancel = execution.status === 'running' || execution.status === 'paused';
+        const canRetry = execution.status === 'failed';
+        const canDelete = execution.status !== 'running' && execution.status !== 'paused';
+        
+        if (!canEdit) return null;
+        
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {canCancel && (
+                <DropdownMenuItem 
+                  onClick={() => handleCancelExecution(execution)}
+                  disabled={isActionInProgress}
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Cancel
+                </DropdownMenuItem>
+              )}
+              {canRetry && (
+                <DropdownMenuItem 
+                  onClick={() => handleRetryExecution(execution)}
+                  disabled={isActionInProgress}
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Retry
+                </DropdownMenuItem>
+              )}
+              {canDelete && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={() => openDeleteExecutionDialog(execution)}
+                    className="text-destructive focus:text-destructive"
+                    disabled={isActionInProgress}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
   ];
 
   // Stats
@@ -700,6 +857,49 @@ export default function Workflows() {
         open={executionDialogOpen}
         onOpenChange={setExecutionDialogOpen}
       />
+
+      {/* Delete Execution Confirmation Dialog */}
+      <Dialog open={deleteExecutionDialogOpen} onOpenChange={setDeleteExecutionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Execution</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this workflow execution? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {executionToDelete && (
+            <div className="py-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">Workflow:</span>
+                <span className="text-sm text-muted-foreground">{executionToDelete.workflow_name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">Status:</span>
+                {getStatusBadge(executionToDelete.status)}
+              </div>
+              {executionToDelete.entity_name && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">Entity:</span>
+                  <span className="text-sm text-muted-foreground">{executionToDelete.entity_name}</span>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteExecutionDialogOpen(false)}>
+              {t('common:actions.cancel')}
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteExecution} 
+              disabled={isActionInProgress}
+            >
+              {isActionInProgress && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

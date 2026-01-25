@@ -702,6 +702,247 @@ async def handle_workflow_approval(
         raise HTTPException(status_code=500, detail="Failed to handle approval")
 
 
+# ============================================================================
+# Execution Administration Endpoints
+# ============================================================================
+
+@router.post("/executions/{execution_id}/cancel")
+async def cancel_execution(
+    execution_id: str,
+    request: Request,
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('process-workflows', FeatureAccessLevel.ADMIN)),
+) -> Dict[str, Any]:
+    """Cancel a running or paused workflow execution.
+    
+    Requires ADMIN permission. Running and paused executions can be cancelled.
+    """
+    user_email = getattr(request.state, 'user_email', None)
+    
+    result = workflow_execution_repo.cancel(db, execution_id, cancelled_by=user_email)
+    
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="Execution not found or cannot be cancelled (must be running or paused)"
+        )
+    
+    logger.info(f"Execution {execution_id} cancelled by {user_email}")
+    
+    return {
+        'execution_id': result.id,
+        'status': result.status,
+        'message': 'Execution cancelled successfully',
+    }
+
+
+@router.post("/executions/{execution_id}/retry")
+async def retry_execution(
+    execution_id: str,
+    request: Request,
+    db: DBSessionDep,
+    executor: WorkflowExecutor = Depends(get_workflow_executor),
+    _: bool = Depends(PermissionChecker('process-workflows', FeatureAccessLevel.ADMIN)),
+) -> Dict[str, Any]:
+    """Retry a failed workflow execution from the beginning.
+    
+    Requires ADMIN permission. Only failed executions can be retried.
+    Resets the execution state and re-runs all steps.
+    """
+    # Reset the execution
+    reset_result = workflow_execution_repo.reset_for_retry(db, execution_id)
+    
+    if not reset_result:
+        raise HTTPException(
+            status_code=404,
+            detail="Execution not found or cannot be retried (must be failed)"
+        )
+    
+    # Re-execute the workflow
+    try:
+        workflow = process_workflow_repo.get(db, reset_result.workflow_id)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Associated workflow not found")
+        
+        # Get trigger context to re-execute
+        trigger_context = json.loads(reset_result.trigger_context) if reset_result.trigger_context else {}
+        
+        result = executor.execute_workflow(
+            workflow=workflow,
+            entity_type=trigger_context.get('entity_type', 'unknown'),
+            entity_id=trigger_context.get('entity_id', ''),
+            entity_name=trigger_context.get('entity_name'),
+            user_email=trigger_context.get('user_email'),
+            entity=trigger_context.get('entity', {}),
+            execution_id=execution_id,  # Reuse the same execution record
+        )
+        
+        logger.info(f"Execution {execution_id} retried, new status: {result.status}")
+        
+        return {
+            'execution_id': result.id,
+            'status': result.status.value,
+            'message': 'Execution retry initiated',
+        }
+    except Exception as e:
+        logger.exception(f"Error retrying execution {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retry execution: {str(e)}")
+
+
+@router.delete("/executions/{execution_id}")
+async def delete_execution(
+    execution_id: str,
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('process-workflows', FeatureAccessLevel.ADMIN)),
+) -> Dict[str, Any]:
+    """Delete a workflow execution.
+    
+    Requires ADMIN permission. Running and paused executions should be
+    cancelled before deletion.
+    """
+    # Check if execution exists and its status
+    execution = workflow_execution_repo.get(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    
+    if execution.status in ('running', 'paused'):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete {execution.status} execution. Cancel it first."
+        )
+    
+    success = workflow_execution_repo.delete(db, execution_id)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete execution")
+    
+    logger.info(f"Execution {execution_id} deleted")
+    
+    return {
+        'message': 'Execution deleted successfully',
+        'execution_id': execution_id,
+    }
+
+
+@router.delete("/executions")
+async def delete_executions_bulk(
+    db: DBSessionDep,
+    older_than_days: Optional[int] = Query(None, description="Delete executions older than X days"),
+    status: Optional[str] = Query(None, description="Filter by status (failed, succeeded, cancelled)"),
+    workflow_id: Optional[str] = Query(None, description="Filter by workflow ID"),
+    _: bool = Depends(PermissionChecker('process-workflows', FeatureAccessLevel.ADMIN)),
+) -> Dict[str, Any]:
+    """Bulk delete workflow executions matching criteria.
+    
+    Requires ADMIN permission. Running and paused executions are never deleted.
+    At least one filter parameter is required.
+    """
+    if older_than_days is None and status is None and workflow_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one filter parameter is required (older_than_days, status, or workflow_id)"
+        )
+    
+    # Validate status if provided
+    valid_statuses = ['failed', 'succeeded', 'cancelled']
+    if status and status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+        )
+    
+    count = workflow_execution_repo.delete_bulk(
+        db,
+        older_than_days=older_than_days,
+        status=status,
+        workflow_id=workflow_id,
+    )
+    
+    logger.info(f"Bulk delete: {count} executions deleted (older_than_days={older_than_days}, status={status}, workflow_id={workflow_id})")
+    
+    return {
+        'message': f'{count} executions deleted',
+        'count': count,
+    }
+
+
+@router.get("/executions/{execution_id}")
+async def get_execution(
+    execution_id: str,
+    db: DBSessionDep,
+    _: bool = Depends(PermissionChecker('process-workflows', FeatureAccessLevel.READ_ONLY)),
+) -> Dict[str, Any]:
+    """Get detailed information about a workflow execution.
+    
+    Returns the execution with all step execution details.
+    """
+    execution = workflow_execution_repo.get(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    
+    # Get workflow for additional context
+    workflow = process_workflow_repo.get(db, execution.workflow_id) if execution.workflow_id else None
+    
+    # Parse trigger context
+    trigger_context = {}
+    if execution.trigger_context:
+        try:
+            trigger_context = json.loads(execution.trigger_context)
+        except json.JSONDecodeError:
+            pass
+    
+    # Get current step name
+    current_step_name = None
+    if execution.current_step_id and workflow and workflow.steps:
+        for step in workflow.steps:
+            if step.step_id == execution.current_step_id:
+                current_step_name = step.name or execution.current_step_id
+                break
+    
+    # Build step executions list
+    step_executions = []
+    for se in (execution.step_executions or []):
+        step_executions.append({
+            'id': se.id,
+            'step_id': se.step_id,
+            'status': se.status,
+            'passed': se.passed,
+            'result_data': json.loads(se.result_data) if se.result_data else None,
+            'error_message': se.error_message,
+            'duration_ms': se.duration_ms,
+            'started_at': se.started_at.isoformat() if se.started_at else None,
+            'finished_at': se.finished_at.isoformat() if se.finished_at else None,
+        })
+    
+    return {
+        'id': execution.id,
+        'workflow_id': execution.workflow_id,
+        'workflow_name': workflow.name if workflow else None,
+        'status': execution.status,
+        'current_step_id': execution.current_step_id,
+        'current_step_name': current_step_name,
+        'success_count': execution.success_count,
+        'failure_count': execution.failure_count,
+        'error_message': execution.error_message,
+        'triggered_by': execution.triggered_by,
+        'started_at': execution.started_at.isoformat() if execution.started_at else None,
+        'finished_at': execution.finished_at.isoformat() if execution.finished_at else None,
+        'entity_type': trigger_context.get('entity_type'),
+        'entity_id': trigger_context.get('entity_id'),
+        'entity_name': trigger_context.get('entity_name'),
+        'step_executions': step_executions,
+        'workflow_steps': [
+            {
+                'step_id': s.step_id,
+                'name': s.name,
+                'step_type': s.step_type,
+                'order': s.order,
+            }
+            for s in (workflow.steps if workflow else [])
+        ],
+    }
+
+
 def register_routes(app):
     """Register workflow routes with the FastAPI app."""
     app.include_router(router)

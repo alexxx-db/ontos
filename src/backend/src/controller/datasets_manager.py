@@ -748,9 +748,14 @@ class DatasetsManager(DeliveryMixin, SearchableAsset):
             
             request_id = str(uuid4())
             
+            # Update dataset status to "in_review"
+            db_dataset.status = "in_review"
+            self._db.commit()
+            self._db.refresh(db_dataset)
+            
             logger.info(
                 f"Steward review requested for dataset {dataset_id} by {requested_by}. "
-                f"Request ID: {request_id}"
+                f"Status changed to 'in_review'. Request ID: {request_id}"
             )
             
             # Fire the ON_REQUEST_REVIEW trigger

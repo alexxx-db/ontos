@@ -259,6 +259,7 @@ export interface WorkflowExecution {
   trigger_context?: TriggerContext;
   status: ExecutionStatus;
   current_step_id?: string;
+  current_step_name?: string;
   success_count: number;
   failure_count: number;
   error_message?: string;
@@ -267,6 +268,9 @@ export interface WorkflowExecution {
   triggered_by?: string;
   step_executions: WorkflowStepExecutionResult[];
   workflow_name?: string;
+  entity_type?: string;
+  entity_id?: string;
+  entity_name?: string;
 }
 
 // Step type schema (for dynamic form generation)

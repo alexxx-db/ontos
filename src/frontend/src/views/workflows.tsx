@@ -431,6 +431,23 @@ export default function Workflows() {
       ),
     },
     {
+      accessorKey: 'entity_name',
+      header: 'Entity',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const { entity_type, entity_name, entity_id } = row.original;
+        if (!entity_type && !entity_name) return <span className="text-muted-foreground">-</span>;
+        return (
+          <div className="flex flex-col">
+            <span className="text-sm font-medium">{entity_name || entity_id || '-'}</span>
+            {entity_type && (
+              <span className="text-xs text-muted-foreground capitalize">{entity_type}</span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       accessorKey: 'status',
       header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
@@ -439,6 +456,21 @@ export default function Workflows() {
         </Button>
       ),
       cell: ({ row }) => getStatusBadge(row.original.status),
+    },
+    {
+      accessorKey: 'current_step_name',
+      header: 'Current Step',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const { status, current_step_name, current_step_id } = row.original;
+        if (status !== 'paused' && status !== 'running') return null;
+        const stepDisplay = current_step_name || current_step_id || '-';
+        return (
+          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30">
+            {stepDisplay}
+          </Badge>
+        );
+      },
     },
     {
       accessorKey: 'started_at',
@@ -450,12 +482,14 @@ export default function Workflows() {
       ),
       cell: ({ row }) => (
         <span className="text-sm text-muted-foreground">
-          {new Date(row.original.started_at).toLocaleString()}
+          {row.original.started_at 
+            ? new Date(row.original.started_at).toLocaleString() 
+            : '-'}
         </span>
       ),
     },
     {
-      accessorKey: 'completed_at',
+      accessorKey: 'finished_at',
       header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Completed
@@ -464,8 +498,8 @@ export default function Workflows() {
       ),
       cell: ({ row }) => (
         <span className="text-sm text-muted-foreground">
-          {row.original.completed_at 
-            ? new Date(row.original.completed_at).toLocaleString() 
+          {row.original.finished_at 
+            ? new Date(row.original.finished_at).toLocaleString() 
             : '-'}
         </span>
       ),

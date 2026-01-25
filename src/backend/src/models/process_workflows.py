@@ -388,6 +388,7 @@ class WorkflowExecution(WorkflowExecutionBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: ExecutionStatus = Field(default=ExecutionStatus.PENDING)
     current_step_id: Optional[str] = None
+    current_step_name: Optional[str] = Field(None, description="Name of the current step (for display)")
     success_count: int = Field(default=0)
     failure_count: int = Field(default=0)
     error_message: Optional[str] = None
@@ -398,6 +399,9 @@ class WorkflowExecution(WorkflowExecutionBase):
     
     # Include workflow details for display
     workflow_name: Optional[str] = None
+    entity_type: Optional[str] = Field(None, description="Type of entity this workflow is for")
+    entity_id: Optional[str] = Field(None, description="ID of the entity")
+    entity_name: Optional[str] = Field(None, description="Name of the entity")
 
     class Config:
         from_attributes = True

@@ -1068,11 +1068,84 @@ class WorkflowExecutor:
                 error_message=error_message,
                 finished_at=datetime.utcnow().isoformat(),
             )
+            
+            # Handle entity status updates based on workflow outcome
+            self._handle_workflow_completion(
+                trigger_context=trigger_context,
+                workflow=workflow,
+                succeeded=(final_status == ExecutionStatus.SUCCEEDED),
+            )
         
         # Return updated execution
         db_execution = workflow_execution_repo.get(self._db, execution_id)
         return self._db_to_model(db_execution, workflow.name)
 
+    def _handle_workflow_completion(
+        self,
+        trigger_context: Optional[TriggerContext],
+        workflow: ProcessWorkflow,
+        succeeded: bool,
+    ) -> None:
+        """Handle entity status updates when a workflow completes.
+        
+        Based on the trigger type and entity type, update the entity's status
+        to reflect the workflow outcome (e.g., dataset -> "active" on approval).
+        """
+        if not trigger_context:
+            return
+        
+        entity_type = trigger_context.entity_type
+        entity_id = trigger_context.entity_id
+        trigger_type = workflow.trigger.trigger_type if workflow.trigger else None
+        
+        if not entity_type or not entity_id or not trigger_type:
+            return
+        
+        try:
+            # Handle dataset review completion
+            if entity_type == 'dataset' and trigger_type in ('on_request_review', 'ON_REQUEST_REVIEW'):
+                from src.repositories.datasets_repository import dataset_repo
+                db_dataset = dataset_repo.get(db=self._db, id=entity_id)
+                if db_dataset:
+                    if succeeded:
+                        db_dataset.status = 'active'
+                        logger.info(f"Dataset {entity_id} status updated to 'active' after review approval")
+                    else:
+                        # Revert to draft on rejection
+                        db_dataset.status = 'draft'
+                        logger.info(f"Dataset {entity_id} status reverted to 'draft' after review rejection")
+                    self._db.commit()
+                    
+            # Handle data contract deploy completion
+            elif entity_type == 'data_contract' and trigger_type in ('on_request_publish', 'ON_REQUEST_PUBLISH'):
+                from src.repositories.data_contracts_repository import data_contract_repo
+                db_contract = data_contract_repo.get(db=self._db, id=entity_id)
+                if db_contract:
+                    if succeeded:
+                        db_contract.status = 'deployed'
+                        logger.info(f"Data contract {entity_id} status updated to 'deployed' after approval")
+                    else:
+                        db_contract.status = 'draft'
+                        logger.info(f"Data contract {entity_id} status reverted to 'draft' after rejection")
+                    self._db.commit()
+                    
+            # Handle data product activation completion
+            elif entity_type == 'data_product' and trigger_type in ('on_request_review', 'ON_REQUEST_REVIEW'):
+                from src.repositories.data_products_repository import data_product_repo
+                db_product = data_product_repo.get(db=self._db, id=entity_id)
+                if db_product:
+                    if succeeded:
+                        db_product.status = 'active'
+                        logger.info(f"Data product {entity_id} status updated to 'active' after approval")
+                    else:
+                        db_product.status = 'draft'
+                        logger.info(f"Data product {entity_id} status reverted to 'draft' after rejection")
+                    self._db.commit()
+                    
+        except Exception as e:
+            logger.error(f"Error updating entity status after workflow completion: {e}", exc_info=True)
+            # Don't fail the workflow for status update issues
+    
     def _execute_step(self, step: WorkflowStep, context: StepContext) -> StepResult:
         """Execute a single step."""
         step_type = step.step_type.value if hasattr(step.step_type, 'value') else step.step_type

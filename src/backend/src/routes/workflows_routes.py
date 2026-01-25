@@ -93,12 +93,40 @@ async def list_executions(
     # Convert to response models
     result = []
     for exe in executions:
-        workflow_name = exe.workflow.name if exe.workflow else None
+        workflow = exe.workflow
+        workflow_name = workflow.name if workflow else None
+        
+        # Extract entity info from trigger_context
+        entity_type = None
+        entity_id = None
+        entity_name = None
+        if exe.trigger_context:
+            try:
+                tc = json.loads(exe.trigger_context) if isinstance(exe.trigger_context, str) else exe.trigger_context
+                entity_type = tc.get('entity_type')
+                entity_id = tc.get('entity_id')
+                entity_name = tc.get('entity_name')
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Resolve current step name from workflow definition
+        current_step_name = None
+        if exe.current_step_id and workflow and workflow.steps:
+            try:
+                steps = json.loads(workflow.steps) if isinstance(workflow.steps, str) else workflow.steps
+                for step in steps:
+                    if step.get('id') == exe.current_step_id:
+                        current_step_name = step.get('name', exe.current_step_id)
+                        break
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
         result.append(WorkflowExecution(
             id=exe.id,
             workflow_id=exe.workflow_id,
             status=exe.status,
             current_step_id=exe.current_step_id,
+            current_step_name=current_step_name,
             success_count=exe.success_count,
             failure_count=exe.failure_count,
             error_message=exe.error_message,
@@ -106,6 +134,9 @@ async def list_executions(
             finished_at=exe.finished_at,
             triggered_by=exe.triggered_by,
             workflow_name=workflow_name,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_name=entity_name,
         ))
     
     return WorkflowExecutionListResponse(executions=result, total=len(result))

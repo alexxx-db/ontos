@@ -45,20 +45,11 @@ import { FeatureAccessLevel } from '@/types/settings';
 import type { 
   ProcessWorkflow, 
   WorkflowListResponse,
+  WorkflowExecution,
   ExecutionStatus,
 } from '@/types/process-workflow';
 import { getTriggerDisplay } from '@/lib/workflow-labels';
-
-interface WorkflowExecution {
-  id: string;
-  workflow_id: string;
-  workflow_name: string;
-  status: ExecutionStatus;
-  started_at: string;
-  completed_at?: string;
-  trigger_context?: Record<string, unknown>;
-  error_message?: string;
-}
+import { WorkflowExecutionDialog } from '@/components/workflows/workflow-execution-dialog';
 
 interface WorkflowExecutionsResponse {
   executions: WorkflowExecution[];
@@ -121,6 +112,10 @@ export default function Workflows() {
   // Executions state
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
   const [isLoadingExecutions, setIsLoadingExecutions] = useState(true);
+  
+  // Execution detail dialog state
+  const [selectedExecution, setSelectedExecution] = useState<WorkflowExecution | null>(null);
+  const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
 
   const loadWorkflows = useCallback(async () => {
     setIsLoadingWorkflows(true);
@@ -657,6 +652,10 @@ export default function Workflows() {
               data={executions}
               searchColumn="workflow_name"
               storageKey="workflow-executions-sort"
+              onRowClick={(row) => {
+                setSelectedExecution(row.original);
+                setExecutionDialogOpen(true);
+              }}
             />
           )}
         </CardContent>
@@ -689,6 +688,13 @@ export default function Workflows() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Workflow Execution Detail Dialog */}
+      <WorkflowExecutionDialog
+        execution={selectedExecution}
+        open={executionDialogOpen}
+        onOpenChange={setExecutionDialogOpen}
+      />
     </div>
   );
 }

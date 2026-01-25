@@ -25,7 +25,7 @@ import {
   Play,
   Pause,
   AlertCircle,
-  ArrowUpDown,
+  ChevronDown,
   XCircle,
   RotateCcw,
 } from 'lucide-react';
@@ -52,6 +52,7 @@ import type {
 } from '@/types/process-workflow';
 import { getTriggerDisplay } from '@/lib/workflow-labels';
 import { WorkflowExecutionDialog } from '@/components/workflows/workflow-execution-dialog';
+import { RelativeDate } from '@/components/common/relative-date';
 
 interface WorkflowExecutionsResponse {
   executions: WorkflowExecution[];
@@ -272,7 +273,7 @@ export default function Workflows() {
     navigate(`/workflows/${workflow.id}`);
   };
 
-  const handleLoadDefaultWorkflows = async () => {
+  const handleLoadDefaultWorkflows = async (updateExisting: boolean = false) => {
     if (!canEdit) {
       toast({
         title: 'Permission Denied',
@@ -283,7 +284,10 @@ export default function Workflows() {
     }
     
     try {
-      const response = await apiPost<{ message: string }>('/api/workflows/load-defaults', {});
+      const response = await apiPost<{ message: string; created: number; updated: number; skipped: number }>(
+        `/api/workflows/load-defaults?update_existing=${updateExisting}`,
+        {}
+      );
       if (response.data) {
         toast({
           title: t('common:toast.success'),
@@ -392,13 +396,82 @@ export default function Workflows() {
     setDeleteExecutionDialogOpen(true);
   };
 
+  // Force approve/reject handlers for paused workflows (admin override)
+  const handleForceApprove = async (execution: WorkflowExecution) => {
+    if (!canEdit) {
+      toast({
+        title: 'Permission Denied',
+        description: 'You do not have permission to override workflow approvals.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsActionInProgress(true);
+    try {
+      const response = await apiPost<{ message: string }>(
+        `/api/workflows/executions/${execution.id}/resume`,
+        { approved: true, message: 'Force approved by administrator' }
+      );
+      if (response.data) {
+        toast({
+          title: t('common:toast.success'),
+          description: 'Workflow approved and resumed',
+        });
+        loadExecutions();
+      }
+    } catch (error) {
+      toast({
+        title: t('common:toast.error'),
+        description: 'Failed to approve workflow',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionInProgress(false);
+    }
+  };
+
+  const handleForceReject = async (execution: WorkflowExecution) => {
+    if (!canEdit) {
+      toast({
+        title: 'Permission Denied',
+        description: 'You do not have permission to override workflow approvals.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsActionInProgress(true);
+    try {
+      const response = await apiPost<{ message: string }>(
+        `/api/workflows/executions/${execution.id}/resume`,
+        { approved: false, message: 'Force rejected by administrator' }
+      );
+      if (response.data) {
+        toast({
+          title: t('common:toast.success'),
+          description: 'Workflow rejected and resumed',
+        });
+        loadExecutions();
+      }
+    } catch (error) {
+      toast({
+        title: t('common:toast.error'),
+        description: 'Failed to reject workflow',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsActionInProgress(false);
+    }
+  };
+
   const workflowColumns: ColumnDef<ProcessWorkflow>[] = [
     {
       accessorKey: 'name',
       header: ({ column }: { column: Column<ProcessWorkflow, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           {t('common:labels.name')}
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => (
@@ -421,7 +494,7 @@ export default function Workflows() {
       header: ({ column }: { column: Column<ProcessWorkflow, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           {t('common:labels.type')}
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => (
@@ -454,7 +527,7 @@ export default function Workflows() {
       header: ({ column }: { column: Column<ProcessWorkflow, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           {t('common:labels.status')}
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => (
@@ -519,7 +592,7 @@ export default function Workflows() {
       header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Workflow
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => (
@@ -551,7 +624,7 @@ export default function Workflows() {
       header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           {t('common:labels.status')}
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => getStatusBadge(row.original.status),
@@ -576,15 +649,14 @@ export default function Workflows() {
       header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Started
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => (
-        <span className="text-sm text-muted-foreground">
-          {row.original.started_at 
-            ? new Date(row.original.started_at).toLocaleString() 
-            : '-'}
-        </span>
+        <RelativeDate 
+          date={row.original.started_at} 
+          className="text-sm text-muted-foreground" 
+        />
       ),
     },
     {
@@ -592,15 +664,14 @@ export default function Workflows() {
       header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
         <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Completed
-          <ArrowUpDown className="ml-2 h-4 w-4" />
+          <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
       cell: ({ row }) => (
-        <span className="text-sm text-muted-foreground">
-          {row.original.finished_at 
-            ? new Date(row.original.finished_at).toLocaleString() 
-            : '-'}
-        </span>
+        <RelativeDate 
+          date={row.original.finished_at} 
+          className="text-sm text-muted-foreground" 
+        />
       ),
     },
     {
@@ -622,8 +693,11 @@ export default function Workflows() {
       cell: ({ row }) => {
         const execution = row.original;
         const canCancel = execution.status === 'running' || execution.status === 'paused';
-        const canRetry = execution.status === 'failed';
+        const canRetry = execution.status === 'failed' || execution.status === 'cancelled';
         const canDelete = execution.status !== 'running' && execution.status !== 'paused';
+        const isPaused = execution.status === 'paused';
+        // Show separator before delete only if there are other actions above it
+        const hasActionsAboveDelete = isPaused || canCancel || canRetry;
         
         if (!canEdit) return null;
         
@@ -637,6 +711,24 @@ export default function Workflows() {
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {isPaused && (
+                <>
+                  <DropdownMenuItem 
+                    onClick={() => handleForceApprove(execution)}
+                    disabled={isActionInProgress}
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                    Force Approve
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => handleForceReject(execution)}
+                    disabled={isActionInProgress}
+                  >
+                    <XCircle className="h-4 w-4 mr-2 text-red-600" />
+                    Force Reject
+                  </DropdownMenuItem>
+                </>
+              )}
               {canCancel && (
                 <DropdownMenuItem 
                   onClick={() => handleCancelExecution(execution)}
@@ -657,7 +749,7 @@ export default function Workflows() {
               )}
               {canDelete && (
                 <>
-                  <DropdownMenuSeparator />
+                  {hasActionsAboveDelete && <DropdownMenuSeparator />}
                   <DropdownMenuItem 
                     onClick={() => openDeleteExecutionDialog(execution)}
                     className="text-destructive focus:text-destructive"
@@ -690,10 +782,26 @@ export default function Workflows() {
         </h1>
         {canEdit && (
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleLoadDefaultWorkflows}>
-              <Clock className="h-4 w-4 mr-2" />
-              Load Defaults
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <Clock className="h-4 w-4 mr-2" />
+                  Load Defaults
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Default Workflows</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => handleLoadDefaultWorkflows(false)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Load New Only
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleLoadDefaultWorkflows(true)}>
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Reload All Defaults
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button onClick={() => navigate('/workflows/new')}>
               <Plus className="h-4 w-4 mr-2" />
               Create Workflow

@@ -113,7 +113,7 @@ class ApprovalStepHandler(StepHandler):
     def execute(self, context: StepContext) -> StepResult:
         from uuid import uuid4
         from src.models.notifications import Notification, NotificationType
-        from src.repositories.notifications_repository import notification_repo
+        from src.repositories.notification_repository import notification_repo
         
         approvers = self._config.get('approvers', '')
         timeout_days = self._config.get('timeout_days', 7)
@@ -231,7 +231,7 @@ class NotificationStepHandler(StepHandler):
     def execute(self, context: StepContext) -> StepResult:
         from uuid import uuid4
         from src.models.notifications import Notification, NotificationType
-        from src.repositories.notifications_repository import notification_repo
+        from src.repositories.notification_repository import notification_repo
         
         recipients = self._config.get('recipients', '')
         template = self._config.get('template', '')

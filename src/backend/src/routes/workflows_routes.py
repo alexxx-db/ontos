@@ -590,7 +590,7 @@ async def handle_workflow_approval(
             )
         
         # Mark the notification as handled
-        from src.repositories.notifications_repository import notification_repo
+        from src.repositories.notification_repository import notification_repo
         from src.db_models.notifications import NotificationDb
         
         # Find and mark notifications for this execution as read

@@ -56,6 +56,7 @@ class NotificationsManager:
 
         user_groups = set(user_info.groups or [])
         user_email = user_info.email
+        user_name = user_info.username  # Also check username for matching
 
         # Pre-fetch all role definitions for efficient lookup
         try:
@@ -73,6 +74,8 @@ class NotificationsManager:
             if not recipient: # Broadcast
                 is_recipient = True
             elif user_email and recipient == user_email: # Direct email match
+                is_recipient = True
+            elif user_name and recipient == user_name: # Direct username match
                 is_recipient = True
             elif recipient in role_map: # Check if recipient matches a defined role name
                  target_role = role_map[recipient]

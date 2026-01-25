@@ -25,6 +25,7 @@ import {
   Play,
   Pause,
   AlertCircle,
+  ArrowUpDown,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -35,7 +36,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, Column } from "@tanstack/react-table";
 import { useApi } from '@/hooks/use-api';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { DataTable } from '@/components/ui/data-table';
@@ -300,7 +301,12 @@ export default function Workflows() {
   const workflowColumns: ColumnDef<ProcessWorkflow>[] = [
     {
       accessorKey: 'name',
-      header: t('common:labels.name'),
+      header: ({ column }: { column: Column<ProcessWorkflow, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          {t('common:labels.name')}
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <GitBranch className="h-4 w-4 text-muted-foreground" />
@@ -312,8 +318,13 @@ export default function Workflows() {
       ),
     },
     {
-      accessorKey: 'trigger',
-      header: t('common:labels.type'),
+      accessorKey: 'trigger.type',
+      header: ({ column }: { column: Column<ProcessWorkflow, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          {t('common:labels.type')}
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => (
         <span className="text-sm text-muted-foreground">
           {getTriggerDisplay(row.original.trigger, t)}
@@ -323,6 +334,7 @@ export default function Workflows() {
     {
       accessorKey: 'steps',
       header: 'Steps',
+      enableSorting: false,
       cell: ({ row }) => (
         <div className="flex items-center gap-1">
           {row.original.steps.slice(0, 4).map((step, i) => (
@@ -340,7 +352,12 @@ export default function Workflows() {
     },
     {
       accessorKey: 'is_active',
-      header: t('common:labels.status'),
+      header: ({ column }: { column: Column<ProcessWorkflow, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          {t('common:labels.status')}
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Switch
@@ -400,7 +417,12 @@ export default function Workflows() {
   const executionColumns: ColumnDef<WorkflowExecution>[] = [
     {
       accessorKey: 'workflow_name',
-      header: 'Workflow',
+      header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          Workflow
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <GitBranch className="h-4 w-4 text-muted-foreground" />
@@ -410,12 +432,22 @@ export default function Workflows() {
     },
     {
       accessorKey: 'status',
-      header: t('common:labels.status'),
+      header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          {t('common:labels.status')}
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => getStatusBadge(row.original.status),
     },
     {
       accessorKey: 'started_at',
-      header: 'Started',
+      header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          Started
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => (
         <span className="text-sm text-muted-foreground">
           {new Date(row.original.started_at).toLocaleString()}
@@ -424,7 +456,12 @@ export default function Workflows() {
     },
     {
       accessorKey: 'completed_at',
-      header: 'Completed',
+      header: ({ column }: { column: Column<WorkflowExecution, unknown> }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          Completed
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => (
         <span className="text-sm text-muted-foreground">
           {row.original.completed_at 
@@ -436,6 +473,7 @@ export default function Workflows() {
     {
       accessorKey: 'error_message',
       header: 'Error',
+      enableSorting: false,
       cell: ({ row }) => (
         row.original.error_message ? (
           <span className="text-sm text-destructive truncate max-w-[200px]" title={row.original.error_message}>

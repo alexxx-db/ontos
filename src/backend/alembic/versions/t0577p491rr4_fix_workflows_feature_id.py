@@ -25,7 +25,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Rename 'workflows' to 'process-workflows' in all role feature_permissions."""
+    """Rename 'workflows' to 'process-workflows' in all role feature_permissions.
+    
+    Note: feature_permissions is stored as TEXT containing JSON, not JSONB,
+    so we must cast to JSONB for JSON operations then back to TEXT.
+    """
     conn = op.get_bind()
     
     # Check if the app_roles table exists
@@ -42,9 +46,10 @@ def upgrade() -> None:
         return
     
     # Count affected rows before update
+    # Cast TEXT to JSONB for the ? operator
     result = conn.execute(sa.text("""
         SELECT COUNT(*) FROM app_roles 
-        WHERE feature_permissions ? 'workflows'
+        WHERE feature_permissions::jsonb ? 'workflows'
     """))
     affected_count = result.scalar()
     
@@ -52,21 +57,19 @@ def upgrade() -> None:
         # No roles with 'workflows' key - nothing to do
         return
     
-    # Rename 'workflows' key to 'process-workflows' in feature_permissions JSONB
-    # This uses PostgreSQL JSONB operators:
-    # - '?' checks if key exists
-    # - '->' extracts value by key
-    # - '-' removes a key
-    # - jsonb_set() adds/updates a key
+    # Rename 'workflows' key to 'process-workflows' in feature_permissions
+    # Cast TEXT->JSONB, perform JSON operations, cast back to TEXT
     conn.execute(sa.text("""
         UPDATE app_roles
-        SET feature_permissions = jsonb_set(
-            feature_permissions - 'workflows',
-            '{process-workflows}',
-            feature_permissions->'workflows'
-        ),
+        SET feature_permissions = (
+            jsonb_set(
+                feature_permissions::jsonb - 'workflows',
+                '{process-workflows}',
+                feature_permissions::jsonb->'workflows'
+            )
+        )::text,
         updated_at = NOW()
-        WHERE feature_permissions ? 'workflows'
+        WHERE feature_permissions::jsonb ? 'workflows'
     """))
     
     # Log the update (will appear in Alembic output)
@@ -95,14 +98,16 @@ def downgrade() -> None:
         return
     
     # Rename 'process-workflows' back to 'workflows'
+    # Cast TEXT->JSONB, perform JSON operations, cast back to TEXT
     conn.execute(sa.text("""
         UPDATE app_roles
-        SET feature_permissions = jsonb_set(
-            feature_permissions - 'process-workflows',
-            '{workflows}',
-            feature_permissions->'process-workflows'
-        ),
+        SET feature_permissions = (
+            jsonb_set(
+                feature_permissions::jsonb - 'process-workflows',
+                '{workflows}',
+                feature_permissions::jsonb->'process-workflows'
+            )
+        )::text,
         updated_at = NOW()
-        WHERE feature_permissions ? 'process-workflows'
+        WHERE feature_permissions::jsonb ? 'process-workflows'
     """))
-

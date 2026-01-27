@@ -100,6 +100,7 @@ async def create_comment(
 async def list_comments(
     entity_type: str,
     entity_id: str,
+    request: Request,
     db: DBSessionDep,
     current_user: CurrentUserDep,
     project_id: Optional[str] = Query(None, description="Filter by project context"),
@@ -117,7 +118,7 @@ async def list_comments(
         user_team_ids = [team.id for team in user_teams]
         
         # Get user's app role for role-based audience filtering
-        user_app_role = await get_user_team_role_overrides(current_user.email, user_groups, request=Request)
+        user_app_role = await get_user_team_role_overrides(current_user.email, user_groups, request=request)
         
         # Only admins can see deleted comments
         if include_deleted:
@@ -147,6 +148,7 @@ async def list_comments(
 async def get_entity_timeline_count(
     entity_type: str,
     entity_id: str,
+    request: Request,
     db: DBSessionDep,
     current_user: CurrentUserDep,
     project_id: Optional[str] = Query(None, description="Filter by project context"),
@@ -166,7 +168,7 @@ async def get_entity_timeline_count(
         # Get user's teams and app role
         user_teams = team_repo.get_teams_for_user(db, current_user.email, user_groups)
         user_team_ids = [team.id for team in user_teams]
-        user_app_role = await get_user_team_role_overrides(current_user.email, user_groups, request=Request)
+        user_app_role = await get_user_team_role_overrides(current_user.email, user_groups, request=request)
 
         if filter_type in ("all", "comments"):
             # Get comments count
@@ -212,6 +214,7 @@ async def get_entity_timeline_count(
 async def get_entity_timeline(
     entity_type: str,
     entity_id: str,
+    request: Request,
     db: DBSessionDep,
     current_user: CurrentUserDep,
     project_id: Optional[str] = Query(None, description="Filter by project context"),
@@ -232,7 +235,7 @@ async def get_entity_timeline(
         # Get user's teams and app role
         user_teams = team_repo.get_teams_for_user(db, current_user.email, user_groups)
         user_team_ids = [team.id for team in user_teams]
-        user_app_role = await get_user_team_role_overrides(current_user.email, user_groups, request=Request)
+        user_app_role = await get_user_team_role_overrides(current_user.email, user_groups, request=request)
         
         if filter_type in ("all", "comments"):
             # Get comments

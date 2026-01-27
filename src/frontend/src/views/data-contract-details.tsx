@@ -88,18 +88,21 @@ const createSchemaPropertyColumns = (
           <span className="font-mono font-medium">{property.name}</span>
           {links.length > 0 && (
             <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
-              {links.map((link, idx) => (
-                <span key={idx} className="inline-flex items-center gap-1">
-                  <Columns2 className="h-3 w-3" />
-                  <span
-                    className="cursor-pointer hover:underline"
-                    onClick={() => window.open(`/search/kg?path=${encodeURIComponent(link.iri)}`, '_blank')}
-                    title={link.iri}
-                  >
-                    {getLabel(link.iri, link.label)}
+              {links.map((link, idx) => {
+                const displayLabel = getLabel(link.iri, link.label)
+                return (
+                  <span key={idx} className="inline-flex items-center gap-1">
+                    <Columns2 className="h-3 w-3" />
+                    <span
+                      className="cursor-pointer hover:underline"
+                      onClick={() => window.open(`/data-catalog?concept=${encodeURIComponent(displayLabel)}`, '_blank')}
+                      title={link.iri}
+                    >
+                      {displayLabel}
+                    </span>
                   </span>
-                </span>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -1777,7 +1780,10 @@ export default function DataContractDetails() {
                             <Shapes className="h-3 w-3" />
                             <span
                               className="cursor-pointer hover:underline"
-                              onClick={() => window.open(`/search/kg?path=${encodeURIComponent(link.iri)}`, '_blank')}
+                              onClick={() => {
+                                const displayLabel = (link.label && !/^https?:\/\//.test(link.label) && !/^urn:/.test(link.label)) ? link.label : (link.iri.split(/[\/#]/).pop() || link.iri)
+                                window.open(`/data-catalog?concept=${encodeURIComponent(displayLabel)}`, '_blank')
+                              }}
                               title={link.iri}
                             >
                               {(link.label && !/^https?:\/\//.test(link.label) && !/^urn:/.test(link.label)) ? link.label : (link.iri.split(/[\/#]/).pop() || link.iri)}
@@ -1915,7 +1921,10 @@ export default function DataContractDetails() {
                               <Shapes className="h-3 w-3" />
                               <span
                                 className="cursor-pointer hover:underline"
-                                onClick={() => window.open(`/search/kg?path=${encodeURIComponent(link.iri)}`, '_blank')}
+                                onClick={() => {
+                                  const displayLabel = (link.label && !/^https?:\/\//.test(link.label) && !/^urn:/.test(link.label)) ? link.label : (link.iri.split(/[\/#]/).pop() || link.iri)
+                                  window.open(`/data-catalog?concept=${encodeURIComponent(displayLabel)}`, '_blank')
+                                }}
                                 title={link.iri}
                               >
                                 {(link.label && !/^https?:\/\//.test(link.label) && !/^urn:/.test(link.label)) ? link.label : (link.iri.split(/[\/#]/).pop() || link.iri)}
@@ -2059,7 +2068,10 @@ export default function DataContractDetails() {
                               <Shapes className="h-3 w-3" />
                               <span
                                 className="cursor-pointer hover:underline"
-                                onClick={() => window.open(`/search/kg?path=${encodeURIComponent(link.iri)}`, '_blank')}
+                                onClick={() => {
+                                  const displayLabel = (link.label && !/^https?:\/\//.test(link.label) && !/^urn:/.test(link.label)) ? link.label : (link.iri.split(/[\/#]/).pop() || link.iri)
+                                  window.open(`/data-catalog?concept=${encodeURIComponent(displayLabel)}`, '_blank')
+                                }}
                                 title={link.iri}
                               >
                                 {(link.label && !/^https?:\/\//.test(link.label) && !/^urn:/.test(link.label)) ? link.label : (link.iri.split(/[\/#]/).pop() || link.iri)}

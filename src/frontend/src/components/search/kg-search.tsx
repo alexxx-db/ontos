@@ -168,9 +168,21 @@ export default function KGSearch({
       if (pathArray.length > 0 && JSON.stringify(pathArray) !== JSON.stringify(initialPath)) {
         setPath(pathArray);
       }
+      // Also populate prefix from path if no explicit prefix is provided
+      // This helps users see what concept they navigated to in the Prefix Search field
+      if (!urlPrefix && pathArray.length > 0) {
+        // Extract a useful prefix from the first path element (e.g., namespace or local name)
+        const firstIri = pathArray[0];
+        // Use the IRI itself or extract the local name after # or /
+        const localName = firstIri.split('#').pop() || firstIri.split('/').pop() || firstIri;
+        setPrefix(localName);
+      }
     } else if (startIri && path.length === 0) {
       // Legacy: convert startIri to path
       setPath([startIri]);
+      // Also populate prefix from startIri
+      const localName = startIri.split('#').pop() || startIri.split('/').pop() || startIri;
+      setPrefix(localName);
     }
     if (urlSparql && urlSparql !== initialSparql) setSparql(urlSparql);
     if (urlDirection && urlDirection !== initialDirectionFilter) setDirectionFilter(urlDirection);

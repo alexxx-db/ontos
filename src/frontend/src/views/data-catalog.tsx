@@ -11,7 +11,7 @@
  */
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { 
   BookOpen, 
@@ -22,7 +22,8 @@ import {
   ArrowUpDown,
   ChevronDown,
   Database,
-  RefreshCw
+  RefreshCw,
+  Tag
 } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -76,9 +77,13 @@ const DataCatalog: React.FC = () => {
   console.log("DataCatalog component rendering");
   const { t } = useTranslation(['data-catalog', 'common']);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
+
+  // Get initial search from URL params (supports both 'search' and 'concept' for semantic links)
+  const initialSearch = searchParams.get('search') || searchParams.get('concept') || '';
 
   // State
   const [columns, setColumns] = useState<ColumnDictionaryEntry[]>([]);
@@ -87,8 +92,8 @@ const DataCatalog: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Filters
-  const [searchQuery, setSearchQuery] = useState('');
+  // Filters - initialize from URL if available
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [selectedTable, setSelectedTable] = useState<string>('all');
   
   // Sorting
@@ -185,11 +190,16 @@ const DataCatalog: React.FC = () => {
     }
   }, [selectedTable, fetchColumns]);
 
-  // Initial load
+  // Initial load - also trigger search if URL param was provided
   useEffect(() => {
     fetchTableList();
-    fetchColumns();
-  }, [fetchTableList, fetchColumns]);
+    if (initialSearch) {
+      // If we have a search from URL, trigger the search
+      searchColumns(initialSearch);
+    } else {
+      fetchColumns();
+    }
+  }, [fetchTableList, fetchColumns, initialSearch, searchColumns]);
 
   // Handle table filter change
   useEffect(() => {
@@ -414,6 +424,9 @@ const DataCatalog: React.FC = () => {
                     <SortHeader field="column_type">
                       {t('data-catalog:columns.type', 'Type')}
                     </SortHeader>
+                    <TableHead className="min-w-[150px]">
+                      {t('data-catalog:columns.businessTerms', 'Business Terms')}
+                    </TableHead>
                     <SortHeader field="table_name">
                       {t('data-catalog:columns.tableName', 'Table Name')}
                     </SortHeader>
@@ -442,6 +455,29 @@ const DataCatalog: React.FC = () => {
                         <Badge variant="outline" className="font-mono text-xs">
                           {entry.column_type}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {entry.business_terms && entry.business_terms.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {entry.business_terms.map((term, termIdx) => (
+                              <Badge
+                                key={`${term.iri}-${termIdx}`}
+                                variant="secondary"
+                                className="text-xs cursor-pointer hover:bg-primary/20 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/semantic-models?concept=${encodeURIComponent(term.iri)}`);
+                                }}
+                                title={term.iri}
+                              >
+                                <Tag className="h-3 w-3 mr-1" />
+                                {term.label || term.iri.split('#').pop()?.split('/').pop() || 'Term'}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="text-sm" title={entry.table_full_name}>

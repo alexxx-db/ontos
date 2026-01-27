@@ -1833,6 +1833,19 @@ class SemanticModelsManager:
                     ranges = list(context.objects(prop_uri, RDFS.range))
                     range_val = str(ranges[0]) if ranges else None
 
+                    # Get parent properties via rdfs:subPropertyOf
+                    parent_properties = []
+                    for parent in context.objects(prop_uri, RDFS.subPropertyOf):
+                        parent_str = str(parent)
+                        # Skip OWL top properties and standard vocabulary
+                        if not any(parent_str.startswith(prefix) for prefix in [
+                            "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+                            "http://www.w3.org/2000/01/rdf-schema#",
+                            "http://www.w3.org/2004/02/skos/core#",
+                            "http://www.w3.org/2002/07/owl#"
+                        ]):
+                            parent_properties.append(parent_str)
+
                     # Build property dict compatible with concept structure
                     prop_dict = {
                         "iri": prop_iri,
@@ -1843,8 +1856,8 @@ class SemanticModelsManager:
                         "domain": domain,
                         "range": range_val,
                         "source_context": source_context,
-                        "parent_concepts": [],
-                        "child_concepts": [],
+                        "parent_concepts": parent_properties,
+                        "child_concepts": [],  # Populated in second pass below
                         "tagged_assets": [],
                     }
 
@@ -1854,6 +1867,21 @@ class SemanticModelsManager:
 
             except Exception as e:
                 logger.warning(f"Failed to query properties in context {context_name}: {e}")
+
+        # Second pass: populate child_concepts based on parent relationships
+        # Build a flat map of all properties by IRI for O(n) lookup
+        all_properties: Dict[str, Dict[str, Any]] = {}
+        for source_props in grouped.values():
+            for prop in source_props:
+                all_properties[prop["iri"]] = prop
+
+        # For each property, add it as a child to its parents
+        for prop in all_properties.values():
+            for parent_iri in prop["parent_concepts"]:
+                if parent_iri in all_properties:
+                    parent_prop = all_properties[parent_iri]
+                    if prop["iri"] not in parent_prop["child_concepts"]:
+                        parent_prop["child_concepts"].append(prop["iri"])
 
         # Sort properties within each group
         for source in grouped:

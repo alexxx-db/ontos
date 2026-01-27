@@ -1,24 +1,22 @@
-"""Ensure comment enum types exist with all required values
+"""Ensure commenttype enum has all required values
 
-Revision ID: r8355n269pp2
-Revises: 5845de034cb6
+Revision ID: s9466o380qq3
+Revises: r8355n269pp2
 Create Date: 2026-01-27
 
-This migration ensures the commentstatus and commenttype PostgreSQL enum types
-exist with all required values. These enums were previously only created by 
-SQLAlchemy's create_all() for fresh databases, or by migrations that used
-checkfirst=True which skips creation if enum exists but doesn't add missing values.
+This migration ensures the commenttype PostgreSQL enum has the 'rating' value.
+The previous migration o5022k936mm8 used checkfirst=True which skips enum creation
+if it already exists, but doesn't add missing values to existing enums.
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'r8355n269pp2'
-down_revision: Union[str, None] = '5845de034cb6'
+revision: str = 's9466o380qq3'
+down_revision: Union[str, None] = 'r8355n269pp2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -54,15 +52,14 @@ def ensure_enum_values(conn, enum_name: str, required_values: list[str]) -> None
 def upgrade() -> None:
     conn = op.get_bind()
     
-    # Ensure commentstatus enum has all required values
-    ensure_enum_values(conn, 'commentstatus', ['active', 'deleted'])
-    
-    # Ensure commenttype enum has all required values
+    # Ensure commenttype enum has all required values (including 'rating')
     ensure_enum_values(conn, 'commenttype', ['comment', 'rating'])
+    
+    # Also re-check commentstatus in case previous migration was run with old code
+    ensure_enum_values(conn, 'commentstatus', ['active', 'deleted'])
 
 
 def downgrade() -> None:
-    # Don't drop the enum as the comments table might still reference it
-    # and dropping would cause data loss
+    # Don't remove enum values as it would cause data loss
     pass
 

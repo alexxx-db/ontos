@@ -1090,6 +1090,27 @@ class JobsManager:
                                 else:
                                     logger.debug(f"Already notified about failure of run {run.run_id}, skipping")
 
+                            # Fire success trigger for successfully completed jobs
+                            elif (run.state.life_cycle_state == RunLifeCycleState.TERMINATED and
+                                  run.state.result_state == RunResultState.SUCCESS):
+
+                                # Check if we've already notified about this success
+                                if not job_run.notified_at:
+                                    logger.info(f"Job {installation.workflow_id} (run {run.run_id}) succeeded, firing trigger")
+                                    try:
+                                        self._create_job_success_notification(
+                                            installation.name,
+                                            installation.workflow_id,
+                                            run.run_id,
+                                            db
+                                        )
+                                        # Mark this run as notified only after trigger fires
+                                        workflow_job_run_repo.mark_as_notified(db, run_id=run.run_id)
+                                    except Exception as e:
+                                        logger.error(f"Failed to fire success trigger for run {run.run_id}: {e}")
+                                else:
+                                    logger.debug(f"Already notified about success of run {run.run_id}, skipping")
+
                         # Update last polled timestamp on installation (use latest run if available)
                         latest_run = next(iter(runs), None)
                         if latest_run and latest_run.state:
@@ -1182,4 +1203,27 @@ class JobsManager:
         except Exception as e:
             logger.error(f"Failed to create failure notification for workflow '{workflow_id}': {e}")
 
+    def _create_job_success_notification(self, job_name: str, workflow_id: str, run_id: int, db: Session):
+        """Create a notification for job success using workflow triggers."""
+        try:
+            from src.common.workflow_triggers import get_trigger_registry
+            
+            trigger_registry = get_trigger_registry(db)
+            entity_data = {
+                "workflow_id": workflow_id,
+                "job_name": job_name,
+                "run_id": run_id,
+            }
+            
+            executions = trigger_registry.on_job_success(
+                entity_id=str(run_id),
+                entity_name=job_name,
+                entity_data=entity_data,
+                blocking=False,  # Don't block on notifications
+            )
+            
+            if executions:
+                logger.info(f"Triggered {len(executions)} workflow(s) for job success (run {run_id})")
+        except Exception as e:
+            logger.error(f"Failed to trigger workflow for job success: {e}", exc_info=True)
 

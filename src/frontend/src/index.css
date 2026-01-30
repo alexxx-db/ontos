@@ -100,7 +100,7 @@
 
 /* React Flow dark mode styles */
 .dark .react-flow__controls {
-  @apply shadow-lg;
+  @apply shadow-lg border border-border;
 }
 
 .dark .react-flow__controls-button {
@@ -111,15 +111,50 @@
   @apply bg-accent;
 }
 
+.dark .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
 .dark .react-flow__minimap {
-  @apply bg-secondary border border-border;
+  @apply bg-secondary/80 border border-border rounded-lg;
 }
 
 .dark .react-flow__minimap-mask {
-  fill: hsl(var(--muted));
+  fill: hsl(var(--background));
+  opacity: 0.8;
 }
 
 .dark .react-flow__minimap-node {
-  fill: hsl(var(--muted-foreground));
+  fill: hsl(var(--accent));
   stroke: hsl(var(--border));
+}
+
+/* React Flow background grid in dark mode */
+.dark .react-flow__background pattern circle {
+  fill: hsl(var(--border));
+}
+
+/* React Flow edge labels in dark mode */
+.dark .react-flow__edge-textbg {
+  fill: hsl(var(--background));
+}
+
+.dark .react-flow__edge-text {
+  fill: hsl(var(--foreground));
+}
+
+/* React Flow panel in dark mode */
+.dark .react-flow__panel {
+  @apply shadow-lg;
+}
+
+/* Workflow node card text visibility in dark mode */
+.dark .react-flow .text-muted-foreground {
+  @apply text-slate-300;
+}
+
+/* Ensure badges are visible in dark mode on colored backgrounds */
+.dark .react-flow [class*="bg-"][class*="-900"] .text-muted-foreground,
+.dark .react-flow [class*="bg-"][class*="-950"] .text-muted-foreground {
+  @apply text-slate-200;
 }

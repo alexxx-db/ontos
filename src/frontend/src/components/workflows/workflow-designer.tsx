@@ -568,9 +568,9 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
             <MiniMap />
             
             {/* Step type toolbar */}
-            <Panel position="top-left" className="bg-background border rounded-lg shadow-lg p-2">
+            <Panel position="top-left" className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-2 dark:bg-slate-800/95">
               <div className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-muted-foreground px-2 mb-1">Add Step</span>
+                <span className="text-xs font-medium text-muted-foreground dark:text-slate-300 px-2 mb-1">Add Step</span>
                 <Button variant="ghost" size="sm" className="justify-start" onClick={() => addStep('policy_check')}>
                   <ClipboardCheck className="h-4 w-4 mr-2" /> Policy Check
                 </Button>

@@ -1,4 +1,5 @@
 from databricks.sdk import WorkspaceClient
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.common.workspace_client import get_obo_workspace_client, get_workspace_client_dependency
@@ -129,6 +130,47 @@ async def list_functions(
         return functions
     except Exception as e:
         error_msg = f"Failed to fetch functions for schema {catalog_name}.{schema_name}: {e!s}"
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@router.get('/catalogs/{catalog_name}/schemas/{schema_name}/objects', dependencies=[Depends(PermissionChecker(CATALOG_COMMANDER_FEATURE_ID, FeatureAccessLevel.READ_ONLY))])
+async def list_objects(
+    catalog_name: str,
+    schema_name: str,
+    asset_types: Optional[List[str]] = Query(
+        default=None,
+        description="Filter by asset types (table, view, function, model, volume, metric). If not provided, returns all types."
+    ),
+    catalog_manager: CatalogCommanderManager = Depends(get_catalog_manager)
+):
+    """List all objects (tables, views, functions, models, volumes, metrics) in a schema.
+    
+    This unified endpoint returns all securable objects in a schema,
+    optionally filtered by asset type(s).
+    
+    Args:
+        catalog_name: Name of the catalog
+        schema_name: Name of the schema
+        asset_types: Optional list of asset types to filter by
+        
+    Returns:
+        List of objects with their type information
+    """
+    try:
+        # Handle comma-separated asset types (e.g., "table,view" as a single string)
+        parsed_types = None
+        if asset_types:
+            parsed_types = []
+            for t in asset_types:
+                # Split each item by comma in case it's "table,view" format
+                parsed_types.extend([x.strip() for x in t.split(',') if x.strip()])
+        
+        logger.info(f"Fetching objects for schema: {catalog_name}.{schema_name} (types={parsed_types})")
+        objects = catalog_manager.list_objects(catalog_name, schema_name, asset_types=parsed_types)
+        logger.info(f"Successfully fetched {len(objects)} objects for schema {catalog_name}.{schema_name}")
+        return objects
+    except Exception as e:
+        error_msg = f"Failed to fetch objects for schema {catalog_name}.{schema_name}: {e!s}"
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=500, detail=error_msg)
 

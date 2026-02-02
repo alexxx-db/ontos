@@ -206,6 +206,195 @@ class CatalogCommanderManager:
             logger.error(f"Error listing functions for {catalog_name}.{schema_name}: {e!s}", exc_info=True)
             raise
 
+    def list_models(self, catalog_name: str, schema_name: str) -> List[Dict[str, Any]]:
+        """List all registered ML models in a schema.
+
+        Args:
+            catalog_name: Name of the catalog
+            schema_name: Name of the schema
+
+        Returns:
+            List of model information dictionaries
+        """
+        logger.debug(f"Fetching models for schema: {catalog_name}.{schema_name}")
+        try:
+            models = list(self.client.registered_models.list(catalog_name=catalog_name, schema_name=schema_name))
+
+            result = [{
+                'id': model.full_name or f"{catalog_name}.{schema_name}.{model.name}",
+                'name': model.name,
+                'type': 'model',
+                'children': [],
+                'hasChildren': False,
+                'description': getattr(model, 'comment', None)
+            } for model in models]
+
+            logger.debug(f"Successfully retrieved {len(result)} models for schema {catalog_name}.{schema_name}")
+            return result
+        except Exception as e:
+            logger.debug(f"Error listing models for {catalog_name}.{schema_name}: {e!s}")
+            # Models API may not be available in all workspaces
+            return []
+
+    def list_volumes(self, catalog_name: str, schema_name: str) -> List[Dict[str, Any]]:
+        """List all volumes in a schema.
+
+        Args:
+            catalog_name: Name of the catalog
+            schema_name: Name of the schema
+
+        Returns:
+            List of volume information dictionaries
+        """
+        logger.debug(f"Fetching volumes for schema: {catalog_name}.{schema_name}")
+        try:
+            volumes = list(self.client.volumes.list(catalog_name=catalog_name, schema_name=schema_name))
+
+            result = [{
+                'id': volume.full_name or f"{catalog_name}.{schema_name}.{volume.name}",
+                'name': volume.name,
+                'type': 'volume',
+                'children': [],
+                'hasChildren': False,
+                'description': getattr(volume, 'comment', None)
+            } for volume in volumes]
+
+            logger.debug(f"Successfully retrieved {len(result)} volumes for schema {catalog_name}.{schema_name}")
+            return result
+        except Exception as e:
+            logger.debug(f"Error listing volumes for {catalog_name}.{schema_name}: {e!s}")
+            # Volumes API may not be available in all workspaces
+            return []
+
+    def list_objects(
+        self,
+        catalog_name: str,
+        schema_name: str,
+        asset_types: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """List all objects in a schema, optionally filtered by asset type.
+
+        This unified method combines tables, views, functions, models, and volumes
+        into a single response. Asset types can be filtered using the asset_types parameter.
+
+        Args:
+            catalog_name: Name of the catalog
+            schema_name: Name of the schema
+            asset_types: Optional list of asset types to include. 
+                        Valid values: table, view, materialized_view, streaming_table, 
+                        function, model, volume, metric.
+                        If None, returns all types.
+
+        Returns:
+            List of object information dictionaries with 'type' field indicating asset type
+        """
+        logger.info(f"Fetching objects for schema: {catalog_name}.{schema_name} (types={asset_types})")
+        
+        # Normalize asset types to lowercase if provided
+        type_filter = set(t.lower() for t in asset_types) if asset_types else None
+        
+        # Define which types to fetch based on filter
+        all_types = {'table', 'view', 'materialized_view', 'streaming_table', 'function', 'model', 'volume', 'metric'}
+        types_to_fetch = type_filter if type_filter else all_types
+        
+        results: List[Dict[str, Any]] = []
+        
+        try:
+            # Fetch tables/views (these come from the same API)
+            if types_to_fetch & {'table', 'view', 'materialized_view', 'streaming_table'}:
+                try:
+                    tables = list(self.client.tables.list(catalog_name=catalog_name, schema_name=schema_name))
+                    for table in tables:
+                        # Determine the specific type
+                        table_type_raw = str(getattr(table, 'table_type', 'MANAGED')).upper()
+                        
+                        if table_type_raw == 'VIEW':
+                            obj_type = 'view'
+                        elif table_type_raw == 'MATERIALIZED_VIEW':
+                            obj_type = 'materialized_view'
+                        elif table_type_raw == 'STREAMING_TABLE':
+                            obj_type = 'streaming_table'
+                        else:
+                            obj_type = 'table'
+                        
+                        # Check if this type is in the filter
+                        if type_filter and obj_type not in type_filter:
+                            continue
+                        
+                        results.append({
+                            'id': f"{catalog_name}.{schema_name}.{table.name}",
+                            'name': table.name,
+                            'type': obj_type,
+                            'children': [],
+                            'hasChildren': False,
+                            'description': getattr(table, 'comment', None)
+                        })
+                except Exception as e:
+                    logger.warning(f"Error listing tables for {catalog_name}.{schema_name}: {e!s}")
+            
+            # Fetch functions
+            if 'function' in types_to_fetch:
+                try:
+                    functions = list(self.client.functions.list(catalog_name=catalog_name, schema_name=schema_name))
+                    for func in functions:
+                        results.append({
+                            'id': func.full_name or f"{catalog_name}.{schema_name}.{func.name}",
+                            'name': func.name,
+                            'type': 'function',
+                            'children': [],
+                            'hasChildren': False,
+                            'description': getattr(func, 'comment', None)
+                        })
+                except Exception as e:
+                    logger.debug(f"Error listing functions for {catalog_name}.{schema_name}: {e!s}")
+            
+            # Fetch models
+            if 'model' in types_to_fetch:
+                try:
+                    models = list(self.client.registered_models.list(catalog_name=catalog_name, schema_name=schema_name))
+                    for model in models:
+                        results.append({
+                            'id': model.full_name or f"{catalog_name}.{schema_name}.{model.name}",
+                            'name': model.name,
+                            'type': 'model',
+                            'children': [],
+                            'hasChildren': False,
+                            'description': getattr(model, 'comment', None)
+                        })
+                except Exception as e:
+                    logger.debug(f"Error listing models for {catalog_name}.{schema_name}: {e!s}")
+            
+            # Fetch volumes
+            if 'volume' in types_to_fetch:
+                try:
+                    volumes = list(self.client.volumes.list(catalog_name=catalog_name, schema_name=schema_name))
+                    for volume in volumes:
+                        results.append({
+                            'id': volume.full_name or f"{catalog_name}.{schema_name}.{volume.name}",
+                            'name': volume.name,
+                            'type': 'volume',
+                            'children': [],
+                            'hasChildren': False,
+                            'description': getattr(volume, 'comment', None)
+                        })
+                except Exception as e:
+                    logger.debug(f"Error listing volumes for {catalog_name}.{schema_name}: {e!s}")
+            
+            # Metrics are a newer feature - placeholder for future implementation
+            if 'metric' in types_to_fetch:
+                # UC Metrics API may not be available yet
+                logger.debug(f"Metrics listing for {catalog_name}.{schema_name} - feature may not be available")
+            
+            # Sort by name for consistent ordering
+            results.sort(key=lambda x: x['name'].lower())
+            
+            logger.info(f"Successfully retrieved {len(results)} objects for schema {catalog_name}.{schema_name}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error listing objects for {catalog_name}.{schema_name}: {e!s}", exc_info=True)
+            raise
+
     def get_dataset(
         self,
         dataset_path: str,

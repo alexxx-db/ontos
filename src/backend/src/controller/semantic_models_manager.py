@@ -2029,6 +2029,10 @@ class SemanticModelsManager:
         META_CONTEXT = "urn:meta:sources"
         collections = []
         
+        # Get all concepts grouped by source_context for efficient counting
+        # This uses the comprehensive SPARQL query that properly unions all concept types
+        grouped_concepts = self.get_grouped_concepts()
+        
         # Query all Collection instances from the meta context
         try:
             context = self._graph.get_context(URIRef(META_CONTEXT))
@@ -2054,12 +2058,11 @@ class SemanticModelsManager:
                 created_at = self._get_literal(context, coll_uri, ONTOS.createdAt)
                 created_by = self._get_uri(context, coll_uri, ONTOS.createdBy)
                 
-                # Count concepts in this collection's context
-                try:
-                    coll_context = self._graph.get_context(URIRef(coll_iri))
-                    concept_count = len(list(coll_context.subjects(RDF.type, SKOS.Concept)))
-                except:
-                    concept_count = 0
+                # Count concepts using the grouped concepts data
+                # Collection IRI: "urn:glossary:enterprise-glossary" -> suffix: "enterprise-glossary"
+                # Concept source_context is already the suffix (e.g., "enterprise-glossary")
+                coll_suffix = coll_iri.split(":")[-1]
+                concept_count = len(grouped_concepts.get(coll_suffix, []))
                 
                 collections.append({
                     "iri": coll_iri,

@@ -99,8 +99,6 @@ export const PromotionDialog: React.FC<PromotionDialogProps> = ({
     });
   }, [flatCollections, concept, action]);
 
-  const selectedTarget = flatCollections.find((c) => c.iri === targetCollectionIri);
-
   const handleSubmit = async () => {
     if (!targetCollectionIri) return;
 

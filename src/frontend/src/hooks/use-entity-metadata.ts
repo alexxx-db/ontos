@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-export type EntityKind = 'data_domain' | 'data_product' | 'data_contract' | 'dataset';
+export type EntityKind = 'data_domain' | 'data_product' | 'data_contract' | 'dataset' | 'concept' | 'collection';
 
 export interface RichTextItem { 
   id: string; 

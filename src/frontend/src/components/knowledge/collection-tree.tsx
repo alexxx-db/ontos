@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 import {
   KnowledgeCollection,
   CollectionType,
-  ScopeLevel,
 } from '@/types/ontology';
 import {
   ChevronRight,
@@ -74,18 +73,6 @@ const getCollectionIcon = (type: CollectionType, isExpanded: boolean) => {
       return <Network className="h-4 w-4 text-blue-500" />;
     default:
       return <Book className="h-4 w-4 text-gray-500" />;
-  }
-};
-
-const getScopeBadgeVariant = (scope: ScopeLevel): "default" | "secondary" | "outline" => {
-  switch (scope) {
-    case 'enterprise':
-      return 'default';
-    case 'domain':
-    case 'department':
-      return 'secondary';
-    default:
-      return 'outline';
   }
 };
 

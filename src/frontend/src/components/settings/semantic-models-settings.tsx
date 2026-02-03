@@ -21,6 +21,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+// System contexts that should be hidden from the UI (internal use only)
+const SYSTEM_CONTEXTS = ['urn:meta:sources', 'urn:semantic-links'];
+
 export default function SemanticModelsSettings() {
   const { get, post, delete: deleteApi } = useApi();
   const { toast } = useToast();
@@ -30,6 +33,12 @@ export default function SemanticModelsSettings() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [modelToDelete, setModelToDelete] = useState<SemanticModel | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  
+  // Filter out system contexts from display
+  const filteredItems = useMemo(() => 
+    items.filter(m => !SYSTEM_CONTEXTS.includes(m.name)),
+    [items]
+  );
 
   const fetchItems = async () => {
     setIsLoading(true);
@@ -199,7 +208,7 @@ export default function SemanticModelsSettings() {
     { 
       accessorKey: 'format', 
       header: 'Format', 
-      cell: ({ row }) => <Badge variant="secondary">{row.getValue('format')?.toUpperCase()}</Badge> 
+      cell: ({ row }) => <Badge variant="secondary">{(row.getValue('format') as string)?.toUpperCase()}</Badge> 
     },
     { 
       accessorKey: 'size_bytes', 
@@ -301,7 +310,7 @@ export default function SemanticModelsSettings() {
         </div>
       </CardHeader>
       <CardContent>
-        <DataTable columns={columns} data={items} searchColumn="name" isLoading={isLoading} />
+        <DataTable columns={columns} data={filteredItems} searchColumn="name" isLoading={isLoading} />
       </CardContent>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

@@ -706,7 +706,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
   };
 
   return (
-    <div className="h-full min-h-[900px] flex flex-col border rounded-lg bg-background overflow-hidden">
+    <div className="h-full flex flex-col border rounded-lg bg-background overflow-hidden">
       {/* Legend with toggleable roots - shown when Group by Source is OFF */}
       {showRootBadges && (
         <div className="px-6 py-3 border-b bg-muted/30">
@@ -778,7 +778,7 @@ export const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({
       </div>
 
       {/* Graph */}
-      <div className="flex-1 min-h-[700px] relative">
+      <div className="flex-1 relative" style={{ minHeight: 0 }}>
         <CytoscapeComponent
           key={`graph-${showDomainBoxes}`}
           cy={(cy: Core) => {

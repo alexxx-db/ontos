@@ -72,10 +72,20 @@ const SelectLabel = React.forwardRef<
 ))
 SelectLabel.displayName = SelectPrimitive.Label.displayName
 
+interface SelectItemProps extends React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> {
+  /** 
+   * If provided, this text appears in the trigger when selected.
+   * The children will only appear in the dropdown list.
+   */
+  displayValue?: string;
+  /** Additional content shown only in dropdown (not in trigger) */
+  description?: React.ReactNode;
+}
+
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+  SelectItemProps
+>(({ className, children, displayValue, description, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
@@ -90,7 +100,14 @@ const SelectItem = React.forwardRef<
       </SelectPrimitive.ItemIndicator>
     </span>
 
-    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    {/* ItemText controls what appears in the trigger when selected */}
+    <SelectPrimitive.ItemText>
+      {displayValue ?? children}
+    </SelectPrimitive.ItemText>
+    {/* Description shown only in dropdown list, not in trigger */}
+    {description && (
+      <span className="text-xs text-muted-foreground ml-auto pl-2">{description}</span>
+    )}
   </SelectPrimitive.Item>
 ))
 SelectItem.displayName = SelectPrimitive.Item.displayName

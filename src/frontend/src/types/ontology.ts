@@ -131,7 +131,11 @@ export interface ConceptCreate {
   collection_iri: string;
   label: string;
   definition?: string;
-  concept_type?: string;
+  concept_type?: 'class' | 'concept' | 'property' | 'individual' | 'term';
+  // Property-specific fields
+  property_type?: 'datatype' | 'object' | 'annotation';
+  domain?: string;
+  range?: string;
   synonyms?: string[];
   examples?: string[];
   broader_iris?: string[];
@@ -143,6 +147,11 @@ export interface ConceptCreate {
 export interface ConceptUpdate {
   label?: string;
   definition?: string;
+  concept_type?: 'class' | 'concept' | 'property' | 'individual' | 'term';
+  // Property-specific fields
+  property_type?: 'datatype' | 'object' | 'annotation';
+  domain?: string;
+  range?: string;
   synonyms?: string[];
   examples?: string[];
   broader_iris?: string[];

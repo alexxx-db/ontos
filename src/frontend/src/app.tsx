@@ -18,7 +18,7 @@ import DataContracts from './views/data-contracts';
 import DataContractDetails from './views/data-contract-details';
 import Datasets from './views/datasets';
 import DatasetDetails from './views/dataset-details';
-import SemanticModels from './views/semantic-models';
+import BusinessGlossaryView from './views/business-glossary';
 import Compliance from './views/compliance';
 import CompliancePolicyDetails from './views/compliance-policy-details';
 import ComplianceRunDetails from './views/compliance-run-details';
@@ -86,7 +86,7 @@ export default function App() {
               <Route path="/data-contracts/:contractId" element={<DataContractDetails />} />
               <Route path="/datasets" element={<Datasets />} />
               <Route path="/datasets/:datasetId" element={<DatasetDetails />} />
-              <Route path="/semantic-models" element={<SemanticModels />} />
+              <Route path="/semantic-models" element={<BusinessGlossaryView />} />
               <Route path="/master-data" element={<MasterDataManagement />} />
               <Route path="/entitlements" element={<Entitlements />} />
               <Route path="/security" element={<SecurityFeatures />} />

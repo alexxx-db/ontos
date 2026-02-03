@@ -29,6 +29,9 @@ src/backend/src/data/cache/
 
 .databricks
 .env
+.venv/
+venv/
+ENV/
 
 .vscode/settings.json
 audit_logs/

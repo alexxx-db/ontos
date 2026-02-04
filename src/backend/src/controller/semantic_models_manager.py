@@ -1566,23 +1566,35 @@ class SemanticModelsManager:
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
             PREFIX dcat: <http://www.w3.org/ns/dcat#>
             SELECT DISTINCT ?concept ?label ?comment WHERE {
+                # Classes
                 {
                     ?concept a rdfs:Class .
                 } UNION {
+                    ?concept a owl:Class .
+                } UNION {
+                    ?concept rdfs:subClassOf ?parent .
+                }
+                # SKOS Concepts
+                UNION {
                     ?concept a skos:Concept .
                 } UNION {
                     ?concept a skos:ConceptScheme .
-                } UNION {
-                    ?concept a owl:Class .
+                }
+                # Properties (all types)
+                UNION {
+                    ?concept a rdf:Property .
                 } UNION {
                     ?concept a owl:ObjectProperty .
                 } UNION {
                     ?concept a owl:DatatypeProperty .
                 } UNION {
-                    ?concept a rdf:Property .
+                    ?concept a owl:AnnotationProperty .
                 } UNION {
-                    # Include any resource that has subclass relationships
-                    ?concept rdfs:subClassOf ?parent .
+                    ?concept rdfs:subPropertyOf ?parentProp .
+                }
+                # Individuals (named instances)
+                UNION {
+                    ?concept a owl:NamedIndividual .
                 }
                 # Extract labels with priority: skos:prefLabel > rdfs:label
                 OPTIONAL { ?concept skos:prefLabel ?skos_pref_label }
@@ -1664,32 +1676,62 @@ class SemanticModelsManager:
                             comment = str(comment_literal)
                             break
 
-                    # Determine concept type
+                    # Determine concept type with comprehensive type checking
+                    # Check for classes first
                     if (concept_uri, RDF.type, RDFS.Class) in context:
                         concept_type = "class"
                     elif (concept_uri, RDF.type, OWL.Class) in context:
                         concept_type = "class"
+                    # Check for SKOS concepts
                     elif (concept_uri, RDF.type, SKOS.Concept) in context:
                         concept_type = "concept"
+                    elif (concept_uri, RDF.type, SKOS.ConceptScheme) in context:
+                        concept_type = "concept"
+                    # Check for all property types
+                    elif (concept_uri, RDF.type, RDF.Property) in context:
+                        concept_type = "property"
+                    elif (concept_uri, RDF.type, OWL.ObjectProperty) in context:
+                        concept_type = "property"
+                    elif (concept_uri, RDF.type, OWL.DatatypeProperty) in context:
+                        concept_type = "property"
+                    elif (concept_uri, RDF.type, OWL.AnnotationProperty) in context:
+                        concept_type = "property"
+                    # Check if it has subPropertyOf (inherited property)
+                    elif any(context.objects(concept_uri, RDFS.subPropertyOf)):
+                        concept_type = "property"
+                    # Check if it has subClassOf but wasn't caught above (inherited class)
+                    elif any(context.objects(concept_uri, RDFS.subClassOf)):
+                        concept_type = "class"
+                    # Named individuals
+                    elif (concept_uri, RDF.type, OWL.NamedIndividual) in context:
+                        concept_type = "individual"
                     else:
                         concept_type = "individual"
 
-                    # Get parent concepts
+                    # Get parent concepts/properties
                     parent_concepts = []
                     # Handle rdfs:subClassOf relationships (class-to-class)
                     for parent in context.objects(concept_uri, RDFS.subClassOf):
-                        parent_concepts.append(str(parent))
+                        parent_str = str(parent)
+                        if not parent_str.startswith("urn:ontos:bnode:") and not parent_str.startswith("n"):
+                            parent_concepts.append(parent_str)
+                    # Handle rdfs:subPropertyOf relationships (property-to-property)
+                    for parent in context.objects(concept_uri, RDFS.subPropertyOf):
+                        parent_str = str(parent)
+                        if not parent_str.startswith("urn:ontos:bnode:"):
+                            parent_concepts.append(parent_str)
                     # Handle SKOS broader relationships
                     for parent in context.objects(concept_uri, SKOS.broader):
                         parent_concepts.append(str(parent))
                     # Handle rdf:type relationships (instance-to-class)
                     for parent_type in context.objects(concept_uri, RDF.type):
-                        # Only include custom types, not basic RDF/RDFS/SKOS types
+                        # Only include custom types, not basic RDF/RDFS/SKOS/OWL types
                         parent_type_str = str(parent_type)
                         if not any(parent_type_str.startswith(prefix) for prefix in [
                             "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
                             "http://www.w3.org/2000/01/rdf-schema#",
-                            "http://www.w3.org/2004/02/skos/core#"
+                            "http://www.w3.org/2004/02/skos/core#",
+                            "http://www.w3.org/2002/07/owl#"
                         ]):
                             parent_concepts.append(parent_type_str)
 

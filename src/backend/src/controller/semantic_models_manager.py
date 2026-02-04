@@ -128,23 +128,14 @@ class SemanticModelsManager:
         return self._to_api(m) if m else None
 
     def create(self, data: SemanticModelCreate, created_by: Optional[str]) -> SemanticModelApi:
-        db_obj = semantic_models_repo.create(self._db, obj_in=data)
-        if created_by:
-            db_obj.created_by = created_by
-            db_obj.updated_by = created_by
-            self._db.add(db_obj)
-        self._db.flush()
-        self._db.refresh(db_obj)
-        
-        # Import triples to rdf_triples table if content is provided
-        if db_obj.content_text:
+        # Validate content can be parsed BEFORE creating DB record to avoid dead rows
+        temp_graph = None
+        fmt = None
+        if data.content_text:
             try:
-                # Use sanitized name for human-readable context identifiers
-                sanitized_name = _sanitize_context_name(db_obj.name)
-                context_name = f"urn:semantic-model:{sanitized_name}"
                 temp_graph = Graph()
                 # Detect format from content - Turtle content starts with @prefix or @base
-                content_stripped = db_obj.content_text.strip()
+                content_stripped = data.content_text.strip()
                 if content_stripped.startswith('@prefix') or content_stripped.startswith('@base'):
                     fmt = 'turtle'
                 elif content_stripped.startswith('{') or content_stripped.startswith('['):
@@ -153,8 +144,31 @@ class SemanticModelsManager:
                     fmt = 'xml'
                 else:
                     # Default based on format field
-                    fmt = 'turtle' if db_obj.format in ('skos', 'rdfs') else 'xml'
-                temp_graph.parse(data=db_obj.content_text, format=fmt)
+                    fmt = 'turtle' if data.format in ('skos', 'rdfs') else 'xml'
+                temp_graph.parse(data=data.content_text, format=fmt)
+                
+                if len(temp_graph) == 0:
+                    raise ValueError("Content parsed but contains no triples")
+                    
+                logger.info(f"Validated content: {len(temp_graph)} triples in {fmt} format")
+            except Exception as e:
+                logger.error(f"Failed to parse semantic model content: {e}")
+                raise ValueError(f"Invalid ontology content: {e}")
+        
+        # Now create DB record since content is valid
+        db_obj = semantic_models_repo.create(self._db, obj_in=data)
+        if created_by:
+            db_obj.created_by = created_by
+            db_obj.updated_by = created_by
+            self._db.add(db_obj)
+        self._db.flush()
+        self._db.refresh(db_obj)
+        
+        # Import triples to rdf_triples table (already validated above)
+        if temp_graph is not None and len(temp_graph) > 0:
+            try:
+                sanitized_name = _sanitize_context_name(db_obj.name)
+                context_name = f"urn:semantic-model:{sanitized_name}"
                 self._import_graph_to_db(
                     graph=temp_graph,
                     context_name=context_name,
@@ -163,7 +177,10 @@ class SemanticModelsManager:
                     created_by=created_by,
                 )
             except Exception as e:
-                logger.warning(f"Failed to import semantic model triples to database: {e}")
+                # Rollback the DB record since import failed
+                logger.error(f"Failed to import triples, rolling back: {e}")
+                self._db.rollback()
+                raise ValueError(f"Failed to import triples: {e}")
         
         self._db.commit()  # Persist changes immediately since manager uses singleton session
         return self._to_api(db_obj)

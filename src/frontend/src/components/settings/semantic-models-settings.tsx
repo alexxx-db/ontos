@@ -8,7 +8,8 @@ import { ColumnDef, Column } from '@tanstack/react-table';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Upload, ChevronDown, RefreshCw, Trash2, Loader2, Library } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Upload, ChevronDown, RefreshCw, Trash2, Loader2, Library, Eye, Copy, Check } from 'lucide-react';
 import type { SemanticModel } from '@/types/ontology';
 import {
   AlertDialog,
@@ -20,6 +21,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import OntologyLibraryDialog from '@/components/settings/ontology-library-dialog';
 
 // System contexts that should be hidden from the UI (internal use only)
@@ -34,6 +43,11 @@ export default function SemanticModelsSettings() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [modelToDelete, setModelToDelete] = useState<SemanticModel | null>(null);
   const [libraryDialogOpen, setLibraryDialogOpen] = useState(false);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewingModel, setViewingModel] = useState<SemanticModel | null>(null);
+  const [viewContent, setViewContent] = useState<string>('');
+  const [viewLoading, setViewLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   
   // Filter out system contexts from display
@@ -133,6 +147,41 @@ export default function SemanticModelsSettings() {
   const onDeleteClick = (model: SemanticModel) => {
     setModelToDelete(model);
     setDeleteDialogOpen(true);
+  };
+
+  const onViewClick = async (model: SemanticModel) => {
+    setViewingModel(model);
+    setViewDialogOpen(true);
+    setViewLoading(true);
+    setViewContent('');
+    setCopied(false);
+    
+    try {
+      const res = await get<{ content: string; format: string; name: string }>(
+        `/api/semantic-models/${encodeURIComponent(model.id)}/content`
+      );
+      if (res.error) {
+        toast({ title: 'Error', description: res.error, variant: 'destructive' });
+        setViewContent('Failed to load content.');
+      } else {
+        setViewContent(res.data.content || '');
+      }
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to load content', variant: 'destructive' });
+      setViewContent('Failed to load content.');
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const onCopyContent = async () => {
+    try {
+      await navigator.clipboard.writeText(viewContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: 'Error', description: 'Failed to copy to clipboard', variant: 'destructive' });
+    }
   };
 
   const onDeleteConfirm = async () => {
@@ -260,26 +309,30 @@ export default function SemanticModelsSettings() {
         const isFileBased = model.id?.startsWith('file-');
         const createdBy = model.created_by || '';
         const isSystemManaged = createdBy.startsWith('system@') && createdBy !== 'system@startup';
-        
-        // File-based and schema models can't be deleted (read-only from filesystem)
-        if (isFileBased || isSystemManaged) {
-          return (
-            <div data-action-cell="true">
-              <span className="text-xs text-muted-foreground">Read-only</span>
-            </div>
-          );
-        }
+        const canDelete = !isFileBased && !isSystemManaged;
         
         return (
-          <div data-action-cell="true">
+          <div data-action-cell="true" className="flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onDeleteClick(model)}
-              title="Delete model"
+              onClick={() => onViewClick(model)}
+              title="View content"
             >
-              <Trash2 className="h-4 w-4 text-destructive" />
+              <Eye className="h-4 w-4" />
             </Button>
+            {canDelete ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onDeleteClick(model)}
+                title="Delete model"
+              >
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground px-2">Read-only</span>
+            )}
           </div>
         );
       },
@@ -349,6 +402,57 @@ export default function SemanticModelsSettings() {
           fetchItems();
         }}
       />
+
+      {/* View Content Dialog */}
+      <Dialog open={viewDialogOpen} onOpenChange={(open) => {
+        setViewDialogOpen(open);
+        if (!open) {
+          setViewingModel(null);
+          setViewContent('');
+        }
+      }}>
+        <DialogContent className="max-w-4xl w-[90vw] h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              {viewingModel?.name || 'View Ontology'}
+            </DialogTitle>
+            <DialogDescription>
+              Raw content of the semantic model ({viewingModel?.format?.toUpperCase() || 'Unknown format'})
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 min-h-0">
+            {viewLoading ? (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                Loading content...
+              </div>
+            ) : (
+              <ScrollArea className="h-full rounded-md border bg-muted/30">
+                <pre className="p-4 text-sm font-mono whitespace-pre-wrap break-words">
+                  {viewContent || 'No content available.'}
+                </pre>
+              </ScrollArea>
+            )}
+          </div>
+          <DialogFooter className="flex-shrink-0">
+            <Button
+              variant="outline"
+              onClick={onCopyContent}
+              disabled={viewLoading || !viewContent}
+            >
+              {copied ? (
+                <><Check className="h-4 w-4 mr-2" /> Copied!</>
+              ) : (
+                <><Copy className="h-4 w-4 mr-2" /> Copy to Clipboard</>
+              )}
+            </Button>
+            <Button variant="default" onClick={() => setViewDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

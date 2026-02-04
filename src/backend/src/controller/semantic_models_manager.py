@@ -256,6 +256,67 @@ class SemanticModelsManager:
             preview=db_obj.content_text[:max_chars] if db_obj.content_text else ""
         )
 
+    def get_content(self, model_id: str) -> Optional[Dict[str, str]]:
+        """Get the full content of a semantic model.
+        
+        For database models: returns content_text from DB.
+        For file-based models (id starts with 'file-'): reads from filesystem.
+        
+        Returns:
+            Dict with 'content', 'format', and 'name' keys, or None if not found.
+        """
+        # Handle file-based models (pseudo-IDs like 'file-databricks_ontology')
+        if model_id.startswith('file-'):
+            file_name = model_id[5:]  # Remove 'file-' prefix
+            taxonomy_dir = self._data_dir / "taxonomies"
+            
+            # Try common extensions
+            for ext in ['.ttl', '.rdf', '.owl', '.xml', '.n3', '.nt']:
+                file_path = taxonomy_dir / f"{file_name}{ext}"
+                if file_path.exists() and file_path.is_file():
+                    try:
+                        content = file_path.read_text(encoding='utf-8')
+                        # Determine format from extension
+                        fmt = 'skos' if ext in ['.ttl', '.n3', '.nt'] else 'rdfs'
+                        return {
+                            'content': content,
+                            'format': fmt,
+                            'name': file_name
+                        }
+                    except Exception as e:
+                        logger.error(f"Failed to read file-based model '{file_name}': {e}")
+                        return None
+            
+            # Try without adding extension (file_name might already include it)
+            file_path = taxonomy_dir / file_name
+            if file_path.exists() and file_path.is_file():
+                try:
+                    content = file_path.read_text(encoding='utf-8')
+                    ext = file_path.suffix.lower()
+                    fmt = 'skos' if ext in ['.ttl', '.n3', '.nt'] else 'rdfs'
+                    return {
+                        'content': content,
+                        'format': fmt,
+                        'name': file_name
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to read file-based model '{file_name}': {e}")
+                    return None
+            
+            logger.warning(f"File-based model not found: {file_name}")
+            return None
+        
+        # Handle database models
+        db_obj = semantic_models_repo.get(self._db, id=model_id)
+        if not db_obj:
+            return None
+        
+        return {
+            'content': db_obj.content_text or '',
+            'format': db_obj.format,
+            'name': db_obj.name
+        }
+
     def _to_api(self, db_obj: SemanticModelDb) -> SemanticModelApi:
         return SemanticModelApi(
             id=db_obj.id,

@@ -393,6 +393,24 @@ async def delete_semantic_model(
         )
         raise HTTPException(status_code=500, detail=f"Failed to delete semantic model: {str(e)}")
 
+@router.get('/semantic-models/{model_id}/content')
+async def get_semantic_model_content(
+    model_id: str,
+    manager: SemanticModelsManager = Depends(get_semantic_models_manager),
+    _: bool = Depends(PermissionChecker("semantic-models", FeatureAccessLevel.READ_ONLY))
+) -> dict:
+    """Get the full content of a semantic model (TTL/RDF source code)"""
+    try:
+        result = manager.get_content(model_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Semantic model not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving semantic model content for {model_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve semantic model content")
+
 @router.get('/semantic-models/concepts')
 async def list_simple_concepts(
     q: Optional[str] = Query(None, description="Simple text filter for concepts"),

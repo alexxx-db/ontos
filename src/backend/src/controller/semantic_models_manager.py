@@ -1613,30 +1613,25 @@ class SemanticModelsManager:
                 results_list = list(results)
                 logger.debug(f"SPARQL query returned {len(results_list)} results for context {context_name}")
 
-                # Process results
-                results = results_list
-                for row in results:
-                    logger.debug(f"Processing SPARQL row: {row} (type: {type(row)}, length: {len(row) if hasattr(row, '__len__') else 'N/A'})")
-
-                    # Handle different ways SPARQL results can be accessed
+                # First pass: collect unique concept IRIs to avoid duplicates from multi-label results
+                seen_iris = set()
+                unique_concept_iris = []
+                for row in results_list:
                     try:
                         if hasattr(row, 'concept'):
                             concept_iri = str(row.concept)
-                            label = str(row.label) if hasattr(row, 'label') and row.label else None
-                            comment = str(row.comment) if hasattr(row, 'comment') and row.comment else None
                         else:
-                            # Fallback to index-based access
                             concept_iri = str(row[0]) if len(row) > 0 else None
-                            label = str(row[1]) if len(row) > 1 and row[1] else None
-                            comment = str(row[2]) if len(row) > 2 and row[2] else None
-                    except Exception as e:
-                        logger.warning(f"Failed to parse SPARQL result row {row}: {e}")
+                    except Exception:
                         continue
+                    if concept_iri and concept_iri not in seen_iris:
+                        seen_iris.add(concept_iri)
+                        unique_concept_iris.append(concept_iri)
+                
+                logger.debug(f"Processing {len(unique_concept_iris)} unique concepts (from {len(results_list)} SPARQL rows)")
 
-                    if not concept_iri:
-                        logger.debug("Skipping row with no concept IRI")
-                        continue
-
+                # Second pass: process each unique concept
+                for concept_iri in unique_concept_iris:
                     concept_uri = URIRef(concept_iri)
 
                     # Build labels dictionary from all available labels with language tags
@@ -1656,6 +1651,18 @@ class SemanticModelsManager:
                     if not primary_label:
                         # Extract local name from IRI (after last # or /)
                         primary_label = concept_iri.split('#')[-1].split('/')[-1]
+
+                    # Get comment/definition from the graph
+                    comment = None
+                    # Try skos:definition first
+                    for def_literal in context.objects(concept_uri, SKOS.definition):
+                        comment = str(def_literal)
+                        break
+                    # Fall back to rdfs:comment
+                    if not comment:
+                        for comment_literal in context.objects(concept_uri, RDFS.comment):
+                            comment = str(comment_literal)
+                            break
 
                     # Determine concept type
                     if (concept_uri, RDF.type, RDFS.Class) in context:

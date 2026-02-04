@@ -364,6 +364,13 @@ class IndustryOntologyManager:
             
             logger.info(f"Imported {ontology.name} with {triple_count} triples as {created.id}")
             
+            # Rebuild the in-memory graph so concepts appear immediately
+            try:
+                self._semantic_models_manager.rebuild_graph_from_enabled()
+                logger.info("Rebuilt semantic graph after import")
+            except Exception as e:
+                logger.warning(f"Failed to rebuild graph after import: {e}")
+            
             return ImportResult(
                 success=True,
                 semantic_model_id=created.id,

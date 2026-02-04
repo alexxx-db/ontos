@@ -405,7 +405,7 @@ export default function OntologyLibraryDialog({
 
         <div className="flex-1 flex min-h-0 px-6 py-4 gap-4">
           {/* Left sidebar - Verticals */}
-          <div className="w-56 flex-shrink-0 flex flex-col border rounded-lg">
+          <div className="w-64 flex-shrink-0 flex flex-col border rounded-lg overflow-hidden">
             <div className="p-2 border-b bg-muted/50">
               <span className="text-xs font-medium text-muted-foreground uppercase">
                 Industry Verticals
@@ -427,10 +427,11 @@ export default function OntologyLibraryDialog({
                         selectedVertical === v.id && 'bg-primary/10 font-medium'
                       )}
                       onClick={() => setSelectedVertical(v.id)}
+                      title={v.name}
                     >
-                      <span className="text-lg">{v.icon}</span>
-                      <span className="truncate">{v.name}</span>
-                      <Badge variant="secondary" className="ml-auto text-xs">
+                      <span className="text-lg flex-shrink-0">{v.icon}</span>
+                      <span className="truncate flex-1 min-w-0">{v.name}</span>
+                      <Badge variant="secondary" className="flex-shrink-0 text-xs">
                         {v.ontology_count}
                       </Badge>
                     </button>

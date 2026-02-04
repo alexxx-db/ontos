@@ -143,7 +143,17 @@ class SemanticModelsManager:
                 sanitized_name = _sanitize_context_name(db_obj.name)
                 context_name = f"urn:semantic-model:{sanitized_name}"
                 temp_graph = Graph()
-                fmt = 'turtle' if db_obj.format == 'skos' else 'xml'
+                # Detect format from content - Turtle content starts with @prefix or @base
+                content_stripped = db_obj.content_text.strip()
+                if content_stripped.startswith('@prefix') or content_stripped.startswith('@base'):
+                    fmt = 'turtle'
+                elif content_stripped.startswith('{') or content_stripped.startswith('['):
+                    fmt = 'json-ld'
+                elif content_stripped.startswith('<?xml') or content_stripped.startswith('<rdf:RDF'):
+                    fmt = 'xml'
+                else:
+                    # Default based on format field
+                    fmt = 'turtle' if db_obj.format in ('skos', 'rdfs') else 'xml'
                 temp_graph.parse(data=db_obj.content_text, format=fmt)
                 self._import_graph_to_db(
                     graph=temp_graph,

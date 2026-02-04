@@ -361,20 +361,49 @@ class SemanticModelsManager:
 
     # --- Graph Management ---
     def _parse_into_graph(self, content_text: str, fmt: str) -> None:
-        if fmt == "skos":
-            # Common serializations for SKOS examples: turtle
-            self._graph.parse(data=content_text, format="turtle")
+        """Parse content into the main graph.
+        
+        Auto-detects format from content since the fmt field is often unreliable.
+        """
+        if not content_text or not content_text.strip():
+            return
+            
+        # Auto-detect format from content
+        content_stripped = content_text.strip()
+        if content_stripped.startswith('@prefix') or content_stripped.startswith('@base'):
+            parse_format = 'turtle'
+        elif content_stripped.startswith('{') or content_stripped.startswith('['):
+            parse_format = 'json-ld'
+        elif content_stripped.startswith('<?xml') or content_stripped.startswith('<rdf:RDF'):
+            parse_format = 'xml'
         else:
-            # Assume RDF/XML for RDFS
-            self._graph.parse(data=content_text, format="xml")
+            # Default to turtle for modern ontologies
+            parse_format = 'turtle'
+        
+        self._graph.parse(data=content_text, format=parse_format)
 
     def _parse_into_graph_context(self, content_text: str, fmt: str, context: Graph) -> None:
-        """Parse content into a specific named graph context"""
-        if fmt == "skos":
-            context.parse(data=content_text, format="turtle")
+        """Parse content into a specific named graph context.
+        
+        Auto-detects format from content since the fmt field is often unreliable
+        (e.g., 'rdfs' may contain Turtle, JSON-LD, or RDF/XML).
+        """
+        if not content_text or not content_text.strip():
+            return
+            
+        # Auto-detect format from content
+        content_stripped = content_text.strip()
+        if content_stripped.startswith('@prefix') or content_stripped.startswith('@base'):
+            parse_format = 'turtle'
+        elif content_stripped.startswith('{') or content_stripped.startswith('['):
+            parse_format = 'json-ld'
+        elif content_stripped.startswith('<?xml') or content_stripped.startswith('<rdf:RDF'):
+            parse_format = 'xml'
         else:
-            # Assume RDF/XML for RDFS
-            context.parse(data=content_text, format="xml")
+            # Default to turtle for modern ontologies
+            parse_format = 'turtle'
+        
+        context.parse(data=content_text, format=parse_format)
 
     # --- RDF Triple Persistence Methods ---
     
@@ -894,7 +923,9 @@ class SemanticModelsManager:
                         ?concept rdfs:comment ?someComment .
                     }
                     # Filter out blank nodes (anonymous classes, restrictions, etc.)
+                    # Note: isBlank() + also filter urn:ontos:bnode: URIs (converted blank nodes)
                     FILTER(!isBlank(?concept))
+                    FILTER(!STRSTARTS(STR(?concept), "urn:ontos:bnode:"))
                     
                     # Filter out basic RDF/RDFS/SKOS/OWL vocabulary terms
                     FILTER(!STRSTARTS(STR(?concept), "http://www.w3.org/1999/02/22-rdf-syntax-ns#"))
@@ -1564,7 +1595,9 @@ class SemanticModelsManager:
                 BIND(COALESCE(STR(?skos_definition), STR(?rdfs_comment)) AS ?comment)
 
                 # Filter out blank nodes (anonymous classes, restrictions, etc.)
+                # Note: isBlank() + also filter urn:ontos:bnode: URIs (converted blank nodes)
                 FILTER(!isBlank(?concept))
+                FILTER(!STRSTARTS(STR(?concept), "urn:ontos:bnode:"))
                 
                 # Filter out basic RDF/RDFS/SKOS/OWL vocabulary terms
                 FILTER(!STRSTARTS(STR(?concept), "http://www.w3.org/1999/02/22-rdf-syntax-ns#"))

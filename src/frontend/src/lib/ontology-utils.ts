@@ -20,9 +20,25 @@ export function resolveLabel(
 ): string {
   const labels = concept.labels || {};
   
+  // Helper to find label by language, including regional variants (en-US, en-GB, etc.)
+  const findByLang = (lang: string): string | undefined => {
+    // Exact match first
+    if (labels[lang]) return labels[lang];
+    // Try regional variants (e.g., 'en' matches 'en-US', 'en-GB')
+    const prefix = lang + '-';
+    for (const [key, value] of Object.entries(labels)) {
+      if (key.startsWith(prefix)) return value;
+    }
+    return undefined;
+  };
+  
   // Priority: preferred lang > English > no lang tag > any available > IRI local name
-  if (labels[preferredLang]) return labels[preferredLang];
-  if (labels['en']) return labels['en'];
+  const preferred = findByLang(preferredLang);
+  if (preferred) return preferred;
+  
+  const english = findByLang('en');
+  if (english) return english;
+  
   if (labels['']) return labels[''];  // No language tag
   
   const anyLabel = Object.values(labels)[0];
@@ -39,9 +55,10 @@ export function resolveLabel(
 
 /**
  * Get all available language codes from a set of concepts.
+ * Normalizes regional variants (en-US, en-GB) to base language codes (en).
  * 
  * @param concepts Array of ontology concepts
- * @returns Sorted array of unique language codes (e.g., ['en', 'de', 'ja'])
+ * @returns Sorted array of unique base language codes (e.g., ['en', 'de', 'ja'])
  */
 export function getAvailableLanguages(concepts: OntologyConcept[]): string[] {
   const languages = new Set<string>();
@@ -50,7 +67,9 @@ export function getAvailableLanguages(concepts: OntologyConcept[]): string[] {
     if (concept.labels) {
       for (const lang of Object.keys(concept.labels)) {
         if (lang) {  // Skip empty string (no language tag)
-          languages.add(lang);
+          // Normalize regional variants to base language (en-US -> en)
+          const baseLang = lang.split('-')[0];
+          languages.add(baseLang);
         }
       }
     }

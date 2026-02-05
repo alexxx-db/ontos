@@ -169,6 +169,10 @@
     "deleteConfirmDescription": "Esta acción no se puede deshacer.",
     "unsavedChanges": "Tiene cambios sin guardar"
   },
+  "terms": {
+    "concepts": "conceptos",
+    "properties": "propiedades"
+  },
   "toast": {
     "success": "Éxito",
     "error": "Error",

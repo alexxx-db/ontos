@@ -169,6 +169,10 @@
     "deleteConfirmDescription": "Questa azione non può essere annullata.",
     "unsavedChanges": "Hai modifiche non salvate"
   },
+  "terms": {
+    "concepts": "concetti",
+    "properties": "proprietà"
+  },
   "toast": {
     "success": "Successo",
     "error": "Errore",

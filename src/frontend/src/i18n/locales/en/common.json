@@ -172,6 +172,10 @@
     "deleteConfirmDescription": "This action cannot be undone.",
     "unsavedChanges": "You have unsaved changes"
   },
+  "terms": {
+    "concepts": "concepts",
+    "properties": "properties"
+  },
   "toast": {
     "success": "Success",
     "error": "Error",

@@ -169,6 +169,10 @@
     "deleteConfirmDescription": "Cette action est irréversible.",
     "unsavedChanges": "Vous avez des modifications non enregistrées"
   },
+  "terms": {
+    "concepts": "concepts",
+    "properties": "propriétés"
+  },
   "toast": {
     "success": "Succès",
     "error": "Erreur",

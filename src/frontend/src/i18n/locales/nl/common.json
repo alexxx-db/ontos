@@ -167,6 +167,10 @@
     "deleteConfirmDescription": "Deze actie kan niet ongedaan worden gemaakt.",
     "unsavedChanges": "Je hebt niet-opgeslagen wijzigingen"
   },
+  "terms": {
+    "concepts": "concepten",
+    "properties": "eigenschappen"
+  },
   "toast": {
     "success": "Succes",
     "error": "Fout",

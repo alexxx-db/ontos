@@ -169,6 +169,10 @@
     "deleteConfirmDescription": "この操作は元に戻せません。",
     "unsavedChanges": "未保存の変更があります"
   },
+  "terms": {
+    "concepts": "コンセプト",
+    "properties": "プロパティ"
+  },
   "toast": {
     "success": "成功",
     "error": "エラー",

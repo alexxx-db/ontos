@@ -167,6 +167,10 @@
     "deleteConfirmDescription": "Diese Aktion kann nicht rückgängig gemacht werden.",
     "unsavedChanges": "Sie haben ungespeicherte Änderungen"
   },
+  "terms": {
+    "concepts": "Konzepte",
+    "properties": "Eigenschaften"
+  },
   "toast": {
     "success": "Erfolg",
     "error": "Fehler",

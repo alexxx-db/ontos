@@ -392,9 +392,9 @@ export const ConceptsTab: React.FC<ConceptsTabProps> = ({
   };
   
   return (
-    <div className="h-full grid grid-cols-12 gap-4">
+    <div className="grid grid-cols-12 gap-4">
       {/* Left Panel - Concept Tree */}
-      <div className="col-span-4 border rounded-lg flex flex-col bg-card">
+      <div className="col-span-4 border rounded-lg flex flex-col bg-card overflow-hidden max-h-[calc(100vh-280px)]">
         {/* Search */}
         <div className="p-4 border-b">
           <div className="relative">
@@ -550,8 +550,8 @@ export const ConceptsTab: React.FC<ConceptsTabProps> = ({
         )}
         
         {/* Concept Tree */}
-        <ScrollArea className="flex-1">
-          <div className="p-2">
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="p-2 min-w-max">
             {rootConcepts.map(id => renderTreeItem(id, 0))}
             
             {rootConcepts.length === 0 && (
@@ -561,7 +561,7 @@ export const ConceptsTab: React.FC<ConceptsTabProps> = ({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
         
         {/* Create button */}
         {canEdit && (

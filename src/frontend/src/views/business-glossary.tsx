@@ -440,7 +440,7 @@ export default function BusinessGlossaryView() {
   const totalProperties = stats?.total_properties ?? Object.values(groupedProperties).flat().length;
   
   return (
-    <div className="flex flex-col h-full py-6 min-h-0 overflow-hidden">
+    <div className="flex flex-col py-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
@@ -494,7 +494,7 @@ export default function BusinessGlossaryView() {
         </div>
       ) : (
         /* Tabs */
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col">
           <TabsList className="w-fit">
             <TabsTrigger value="concepts" className="gap-2">
               <Layers className="h-4 w-4" />
@@ -516,7 +516,7 @@ export default function BusinessGlossaryView() {
             </TabsTrigger>
           </TabsList>
           
-          <TabsContent value="concepts" className="flex-1 mt-4 min-h-0 overflow-hidden">
+          <TabsContent value="concepts" className="flex-1 mt-4">
             <ConceptsTab
               collections={collections}
               groupedConcepts={groupedConcepts}
@@ -545,7 +545,7 @@ export default function BusinessGlossaryView() {
             />
           </TabsContent>
           
-          <TabsContent value="collections" className="flex-1 mt-4 min-h-0 overflow-hidden">
+          <TabsContent value="collections" className="flex-1 mt-4">
             <CollectionsTab
               collections={collections}
               selectedCollection={selectedCollection}
@@ -558,7 +558,7 @@ export default function BusinessGlossaryView() {
             />
           </TabsContent>
           
-          <TabsContent value="graph" className="flex-1 mt-4 min-h-0 overflow-hidden">
+          <TabsContent value="graph" className="flex-1 mt-4">
             <GraphTab
               concepts={filteredConcepts}
               hiddenRoots={hiddenRoots}

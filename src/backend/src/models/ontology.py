@@ -130,6 +130,9 @@ class OntologyConcept(BaseModel):
     source_context: Optional[str] = None  # The taxonomy/ontology source (collection IRI)
     parent_concepts: List[str] = []  # Parent class/concept IRIs
     child_concepts: List[str] = []   # Child class/concept IRIs
+    related_concepts: List[str] = [] # skos:related IRIs
+    domain: Optional[str] = None     # For properties: rdfs:domain
+    range: Optional[str] = None      # For properties: rdfs:range
     properties: List[OntologyProperty] = []
     tagged_assets: List[Dict[str, Any]] = []  # Linked data assets
     synonyms: List[str] = []

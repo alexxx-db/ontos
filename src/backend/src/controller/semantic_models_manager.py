@@ -1770,6 +1770,21 @@ class SemanticModelsManager:
                     elif context_name.startswith("urn:app-entities"):
                         source_context = "Application Entities"
 
+                    # For properties, extract domain/range
+                    domain_val = None
+                    range_val = None
+                    if concept_type == "property":
+                        domains = list(context.objects(concept_uri, RDFS.domain))
+                        # Filter out blank nodes
+                        domains = [d for d in domains if not str(d).startswith("urn:ontos:bnode:") and not str(d).startswith("n")]
+                        domain_val = str(domains[0]) if domains else None
+                        ranges = list(context.objects(concept_uri, RDFS.range))
+                        ranges = [r for r in ranges if not str(r).startswith("urn:ontos:bnode:") and not str(r).startswith("n")]
+                        range_val = str(ranges[0]) if ranges else None
+
+                    # Extract related concepts (skos:related)
+                    related_concepts = [str(r) for r in context.objects(concept_uri, SKOS.related)]
+
                     concepts.append(OntologyConcept(
                         iri=concept_iri,
                         label=primary_label,
@@ -1778,7 +1793,10 @@ class SemanticModelsManager:
                         comments=comments,
                         concept_type=concept_type,
                         source_context=source_context,
-                        parent_concepts=parent_concepts
+                        parent_concepts=parent_concepts,
+                        domain=domain_val,
+                        range=range_val,
+                        related_concepts=related_concepts
                     ))
             except Exception as e:
                 logger.warning(f"Failed to query concepts in context {context_name}: {e}")

@@ -82,7 +82,8 @@ export interface OntologyConcept {
   iri: string;
   label?: string;  // Primary label (computed from labels dict)
   labels?: Record<string, string>;  // Multi-language labels: {"en": "Dataset", "ja": "データセット"}
-  comment?: string;
+  comment?: string;  // Primary comment (computed from comments dict)
+  comments?: Record<string, string>;  // Multi-language comments: {"en": "A curated...", "ja": "..."}
   concept_type: 'class' | 'concept' | 'individual' | 'property' | 'term';
   source_context?: string;
   parent_concepts: string[];

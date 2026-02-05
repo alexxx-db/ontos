@@ -1658,23 +1658,43 @@ class SemanticModelsManager:
                         if lang not in labels:
                             labels[lang] = str(label_literal)
                     
-                    # Compute primary label with fallback chain: en > "" (no lang) > any > IRI local name
-                    primary_label = labels.get('en') or labels.get('') or (list(labels.values())[0] if labels else None)
-                    if not primary_label:
-                        # Extract local name from IRI (after last # or /)
-                        primary_label = concept_iri.split('#')[-1].split('/')[-1]
+                    # Helper to find label by language with regional variant support (en-US, en-GB -> en)
+                    def find_by_lang(d: dict, lang: str) -> str | None:
+                        if lang in d:
+                            return d[lang]
+                        # Try regional variants (e.g., 'en' matches 'en-US', 'en-GB')
+                        prefix = lang + '-'
+                        for k, v in d.items():
+                            if k.startswith(prefix):
+                                return v
+                        return None
+                    
+                    # Compute primary label with fallback chain: en/en-* > "" (no lang) > any > IRI local name
+                    primary_label = (
+                        find_by_lang(labels, 'en') or
+                        labels.get('') or
+                        (next(iter(labels.values()), None) if labels else None) or
+                        concept_iri.split('#')[-1].split('/')[-1]
+                    )
 
-                    # Get comment/definition from the graph
-                    comment = None
-                    # Try skos:definition first
+                    # Build comments dictionary from all available definitions/comments with language tags
+                    comments = {}
+                    # Get skos:definition values (preferred)
                     for def_literal in context.objects(concept_uri, SKOS.definition):
-                        comment = str(def_literal)
-                        break
-                    # Fall back to rdfs:comment
-                    if not comment:
-                        for comment_literal in context.objects(concept_uri, RDFS.comment):
-                            comment = str(comment_literal)
-                            break
+                        lang = getattr(def_literal, 'language', None) or ""
+                        comments[lang] = str(def_literal)
+                    # Get rdfs:comment values (fallback, don't overwrite definition)
+                    for comment_literal in context.objects(concept_uri, RDFS.comment):
+                        lang = getattr(comment_literal, 'language', None) or ""
+                        if lang not in comments:
+                            comments[lang] = str(comment_literal)
+                    
+                    # Compute primary comment with same fallback chain as labels
+                    comment = (
+                        find_by_lang(comments, 'en') or
+                        comments.get('') or
+                        (next(iter(comments.values()), None) if comments else None)
+                    )
 
                     # Determine concept type with comprehensive type checking
                     # Check for classes first
@@ -1755,6 +1775,7 @@ class SemanticModelsManager:
                         label=primary_label,
                         labels=labels,
                         comment=comment,
+                        comments=comments,
                         concept_type=concept_type,
                         source_context=source_context,
                         parent_concepts=parent_concepts

@@ -54,6 +54,54 @@ export function resolveLabel(
 }
 
 /**
+ * Resolve the best comment/definition for a concept based on language preference.
+ * 
+ * Priority chain:
+ * 1. Preferred language (e.g., user's selected language)
+ * 2. English ('en')
+ * 3. No language tag ('')
+ * 4. Any available comment
+ * 5. Fallback to legacy comment field
+ * 
+ * @param concept The ontology concept
+ * @param preferredLang The preferred language code (e.g., 'en', 'ja', 'de')
+ * @returns The best available comment for display, or undefined if none
+ */
+export function resolveComment(
+  concept: OntologyConcept,
+  preferredLang: string = 'en'
+): string | undefined {
+  const comments = concept.comments || {};
+  
+  // Helper to find comment by language, including regional variants (en-US, en-GB, etc.)
+  const findByLang = (lang: string): string | undefined => {
+    // Exact match first
+    if (comments[lang]) return comments[lang];
+    // Try regional variants (e.g., 'en' matches 'en-US', 'en-GB')
+    const prefix = lang + '-';
+    for (const [key, value] of Object.entries(comments)) {
+      if (key.startsWith(prefix)) return value;
+    }
+    return undefined;
+  };
+  
+  // Priority: preferred lang > English > no lang tag > any available > legacy comment
+  const preferred = findByLang(preferredLang);
+  if (preferred) return preferred;
+  
+  const english = findByLang('en');
+  if (english) return english;
+  
+  if (comments['']) return comments[''];  // No language tag
+  
+  const anyComment = Object.values(comments)[0];
+  if (anyComment) return anyComment;
+  
+  // Legacy fallback: use the comment field if available
+  return concept.comment || undefined;
+}
+
+/**
  * Get all available language codes from a set of concepts.
  * Normalizes regional variants (en-US, en-GB) to base language codes (en).
  * 

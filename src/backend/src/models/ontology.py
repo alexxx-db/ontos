@@ -124,7 +124,8 @@ class OntologyConcept(BaseModel):
     iri: str
     label: Optional[str] = None  # Primary label (computed from labels dict)
     labels: Dict[str, str] = {}  # Multi-language labels: {"en": "Dataset", "ja": "データセット"}
-    comment: Optional[str] = None
+    comment: Optional[str] = None  # Primary comment (computed from comments dict)
+    comments: Dict[str, str] = {}  # Multi-language comments: {"en": "A curated...", "ja": "..."}
     concept_type: str  # 'class' | 'concept' | 'individual' | 'term'
     source_context: Optional[str] = None  # The taxonomy/ontology source (collection IRI)
     parent_concepts: List[str] = []  # Parent class/concept IRIs

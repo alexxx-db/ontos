@@ -43,7 +43,7 @@ import type {
 } from '@/types/ontology';
 import { NodeLinksPanel } from '@/components/knowledge/node-links-panel';
 import EntityMetadataPanel from '@/components/metadata/entity-metadata-panel';
-import { resolveLabel, getAvailableLanguages, getLanguageDisplayName } from '@/lib/ontology-utils';
+import { resolveLabel, resolveComment, getAvailableLanguages, getLanguageDisplayName } from '@/lib/ontology-utils';
 
 interface ConceptsTabProps {
   collections: KnowledgeCollection[];
@@ -632,10 +632,10 @@ export const ConceptsTab: React.FC<ConceptsTabProps> = ({
               </div>
               
               {/* Definition */}
-              {selectedConcept.comment && (
+              {(selectedConcept.comments || selectedConcept.comment) && (
                 <div className="bg-muted/30 rounded-lg p-4">
                   <h3 className="text-sm font-medium mb-2">{t('semantic-models:fields.definition')}</h3>
-                  <p className="text-sm">{selectedConcept.comment}</p>
+                  <p className="text-sm">{resolveComment(selectedConcept, selectedLanguage)}</p>
                 </div>
               )}
               

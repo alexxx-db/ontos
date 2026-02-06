@@ -1736,7 +1736,7 @@ class WorkflowExecutor:
         
         entity_type = trigger_context.entity_type
         entity_id = trigger_context.entity_id
-        trigger_type = workflow.trigger.trigger_type if workflow.trigger else None
+        trigger_type = workflow.trigger.type if workflow.trigger else None
         
         if not entity_type or not entity_id or not trigger_type:
             return

@@ -104,11 +104,22 @@ export default function NotificationBell() {
   ) => {
     setWorkflowApprovalLoading(`${notificationId}-${approved ? 'approve' : 'reject'}`);
     try {
-      await api.post('/workflows/handle-approval', {
+      const response = await api.post('/api/workflows/handle-approval', {
         execution_id: executionId,
         approved,
         message: approved ? 'Approved via notification' : 'Rejected via notification',
       });
+      
+      // Check for error in response (useApi doesn't throw on HTTP errors)
+      if (response.error) {
+        console.error('Failed to handle workflow approval:', response.error);
+        toast({
+          title: 'Error',
+          description: response.error || 'Failed to process approval. Please try again.',
+          variant: 'destructive',
+        });
+        return;
+      }
       
       toast({
         title: approved ? 'Approved' : 'Rejected',
@@ -319,52 +330,58 @@ export default function NotificationBell() {
                     </Button>
                   )}
                   {notification.action_type === 'workflow_approval' && notification.action_payload?.execution_id && (
-                    <div className="flex gap-1 mt-2">
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="h-7 px-2 text-xs gap-1 bg-green-600 hover:bg-green-700"
-                        disabled={workflowApprovalLoading !== null}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleWorkflowApproval(
-                            notification.id,
-                            notification.action_payload?.execution_id,
-                            true,
-                            notification.action_payload?.entity_name
-                          );
-                        }}
-                      >
-                        {workflowApprovalLoading === `${notification.id}-approve` ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Check className="h-3.5 w-3.5" />
-                        )}
-                        Approve
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="h-7 px-2 text-xs gap-1"
-                        disabled={workflowApprovalLoading !== null}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleWorkflowApproval(
-                            notification.id,
-                            notification.action_payload?.execution_id,
-                            false,
-                            notification.action_payload?.entity_name
-                          );
-                        }}
-                      >
-                        {workflowApprovalLoading === `${notification.id}-reject` ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <XCircle className="h-3.5 w-3.5" />
-                        )}
-                        Reject
-                      </Button>
-                    </div>
+                    notification.action_payload?.handled ? (
+                      <div className="text-xs text-muted-foreground mt-2 italic">
+                        {notification.action_payload?.decision === 'approved' ? '✓ Approved' : '✗ Rejected'}
+                      </div>
+                    ) : (
+                      <div className="flex gap-1 mt-2">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1 bg-green-600 hover:bg-green-700"
+                          disabled={workflowApprovalLoading !== null}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleWorkflowApproval(
+                              notification.id,
+                              notification.action_payload?.execution_id,
+                              true,
+                              notification.action_payload?.entity_name
+                            );
+                          }}
+                        >
+                          {workflowApprovalLoading === `${notification.id}-approve` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                          Approve
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          disabled={workflowApprovalLoading !== null}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleWorkflowApproval(
+                              notification.id,
+                              notification.action_payload?.execution_id,
+                              false,
+                              notification.action_payload?.entity_name
+                            );
+                          }}
+                        >
+                          {workflowApprovalLoading === `${notification.id}-reject` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <XCircle className="h-3.5 w-3.5" />
+                          )}
+                          Reject
+                        </Button>
+                      </div>
+                    )
                   )}
                   {(notification.type === 'job_progress' || notification.action_type === 'job_progress') && (notification.data || notification.action_payload) && (
                     <div className="mt-2">

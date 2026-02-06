@@ -5,6 +5,7 @@ Provides CRUD operations for workflow definitions and execution management.
 """
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
@@ -830,6 +831,12 @@ async def handle_workflow_approval(
                 payload = json.loads(notif.action_payload) if isinstance(notif.action_payload, str) else notif.action_payload
                 if payload and payload.get('execution_id') == execution_id:
                     notif.read = True
+                    # Mark the action as handled with decision info
+                    payload['handled'] = True
+                    payload['decision'] = 'approved' if approved else 'rejected'
+                    payload['handled_by'] = user_email
+                    payload['handled_at'] = datetime.utcnow().isoformat()
+                    notif.action_payload = json.dumps(payload)
                     db.add(notif)
             except (json.JSONDecodeError, TypeError):
                 continue

@@ -292,9 +292,9 @@ export default function UCAssetLookupDialog({
     
     let children: CatalogTreeItem[] = []
     
-    if (node.type === UCAssetType.CATALOG || node.type === 'catalog') {
+    if (node.type === UCAssetType.CATALOG) {
       children = await fetchSchemas(node.name)
-    } else if (node.type === UCAssetType.SCHEMA || node.type === 'schema') {
+    } else if (node.type === UCAssetType.SCHEMA) {
       const [catalogName] = node.id.split('.')
       children = await fetchObjects(catalogName, node.name, typeFilter)
     }
@@ -401,9 +401,9 @@ export default function UCAssetLookupDialog({
     
     let children: CatalogTreeItem[] = []
     
-    if (node.type === UCAssetType.CATALOG || node.type === 'catalog') {
+    if (node.type === UCAssetType.CATALOG) {
       children = await fetchSchemas(node.name)
-    } else if (node.type === UCAssetType.SCHEMA || node.type === 'schema') {
+    } else if (node.type === UCAssetType.SCHEMA) {
       const [catalogName] = node.id.split('.')
       children = await fetchObjects(catalogName, node.name, typeFilter)
     }
@@ -681,7 +681,7 @@ export default function UCAssetLookupDialog({
     node: CatalogTreeItem,
     level: number
   ): React.ReactNode => {
-    const { segments, typeFilter } = parsedSearch
+    // parsedSearch accessed via closure for filtering
     const isExpanded = expanded.has(node.id)
     const isLoading = loadingNodes.has(node.id)
     const hasChildren = node.hasChildren || (node.children && node.children.length > 0)

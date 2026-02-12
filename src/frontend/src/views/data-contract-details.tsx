@@ -1856,11 +1856,11 @@ export default function DataContractDetails() {
                   <div className="flex gap-2">
                     {contract.schema[0].physicalName && (
                       <a
-                        href={`/catalog-explorer?table=${encodeURIComponent(contract.schema[0].physicalName)}`}
+                        href={`/catalog-commander?table=${encodeURIComponent(contract.schema[0].physicalName)}`}
                         className="flex items-center gap-1.5 text-sm text-primary hover:underline"
                         target="_blank"
                         rel="noopener noreferrer"
-                        title={`Open ${contract.schema[0].physicalName} in Catalog Explorer`}
+                        title={`Open ${contract.schema[0].physicalName} in Catalog Commander`}
                       >
                         <Database className="h-4 w-4" />
                         {contract.schema[0].physicalName}
@@ -1997,11 +1997,11 @@ export default function DataContractDetails() {
                     <div className="flex gap-2">
                       {contract.schema[selectedSchemaIndex]?.physicalName && (
                         <a
-                          href={`/catalog-explorer?table=${encodeURIComponent(contract.schema[selectedSchemaIndex].physicalName)}`}
+                          href={`/catalog-commander?table=${encodeURIComponent(contract.schema[selectedSchemaIndex].physicalName)}`}
                           className="flex items-center gap-1.5 text-sm text-primary hover:underline"
                           target="_blank"
                           rel="noopener noreferrer"
-                          title={`Open ${contract.schema[selectedSchemaIndex].physicalName} in Catalog Explorer`}
+                          title={`Open ${contract.schema[selectedSchemaIndex].physicalName} in Catalog Commander`}
                         >
                           <Database className="h-4 w-4" />
                           {contract.schema[selectedSchemaIndex].physicalName}
@@ -2144,11 +2144,11 @@ export default function DataContractDetails() {
                     <div className="flex gap-2">
                       {contract.schema[selectedSchemaIndex]?.physicalName && (
                         <a
-                          href={`/catalog-explorer?table=${encodeURIComponent(contract.schema[selectedSchemaIndex].physicalName)}`}
+                          href={`/catalog-commander?table=${encodeURIComponent(contract.schema[selectedSchemaIndex].physicalName)}`}
                           className="flex items-center gap-1.5 text-sm text-primary hover:underline"
                           target="_blank"
                           rel="noopener noreferrer"
-                          title={`Open ${contract.schema[selectedSchemaIndex].physicalName} in Catalog Explorer`}
+                          title={`Open ${contract.schema[selectedSchemaIndex].physicalName} in Catalog Commander`}
                         >
                           <Database className="h-4 w-4" />
                           {contract.schema[selectedSchemaIndex].physicalName}

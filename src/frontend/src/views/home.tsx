@@ -18,6 +18,10 @@ import RequestRoleSection from '@/components/home/request-role-section';
 import QuickActions from '@/components/home/quick-actions';
 import RecentActivity from '@/components/home/recent-activity';
 import { useUserStore } from '@/stores/user-store';
+import ComplianceTrendMini from '@/components/home/compliance-trend-mini';
+import ContractStatusBreakdown from '@/components/home/contract-status-breakdown';
+import type { DataContractListItem } from '@/types/data-contract';
+import { DataProductStatus } from '@/types/data-product';
 
 interface Stats {
   dataContracts: { count: number; loading: boolean; error: string | null };
@@ -63,6 +67,8 @@ export default function Home() {
   const [complianceData, setComplianceData] = useState<ComplianceData[]>([]);
   const [complianceLoading, setComplianceLoading] = useState(true);
   const [complianceError, setComplianceError] = useState<string | null>(null);
+  const [contracts, setContracts] = useState<DataContractListItem[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
   const allowedMaturities = useFeatureVisibilityStore((state) => state.allowedMaturities);
   const { permissions, isLoading: permissionsLoading, hasPermission, requestableRoles, appliedRoleId } = usePermissions();
 
@@ -73,13 +79,16 @@ export default function Home() {
         return response.json();
         })
       .then(data => {
+        const productsArray = Array.isArray(data) ? data : [];
+        setProducts(productsArray);
         setStats(prev => ({
           ...prev,
-          dataProducts: { count: Array.isArray(data) ? data.length : 0, loading: false, error: null }
+          dataProducts: { count: productsArray.length, loading: false, error: null }
         }));
       })
       .catch(error => {
         console.error('Error fetching data products:', error);
+        setProducts([]);
         setStats(prev => ({
           ...prev,
           dataProducts: { count: 0, loading: false, error: error.message }
@@ -92,13 +101,16 @@ export default function Home() {
         return response.json();
         })
       .then(data => {
+        const contractsArray = Array.isArray(data) ? data : [];
+        setContracts(contractsArray);
         setStats(prev => ({
           ...prev,
-          dataContracts: { count: Array.isArray(data) ? data.length : 0, loading: false, error: null }
+          dataContracts: { count: contractsArray.length, loading: false, error: null }
         }));
       })
       .catch(error => {
         console.error('Error fetching data contracts:', error);
+        setContracts([]);
         setStats(prev => ({
           ...prev,
           dataContracts: { count: 0, loading: false, error: error.message }
@@ -295,6 +307,55 @@ export default function Home() {
 
   const isComplianceVisible = filteredSummaryTiles.some(tile => tile.id === 'compliance');
 
+  // Calculate contract status breakdown - show actual unique statuses
+  const contractStatusBreakdown = useMemo(() => {
+    // Initialize with all known contract statuses (from API)
+    const statusMap = new Map<string, number>([
+      ['active', 0],
+      ['draft', 0],
+      ['deprecated', 0],
+      ['retired', 0]
+    ]);
+
+    // Count contracts by actual status
+    contracts.forEach(contract => {
+      const status = (contract.status || '').toLowerCase();
+      if (statusMap.has(status)) {
+        statusMap.set(status, (statusMap.get(status) || 0) + 1);
+      }
+    });
+
+    // Return in fixed order: active, draft, deprecated, retired
+    return [
+      { status: 'active', count: statusMap.get('active') || 0 },
+      { status: 'draft', count: statusMap.get('draft') || 0 },
+      { status: 'deprecated', count: statusMap.get('deprecated') || 0 },
+      { status: 'retired', count: statusMap.get('retired') || 0 }
+    ];
+  }, [contracts]);
+
+  // Calculate product status breakdown - show top 4 most-used statuses
+  const productStatusBreakdown = useMemo(() => {
+    // Initialize with all possible product statuses set to 0
+    const statusMap = new Map<string, number>(
+      Object.values(DataProductStatus).map(status => [status, 0])
+    );
+
+    // Count products by actual status
+    products.forEach(product => {
+      const status = (product.status || '').toLowerCase();
+      if (statusMap.has(status)) {
+        statusMap.set(status, (statusMap.get(status) || 0) + 1);
+      }
+    });
+
+    // Convert to array, sort by count (descending), and take top 4
+    return Array.from(statusMap.entries())
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [products]);
+
   const hasAnyAccess = useMemo(() => {
       if (permissionsLoading || !permissions) return false;
       return Object.values(permissions).some(level => level !== FeatureAccessLevel.NONE);
@@ -356,36 +417,63 @@ export default function Home() {
             ) : filteredSummaryTiles.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 {filteredSummaryTiles.map((tile) => (
-                  <Link key={tile.title} to={tile.link} className="block group">
-                    <Card className="transition-colors h-full group-hover:bg-accent/50">
-                      <CardContent className="p-6 flex flex-col justify-between h-full">
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <CardTitle className="text-sm font-medium">
-                              {tile.title}
-                            </CardTitle>
-                            <div className="h-4 w-4 text-muted-foreground">
+                  <Card key={tile.title} className="transition-colors h-full">
+                    <CardContent className="p-6 flex flex-col justify-between h-full">
+                      <div>
+                        {/* Icon, Title, and Value in one row */}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <div className="h-4 w-4 text-muted-foreground flex-shrink-0">
                               {tile.icon}
                             </div>
+                            <CardTitle className="text-sm font-medium">
+                              <Link to={tile.link} className="hover:underline">
+                                {tile.title}
+                              </Link>
+                            </CardTitle>
                           </div>
-                          {tile.loading ? (
-                            <div className="flex justify-center items-center h-16">
-                              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                          <div className="flex-shrink-0">
+                            {tile.loading ? (
+                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            ) : tile.error ? (
+                              <span className="text-xs text-destructive">Error</span>
+                            ) : (
+                              <Link
+                                to={tile.link}
+                                className="text-3xl font-bold hover:underline"
+                              >
+                                {tile.value}
+                              </Link>
+                            )}
+                          </div>
+                        </div>
+
+                          {/* Description below */}
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {tile.description}
+                          </p>
+
+                          {/* Embed compact chart in Compliance tile */}
+                          {tile.id === 'compliance' && !tile.loading && !tile.error && (
+                            <div className="-mx-2" style={{ marginTop: '0.5rem' }}>
+                              <ComplianceTrendMini
+                                data={complianceData.length > 0 ? complianceData.map(d => d.compliance) : undefined}
+                              />
                             </div>
-                          ) : tile.error ? (
-                            <div className="text-center text-destructive mt-2">
-                              {t('home:overview.error')}
-                            </div>
-                          ) : (
-                            <div className="text-2xl font-bold mt-2">{tile.value}</div>
+                          )}
+
+                          {/* Embed status breakdown in Data Contracts tile */}
+                          {tile.id === 'data-contracts' && !tile.loading && !tile.error && (
+                            <ContractStatusBreakdown statusCounts={contractStatusBreakdown} />
+                          )}
+
+                          {/* Embed status breakdown in Data Products tile */}
+                          {tile.id === 'data-products' && !tile.loading && !tile.error && (
+                            <ContractStatusBreakdown statusCounts={productStatusBreakdown} />
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {tile.description}
-                        </p>
                       </CardContent>
                     </Card>
-                  </Link>
                 ))}
               </div>
             ) : (
@@ -395,8 +483,8 @@ export default function Home() {
             )}
           </div>
 
-          {/* Compliance Trend */}
-          {isComplianceVisible && (
+          {/* Compliance Trend - Now embedded in tile above */}
+          {false && isComplianceVisible && (
             <div className="mb-8">
               <Card>
                 <CardHeader>

@@ -583,20 +583,48 @@ export default function Home() {
             </div>
           )}
 
+          {/* My Actions */}
+          <section className="mb-8">
+            <h2 className="text-2xl font-semibold mb-4">My Actions</h2>
+            <Card>
+              <CardContent className="p-0">
+                <div className="grid grid-cols-1 md:grid-cols-2 divide-x">
+                  {/* Approvals */}
+                  <div className="flex flex-col">
+                    <div className="px-6 py-4 border-b bg-muted/30">
+                      <h3 className="font-semibold text-sm">Approvals</h3>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <RequiredActionsSection />
+                    </div>
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div className="flex flex-col">
+                    <div className="px-6 py-4 border-b bg-muted/30">
+                      <h3 className="font-semibold text-sm">Quick Actions</h3>
+                    </div>
+                    <div className="flex-1 p-6">
+                      <QuickActions />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+
           {/* Role-based sections */}
           {orderedSections.map(section => (
-            section === HomeSection.REQUIRED_ACTIONS ? (
-              <RequiredActionsSection key={section} />
-            ) : section === HomeSection.DATA_CURATION ? (
+            section === HomeSection.REQUIRED_ACTIONS ? null :
+            section === HomeSection.DATA_CURATION ? (
               <DataCurationSection key={section} />
             ) : (
               <DiscoverySection key={section} />
             )
-          ))}
+          )).filter(Boolean)}
 
-          {/* Quick Actions and Recent Activity */}
-          <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <QuickActions />
+          {/* Recent Activity */}
+          <section className="mb-8">
             <RecentActivity />
           </section>
         </>

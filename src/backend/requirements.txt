@@ -528,9 +528,9 @@ databricks-sdk==0.102.0 \
     #   -r src/backend/requirements.in
     #   mlflow-skinny
     #   mlflow-tracing
-databricks-sql-connector==4.2.5 \
-    --hash=sha256:31cee10552ce77a830318ce9488fc5e67daca7abbcdf0d8d34f12a180bc55039 \
-    --hash=sha256:762df7568ef1998540f96b20cad6f1aaae87d1aad54e40e528f87e4524397291
+databricks-sql-connector==4.2.6 \
+    --hash=sha256:61e0f425c990a0ec52c31165ea7dd0582cc0ad90c5fbd5fc9bea59bb38faeb00 \
+    --hash=sha256:65e59f08e55dcc563c05e02e2321d5171dd9482e5792328d99ac097377795d01
     # via
     #   -r src/backend/requirements.in
     #   databricks-sqlalchemy
@@ -2564,7 +2564,6 @@ six==1.17.0 \
     # via
     #   -r src/backend/requirements.in
     #   python-dateutil
-    #   thrift
 skops==0.13.0 \
     --hash=sha256:55e2cccb18c86f5916e4cfe5acf55ed7b0eecddf08a151906414c092fa5926dc \
     --hash=sha256:66949fd3c95cbb5c80270fbe40293c0fe1e46cb4a921860e42584dd9c20ebeb1
@@ -2658,8 +2657,8 @@ threadpoolctl==3.6.0 \
     --hash=sha256:43a0b8fd5a2928500110039e43a5eed8480b918967083ea48dc3ab9f13c4a7fb \
     --hash=sha256:8ab8b4aa3491d812b623328249fab5302a68d2d71745c8a4c719a2fcaba9f44e
     # via scikit-learn
-thrift==0.20.0 \
-    --hash=sha256:4dd662eadf6b8aebe8a41729527bd69adf6ceaa2a8681cbef64d1273b3e8feba
+thrift==0.22.0 \
+    --hash=sha256:42e8276afbd5f54fe1d364858b6877bc5e5a4a5ed69f6a005b94ca4918fe1466
     # via databricks-sql-connector
 tomli==2.4.1 \
     --hash=sha256:01f520d4f53ef97964a240a035ec2a869fe1a37dde002b57ebc4417a27ccd853 \

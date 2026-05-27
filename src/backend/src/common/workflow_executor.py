@@ -1406,9 +1406,10 @@ class WebhookStepHandler(StepHandler):
                     retry_count=retry_count,
                 )
             else:
-                # Inline mode — append query params to the URL.
+                # Inline mode — append path_suffix and query params to the URL.
                 effective_url = self._compose_url(
                     base_url=url,
+                    suffix=resolved_path_suffix,
                     query_params=resolved_query_params,
                 )
                 result = self._execute_direct(
@@ -1463,14 +1464,34 @@ class WebhookStepHandler(StepHandler):
         return combined
 
     @staticmethod
-    def _compose_url(base_url: str, query_params: Dict[str, str]) -> str:
-        """Append `query_params` to `base_url` for inline-mode requests."""
-        from urllib.parse import urlencode
+    def _compose_url(base_url: str, suffix: str, query_params: Dict[str, str]) -> str:
+        """Combine `base_url` with optional path `suffix` and `query_params`.
 
-        if not query_params:
-            return base_url
-        sep = '&' if '?' in base_url else '?'
-        return f"{base_url}{sep}{urlencode(query_params, doseq=True)}"
+        Inline-mode counterpart to ``_compose_path``. The suffix is inserted into
+        the URL's path component (before any existing query string) with single
+        normalizing slashes, then ``query_params`` are appended last.
+        """
+        from urllib.parse import urlencode, urlsplit, urlunsplit
+
+        url = base_url
+        suf = (suffix or '').strip()
+        if suf:
+            parts = urlsplit(url)
+            base_path = parts.path or ''
+            if base_path and suf:
+                if base_path.endswith('/') and suf.startswith('/'):
+                    combined = base_path + suf[1:]
+                elif not base_path.endswith('/') and not suf.startswith('/'):
+                    combined = base_path + '/' + suf
+                else:
+                    combined = base_path + suf
+            else:
+                combined = base_path or suf
+            url = urlunsplit((parts.scheme, parts.netloc, combined, parts.query, parts.fragment))
+        if query_params:
+            sep = '&' if '?' in url else '?'
+            url = f"{url}{sep}{urlencode(query_params, doseq=True)}"
+        return url
 
     def _substitute_template(self, template: str, context: StepContext) -> str:
         """Delegate to module-level substitute_template."""

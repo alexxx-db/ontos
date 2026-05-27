@@ -251,3 +251,28 @@ class TestWebhookExtraParamsInlineMode:
         assert call_kwargs['url'] == 'https://api.example.com/hook?src=ontos'
         assert call_kwargs['headers']['X-Static'] == 'a'
         assert call_kwargs['headers']['X-Dyn'] == 'sales_kpis'
+
+    @patch('httpx.Client')
+    def test_inline_mode_appends_path_suffix_with_substitution(self, mock_client_cls):
+        """path_suffix must land in the URL path BEFORE the query string in inline mode."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = 'ok'
+        mock_client.request.return_value = mock_response
+
+        handler = _make_handler({
+            'url': 'https://api.example.com/hook',
+            'method': 'POST',
+            'path_suffix': '/extra/${entity_name}',
+            'additional_query_params': {'tag': '${entity_name}'},
+            'body_template': '{}',
+        })
+        result = handler.execute(_ctx())
+
+        assert result.passed is True
+        # Suffix substituted, joined with single slash, query string appended last.
+        assert mock_client.request.call_args.kwargs['url'] == (
+            'https://api.example.com/hook/extra/sales_kpis?tag=sales_kpis'
+        )

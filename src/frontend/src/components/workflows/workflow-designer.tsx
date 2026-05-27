@@ -120,6 +120,7 @@ import type {
 import {
   ALL_ENTITY_TYPES,
   isTriggerEntitySupported,
+  ENTITY_TYPE_TO_APPROVAL_ENTITY,
 } from '@/lib/workflow-labels';
 import { TriggerPicker, type TriggerTypeOption } from './trigger-picker';
 import { EntityTypeMultiselect } from './entity-type-multiselect';
@@ -528,6 +529,10 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
   const [_stepTypes, setStepTypes] = useState<StepTypeSchema[]>([]);
   const [compliancePolicies, setCompliancePolicies] = useState<CompliancePolicyRef[]>([]);
   const [availableRoles, setAvailableRoles] = useState<{ id: string; name: string; source: 'app' | 'business'; has_groups?: boolean; category?: string; description?: string }[]>([]);
+  // approverRoles is the approval-entity-filtered subset of availableRoles used
+  // specifically in the Approvers (Role) picker. It is re-computed whenever
+  // entityTypes changes so the dropdown tracks the trigger configuration.
+  const [approverRoles, setApproverRoles] = useState<typeof availableRoles>([]);
   const [httpConnections, setHttpConnections] = useState<HttpConnectionRef[]>([]);
   const [triggerTypeOptions, setTriggerTypeOptions] = useState<TriggerTypeOption[]>([]);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
@@ -855,6 +860,61 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
     });
     return map;
   }, [availableRoles]);
+
+  // Re-compute approverRoles whenever entityTypes or the base role list changes.
+  // For each entity type that has an ApprovalEntity mapping we fetch the
+  // backend-filtered list, then intersect across all mapped types so only roles
+  // eligible to approve EVERY entity type are shown. Entity types without a
+  // mapping (e.g. 'table', 'catalog') are ignored for filtering purposes —
+  // if ALL entity types are unmapped the full role list is used.
+  useEffect(() => {
+    const requiredKeys = entityTypes
+      .map(et => ENTITY_TYPE_TO_APPROVAL_ENTITY[et])
+      .filter((k): k is string => k !== undefined);
+
+    if (requiredKeys.length === 0) {
+      // No approval-mapped entity types: show all roles (backward compat)
+      setApproverRoles(availableRoles);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchIntersection = async () => {
+      try {
+        const perKeyRoles = await Promise.all(
+          requiredKeys.map(key =>
+            get<typeof availableRoles>(`/api/workflows/roles?approval_entity=${encodeURIComponent(key)}`)
+              .then(r => r.data ?? [])
+          )
+        );
+
+        if (cancelled) return;
+
+        if (perKeyRoles.length === 0) {
+          setApproverRoles([]);
+          return;
+        }
+
+        // Intersect: keep roles present in all per-key result sets
+        const firstSet = perKeyRoles[0];
+        const idSets = perKeyRoles.slice(1).map(arr => new Set(arr.map(r => r.id)));
+        const intersected = firstSet.filter(role =>
+          idSets.every(s => s.has(role.id))
+        );
+
+        setApproverRoles(intersected);
+      } catch {
+        if (!cancelled) {
+          // Fall back to unfiltered list on error
+          setApproverRoles(availableRoles);
+        }
+      }
+    };
+
+    fetchIntersection();
+    return () => { cancelled = true; };
+  }, [entityTypes, availableRoles, get]);
 
   // Update node data when rolesMap changes
   useEffect(() => {
@@ -1877,7 +1937,7 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
                                   <SelectValue placeholder="Select role" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {renderGroupedRoles(availableRoles, { requester: true })}
+                                  {renderGroupedRoles(approverRoles, { requester: true })}
                                 </SelectContent>
                               </Select>
                             </div>

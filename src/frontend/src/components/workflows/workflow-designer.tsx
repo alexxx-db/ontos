@@ -1042,6 +1042,19 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
     }
   }, [rolesMap, setNodes]);
 
+  // Keep the canvas trigger node in sync with the trigger picker state.
+  // Without this the node renders only the initial default (on_create / table)
+  // and never reflects changes the user makes in the Trigger Configuration panel.
+  useEffect(() => {
+    setNodes(prevNodes => prevNodes.map(node => {
+      if (node.type !== 'trigger') return node;
+      return {
+        ...node,
+        data: { ...node.data, trigger: { type: triggerType, entity_types: entityTypes } },
+      };
+    }));
+  }, [triggerType, entityTypes, setNodes]);
+
   // Handle node selection
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     setSelectedNodeId(node.id);

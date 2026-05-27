@@ -1239,17 +1239,14 @@ export default function Workflows() {
           <Tabs value={workflowTypeFilter} onValueChange={(v) => setWorkflowTypeFilter(v as 'all' | 'process' | 'approval')}>
             <div className="flex items-center gap-3">
               <TabsList className="h-auto p-1">
-                <TabsTrigger value="all" className="px-4 py-2 flex flex-col items-center gap-0.5">
+                <TabsTrigger value="all" className="px-4 py-2">
                   <span>All</span>
-                  <span className="text-[10px] italic font-normal text-muted-foreground leading-none">Process &amp; Approval</span>
                 </TabsTrigger>
-                <TabsTrigger value="process" className="px-4 py-2 flex flex-col items-center gap-0.5">
+                <TabsTrigger value="process" className="px-4 py-2">
                   <span>Process</span>
-                  <span className="text-[10px] italic font-normal text-muted-foreground leading-none">Background automation after events</span>
                 </TabsTrigger>
-                <TabsTrigger value="approval" className="px-4 py-2 flex flex-col items-center gap-0.5">
+                <TabsTrigger value="approval" className="px-4 py-2">
                   <span>Approval</span>
-                  <span className="text-[10px] italic font-normal text-muted-foreground leading-none">Interactive consent before actions</span>
                 </TabsTrigger>
               </TabsList>
               <TooltipProvider>

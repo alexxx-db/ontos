@@ -1,5 +1,5 @@
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from collections import defaultdict
 
 from src.controller.settings_manager import SettingsManager
@@ -126,4 +126,48 @@ class AuthorizationManager:
         user_level = effective_permissions.get(feature_id, FeatureAccessLevel.NONE)
         has_perm = ACCESS_LEVEL_ORDER[user_level] >= ACCESS_LEVEL_ORDER[required_level]
         logger.debug(f"Permission check for feature '{feature_id}': Required='{required_level.value}', User has='{user_level.value}'. Granted: {has_perm}")
-        return has_perm 
+        return has_perm
+
+    def get_user_effective_role_ids(
+        self,
+        user_groups: Optional[List[str]],
+        applied_role_override_id: Optional[str] = None,
+    ) -> Set[str]:
+        """Return the set of AppRole UUIDs the viewer currently holds.
+
+        Resolution order (mirrors ``get_user_effective_permissions``):
+        1. If *applied_role_override_id* is set, the viewer is pinned to exactly
+           that one role (same as the impersonation override path).
+        2. Otherwise, every AppRole whose ``assigned_groups`` intersects the
+           viewer's *user_groups* is included (case-insensitive).
+
+        Args:
+            user_groups: Workspace/IdP groups for the viewing user.
+            applied_role_override_id: Optional role-ID override (from
+                ``SettingsManager.get_applied_role_override_for_user``).
+
+        Returns:
+            A (possibly empty) set of role-ID strings.
+        """
+        all_roles = self._settings_manager.list_app_roles()
+
+        if applied_role_override_id:
+            # Pin to the overridden role only
+            if any(str(r.id) == applied_role_override_id for r in all_roles):
+                return {applied_role_override_id}
+            logger.warning(
+                "get_user_effective_role_ids: applied override '%s' not found in roles list",
+                applied_role_override_id,
+            )
+            return set()
+
+        if not user_groups:
+            return set()
+
+        user_group_set = set(g.lower() for g in user_groups)
+        role_ids: Set[str] = set()
+        for role in all_roles:
+            role_groups = set(g.lower() for g in (role.assigned_groups or []))
+            if user_group_set.intersection(role_groups):
+                role_ids.add(str(role.id))
+        return role_ids

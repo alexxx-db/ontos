@@ -29,7 +29,7 @@ import { RelativeDate } from '@/components/common/relative-date';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PrincipalPicker } from '@/components/common/principal-picker';
-import { buildAudienceTokens, parseAudienceTokens } from '@/lib/audience';
+import { buildAudienceTokens, parseAudienceTokens, resolveRoleTokenLabel } from '@/lib/audience';
 // Select components removed - unused
 
 interface CommentFormData {
@@ -127,18 +127,21 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
     }
   }, [currentProject?.id, currentProject?.name, get]);
 
-  // Fetch available app roles
+  // Fetch available app roles from the same source that workflow designer uses
+  // (/api/workflows/roles returns {id, name, description, source, …}).
   const fetchRoles = useCallback(async () => {
-    console.debug('CommentSidebar: Fetching app roles');
-    const response = await get<AudienceRole[]>('/api/settings/roles/summary');
-    
+    console.debug('CommentSidebar: Fetching app roles from /api/workflows/roles');
+    const response = await get<AudienceRole[]>('/api/workflows/roles');
+
     if (response.error) {
       console.error('CommentSidebar: Failed to fetch roles:', response.error);
-      // Roles are less critical, just log the error
       setAvailableRoles([]);
     } else if (response.data) {
-      console.debug(`CommentSidebar: Loaded ${response.data.length} roles:`, response.data);
-      setAvailableRoles(response.data);
+      // Only show app-source roles in the audience picker (business roles are
+      // approver-scoped and not relevant for comment audience targeting).
+      const appRoles = response.data.filter((r) => !r.source || r.source === 'app');
+      console.debug(`CommentSidebar: Loaded ${appRoles.length} app roles`);
+      setAvailableRoles(appRoles);
     } else {
       console.warn('CommentSidebar: No role data returned');
       setAvailableRoles([]);
@@ -205,12 +208,15 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
       return;
     }
 
-    // Build audience array. ``team:`` / ``role:`` prefixes come from
-    // the checkbox lists; plain emails / group names come from the
-    // PrincipalPicker (Directory pick) and flow through unchanged.
+    // Build audience array. ``team:`` tokens come from the Teams
+    // checkbox list; ``role_id:<uuid>`` tokens come from the App Roles
+    // checkbox list (roles are stored by UUID — the canonical new
+    // format from issue #326); plain emails / group names come from the
+    // PrincipalPicker and flow through unchanged.
     const audienceTokens: string[] = buildAudienceTokens({
       teams: formData.selectedTeams,
-      roles: formData.selectedRoles,
+      roleIds: formData.selectedRoles, // selectedRoles holds UUIDs
+      legacyRoleNames: [],
       principals: formData.selectedPrincipals,
     });
 
@@ -314,17 +320,25 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
 
   const handleEdit = (comment: Comment) => {
     setEditingComment(comment);
-    
-    // Parse audience tokens. ``team:`` / ``role:`` go into the
-    // respective checkbox state; anything else is a Directory
-    // principal (plain email or group name) and rehydrates the
-    // PrincipalPicker.
-    const parsed = parseAudienceTokens(comment.audience);
+
+    // Build a name→id lookup from availableRoles so legacy ``role:<name>``
+    // tokens can be resolved to UUIDs and pre-select the right checkbox.
+    const rolesByName: Record<string, string> = {};
+    for (const r of availableRoles) {
+      if (r.name && r.id) rolesByName[r.name] = r.id;
+    }
+
+    // Parse audience tokens. ``team:`` go into selectedTeams; ``role_id:``
+    // and resolved ``role:<name>`` tokens go into selectedRoles (as UUIDs);
+    // unresolved legacy names stay in legacyRoleNames but are not surfaced
+    // in the picker (they are preserved at save time via buildAudienceTokens);
+    // everything else rehydrates the PrincipalPicker.
+    const parsed = parseAudienceTokens(comment.audience, rolesByName);
     setFormData({
       title: comment.title || '',
       comment: comment.comment,
       selectedTeams: parsed.teams,
-      selectedRoles: parsed.roles,
+      selectedRoles: parsed.roleIds,   // UUIDs for the checkbox list
       selectedPrincipals: parsed.principals,
     });
     setIsFormOpen(true);
@@ -431,32 +445,33 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
           </div>
         </div>
 
-        {/* Roles multi-select */}
+        {/* Roles multi-select — selection state tracks UUID (role.id) so that
+            the audience token is emitted as role_id:<uuid> on save. */}
         <div>
           <Label htmlFor="roles">App Roles</Label>
           <div className="mt-1 space-y-2">
             {availableRoles.map(role => (
-              <div key={role.name} className="flex items-center space-x-2">
+              <div key={role.id} className="flex items-center space-x-2">
                 <input
                   type="checkbox"
-                  id={`role-${role.name}`}
-                  checked={formData.selectedRoles.includes(role.name)}
+                  id={`role-${role.id}`}
+                  checked={formData.selectedRoles.includes(role.id)}
                   onChange={(e) => {
                     if (e.target.checked) {
-                      setFormData({ 
-                        ...formData, 
-                        selectedRoles: [...formData.selectedRoles, role.name] 
+                      setFormData({
+                        ...formData,
+                        selectedRoles: [...formData.selectedRoles, role.id],
                       });
                     } else {
-                      setFormData({ 
-                        ...formData, 
-                        selectedRoles: formData.selectedRoles.filter(name => name !== role.name) 
+                      setFormData({
+                        ...formData,
+                        selectedRoles: formData.selectedRoles.filter(id => id !== role.id),
                       });
                     }
                   }}
                   className="rounded"
                 />
-                <Label htmlFor={`role-${role.name}`} className="text-sm font-normal">
+                <Label htmlFor={`role-${role.id}`} className="text-sm font-normal">
                   {role.name}
                 </Label>
               </div>
@@ -496,11 +511,14 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
                 </Badge>
               ) : null;
             })}
-            {formData.selectedRoles.map(roleName => (
-              <Badge key={`role-${roleName}`} variant="outline" className="text-xs">
-                Role: {roleName}
-              </Badge>
-            ))}
+            {formData.selectedRoles.map(roleId => {
+              const role = availableRoles.find(r => r.id === roleId);
+              return (
+                <Badge key={`role-${roleId}`} variant="outline" className="text-xs">
+                  Role: {role?.name ?? roleId}
+                </Badge>
+              );
+            })}
           </div>
         )}
       </div>
@@ -621,34 +639,41 @@ const CommentSidebar: React.FC<CommentSidebarProps> = ({
 
         {entry.audience && entry.audience.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {entry.audience.map((token, idx) => {
-              // Parse audience tokens
-              if (token.startsWith('team:')) {
-                const teamId = token.substring(5);
-                const team = availableTeams.find(t => t.id === teamId);
-                return (
-                  <Badge key={`${token}-${idx}`} variant="secondary" className="text-xs">
-                    <Users className="w-3 h-3 mr-1" />
-                    Team: {team?.name || teamId}
-                  </Badge>
-                );
-              } else if (token.startsWith('role:')) {
-                const roleName = token.substring(5);
-                return (
-                  <Badge key={`${token}-${idx}`} variant="outline" className="text-xs">
-                    Role: {roleName}
-                  </Badge>
-                );
-              } else {
-                // Plain group token
+            {(() => {
+              // Build role lookup map once per render for O(1) badge resolution
+              const rolesById: Record<string, string> = {};
+              for (const r of availableRoles) {
+                if (r.id && r.name) rolesById[r.id] = r.name;
+              }
+              return entry.audience.map((token, idx) => {
+                if (token.startsWith('team:')) {
+                  const teamId = token.substring(5);
+                  const team = availableTeams.find(t => t.id === teamId);
+                  return (
+                    <Badge key={`${token}-${idx}`} variant="secondary" className="text-xs">
+                      <Users className="w-3 h-3 mr-1" />
+                      Team: {team?.name || teamId}
+                    </Badge>
+                  );
+                }
+                // Both role_id:<uuid> (new) and role:<name> (legacy) tokens
+                const roleLabel = resolveRoleTokenLabel(token, rolesById);
+                if (roleLabel !== null) {
+                  return (
+                    <Badge key={`${token}-${idx}`} variant="outline" className="text-xs">
+                      Role: {roleLabel}
+                    </Badge>
+                  );
+                }
+                // Plain principal (email, group name, or user: token)
                 return (
                   <Badge key={`${token}-${idx}`} variant="outline" className="text-xs">
                     <Users className="w-3 h-3 mr-1" />
                     {token}
                   </Badge>
                 );
-              }
-            })}
+              });
+            })()}
           </div>
         )}
 

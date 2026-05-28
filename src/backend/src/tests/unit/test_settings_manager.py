@@ -312,14 +312,47 @@ class TestSettingsManager:
         assert isinstance(result, dict)
 
     def test_get_features_with_access_levels(self, manager, db_session):
-        """Test getting features with their access levels."""
+        """Test getting features with their access levels and group bucket."""
         # Act
         result = manager.get_features_with_access_levels()
 
         # Assert
         assert isinstance(result, dict)
-        # Should contain feature configurations
         assert len(result) > 0
+
+        # Every entry has the expected shape
+        for feature_id, conf in result.items():
+            assert 'name' in conf, f"{feature_id} is missing 'name'"
+            assert 'allowed_levels' in conf, f"{feature_id} is missing 'allowed_levels'"
+            assert 'group' in conf, f"{feature_id} is missing 'group'"
+            assert conf['group'] in {'Discover', 'Build', 'Govern', 'Deploy', 'Settings', 'Other'}
+
+        # `settings` now offers the four-level scale (not Admin-only)
+        assert 'settings' in result
+        assert result['settings']['group'] == 'Settings'
+        assert 'Read-only' in result['settings']['allowed_levels']
+        assert 'Read/Write' in result['settings']['allowed_levels']
+        assert 'Admin' in result['settings']['allowed_levels']
+
+        # Each Settings sub-page has its own dedicated permission ID
+        expected_subpage_ids = {
+            'settings-data-domains', 'settings-business-roles',
+            'settings-delivery-methods', 'settings-asset-types',
+            'settings-teams', 'settings-projects',
+            'settings-certification-levels', 'settings-general',
+            'settings-ui', 'settings-tags', 'settings-connectors',
+            'settings-git', 'settings-mcp', 'settings-semantic-models',
+            'settings-search', 'settings-jobs', 'settings-delivery',
+            'settings-workflows', 'settings-roles', 'settings-audit',
+        }
+        missing = expected_subpage_ids - set(result.keys())
+        assert not missing, f"Missing settings sub-page IDs: {missing}"
+
+        for sub_id in expected_subpage_ids:
+            assert result[sub_id]['group'] == 'Settings'
+            assert 'Read-only' in result[sub_id]['allowed_levels']
+            assert 'Read/Write' in result[sub_id]['allowed_levels']
+            assert 'Admin' in result[sub_id]['allowed_levels']
 
     # =====================================================================
     # Role Count Tests

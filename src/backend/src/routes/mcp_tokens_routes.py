@@ -33,7 +33,7 @@ def register_routes(app):
 
 
 # Require admin access for token management
-require_admin = PermissionChecker(feature_id="settings", required_level=FeatureAccessLevel.READ_WRITE)
+require_admin = PermissionChecker(feature_id="settings-mcp", required_level=FeatureAccessLevel.READ_WRITE)
 
 
 @router.post(

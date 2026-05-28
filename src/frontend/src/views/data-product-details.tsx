@@ -52,9 +52,9 @@ import { ReadinessChecklist } from '@/components/data-products/readiness-checkli
 import { LineageEditor } from '@/components/common/lineage-editor';
 import { useCopilotContext } from '@/hooks/use-copilot-context';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Progress } from '@/components/ui/progress';
 import type { QualitySummary } from '@/types/quality';
-import LifecycleSummaryPanel from '@/components/common/lifecycle-summary-panel';
+import CertificationBadge from '@/components/common/certification-badge';
+import PublicationScopeBadge from '@/components/common/publication-scope-badge';
 import { DirectCertifyDialog, DirectPublishDialog } from '@/components/common/direct-lifecycle-dialogs';
 import type { CertificationLevel, PublicationScope } from '@/types/lifecycle';
 import { userHasApprovalPrivilege } from '@/lib/permissions';
@@ -1594,106 +1594,161 @@ export default function DataProductDetails() {
         </Alert>
       )}
 
-      {/* Basic Info + Sidebar */}
+      {/* Basic Info + Contacts sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
         {/* Basic Info Card */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl font-bold flex items-center">
-              <Package className="mr-3 h-7 w-7 text-primary" />
-              {product.name || 'Unnamed Product'}
-            </CardTitle>
-            <CardDescription className="pt-1">
-              {product.description?.purpose || 'No description provided'}
-            </CardDescription>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <CardTitle className="text-2xl font-bold flex items-center">
+                  <Package className="mr-3 h-7 w-7 text-primary shrink-0" />
+                  <span className="truncate">{product.name || 'Unnamed Product'}</span>
+                </CardTitle>
+                <CardDescription className="pt-1">
+                  {product.description?.purpose || 'No description provided'}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-4 shrink-0">
+                <Badge variant={getStatusColor(product.status)}>
+                  {product.status || '—'}
+                </Badge>
+                {qualitySummary && qualitySummary.items_count > 0 && (
+                  <div className="flex flex-col items-end leading-none">
+                    <span
+                      className="text-3xl font-bold"
+                      style={{
+                        color:
+                          qualitySummary.overall_score_percent >= 80
+                            ? '#22c55e'
+                            : qualitySummary.overall_score_percent >= 50
+                              ? '#eab308'
+                              : '#ef4444',
+                      }}
+                    >
+                      {Math.round(qualitySummary.overall_score_percent)}%
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">
+                      Quality
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid md:grid-cols-3 gap-x-6 gap-y-2">
               <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Status:</Label>
-                <Badge variant={getStatusColor(product.status)} className="text-xs">
-                  {product.status || t('common:states.notAvailable')}
-                </Badge>
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
+                {product.version ? (
+                  <Badge variant="outline" className="text-xs">{product.version}</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </div>
               <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
-                <Badge variant="outline" className="text-xs">{product.version || t('common:states.notAvailable')}</Badge>
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
+                {product.domain && getDomainIdByName(domainLabel) ? (
+                  <span
+                    className="text-xs cursor-pointer text-primary hover:underline truncate"
+                    onClick={() => navigate(`/settings/data-domains/${getDomainIdByName(domainLabel)}`)}
+                  >
+                    {domainLabel}
+                  </span>
+                ) : product.domain ? (
+                  <span className="text-xs text-muted-foreground truncate">{domainLabel}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </div>
-              {(viewMode !== 'minimal' || product.domain) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
-                  {product.domain && getDomainIdByName(domainLabel) ? (
-                    <span
-                      className="text-xs cursor-pointer text-primary hover:underline truncate"
-                      onClick={() => navigate(`/settings/data-domains/${getDomainIdByName(domainLabel)}`)}
-                    >
-                      {domainLabel}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{domainLabel}</span>
-                  )}
-                </div>
-              )}
-              {(viewMode !== 'minimal' || ((product as any).project_id && product.project_name)) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
-                  {(product as any).project_id && product.project_name ? (
-                    <span
-                      className="text-xs cursor-pointer text-primary hover:underline truncate"
-                      onClick={() => navigate(`/projects/${(product as any).project_id}`)}
-                      title={`Project ID: ${(product as any).project_id}`}
-                    >
-                      {product.project_name}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                  )}
-                </div>
-              )}
-              {(viewMode !== 'minimal' || product.tenant) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
-                  <span className="text-xs text-muted-foreground truncate">{product.tenant || t('common:states.notAssigned')}</span>
-                </div>
-              )}
-              {(viewMode !== 'minimal' || (product.owner_team_id && product.owner_team_name)) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Owner:</Label>
-                  {product.owner_team_id && product.owner_team_name ? (
-                    <span
-                      className="text-xs cursor-pointer text-primary hover:underline truncate"
-                      onClick={() => navigate(`/teams/${product.owner_team_id}`)}
-                      title={`Team ID: ${product.owner_team_id}`}
-                    >
-                      {product.owner_team_name}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                  )}
-                </div>
-              )}
-              {viewMode !== 'minimal' && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
-                  {product.apiVersion ? (
-                    <Badge variant="outline" className="text-xs">{product.apiVersion}</Badge>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">N/A</span>
-                  )}
-                </div>
-              )}
-              {(viewMode !== 'minimal' || product.created_at) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
+                {(product as any).project_id && product.project_name ? (
+                  <span
+                    className="text-xs cursor-pointer text-primary hover:underline truncate"
+                    onClick={() => navigate(`/projects/${(product as any).project_id}`)}
+                    title={`Project ID: ${(product as any).project_id}`}
+                  >
+                    {product.project_name}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
+                {product.tenant ? (
+                  <span className="text-xs text-muted-foreground truncate">{product.tenant}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Owner:</Label>
+                {product.owner_team_id && product.owner_team_name ? (
+                  <span
+                    className="text-xs cursor-pointer text-primary hover:underline truncate"
+                    onClick={() => navigate(`/teams/${product.owner_team_id}`)}
+                    title={`Team ID: ${product.owner_team_id}`}
+                  >
+                    {product.owner_team_name}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
+                {product.apiVersion ? (
+                  <Badge variant="outline" className="text-xs">{product.apiVersion}</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+                {product.created_at ? (
                   <span className="text-xs text-muted-foreground truncate">{formatDate(product.created_at)}</span>
-                </div>
-              )}
-              {(viewMode !== 'minimal' || product.updated_at) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+                {product.updated_at ? (
                   <span className="text-xs text-muted-foreground truncate">{formatDate(product.updated_at)}</span>
-                </div>
-              )}
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Cert:</Label>
+                {(product.certification_level || product.inherited_certification_level) ? (
+                  <CertificationBadge
+                    certificationLevel={product.certification_level}
+                    inheritedCertificationLevel={product.inherited_certification_level}
+                    certifiedAt={product.certified_at}
+                    certifiedBy={product.certified_by}
+                    levels={certificationLevels}
+                    size="sm"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Published:</Label>
+                {product.publication_scope && product.publication_scope !== 'none' ? (
+                  <PublicationScopeBadge
+                    scope={product.publication_scope as PublicationScope}
+                    publishedAt={product.published_at}
+                    publishedBy={product.published_by}
+                    size="sm"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
             </div>
 
             <div className="pt-2 border-t">
@@ -1723,103 +1778,55 @@ export default function DataProductDetails() {
           </CardContent>
         </Card>
 
-        {/* Sidebar: Contacts + Quality */}
-        <div className="space-y-4">
-          {/* Contacts */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Contacts</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(() => {
-                const contacts = product.team?.members?.filter(
-                  (m) => m.role && ['owner', 'data owner', 'data steward', 'steward'].includes(m.role.toLowerCase())
+        {/* Sidebar: Contacts only */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">Contacts</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(() => {
+              const contacts = product.team?.members?.filter(
+                (m) => m.role && ['owner', 'data owner', 'data steward', 'steward'].includes(m.role.toLowerCase())
+              );
+              if (contacts && contacts.length > 0) {
+                return contacts.map((member, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                        {(member.name || member.username || '?')
+                          .split(/[\s.@]+/)
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .map((p) => p[0].toUpperCase())
+                          .join('')}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{member.name || member.username}</div>
+                      <div className="text-xs text-muted-foreground">{member.role}</div>
+                    </div>
+                  </div>
+                ));
+              }
+              if (product.owner_team_name) {
+                return (
+                  <div className="flex items-center gap-2">
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                        {product.owner_team_name.split(/\s+/).slice(0, 2).map((p) => p[0].toUpperCase()).join('')}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{product.owner_team_name}</div>
+                      <div className="text-xs text-muted-foreground">Owner Team</div>
+                    </div>
+                  </div>
                 );
-                if (contacts && contacts.length > 0) {
-                  return contacts.map((member, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
-                          {(member.name || member.username || '?')
-                            .split(/[\s.@]+/)
-                            .filter(Boolean)
-                            .slice(0, 2)
-                            .map((p) => p[0].toUpperCase())
-                            .join('')}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{member.name || member.username}</div>
-                        <div className="text-xs text-muted-foreground">{member.role}</div>
-                      </div>
-                    </div>
-                  ));
-                }
-                if (product.owner_team_name) {
-                  return (
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
-                          {product.owner_team_name.split(/\s+/).slice(0, 2).map((p) => p[0].toUpperCase()).join('')}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{product.owner_team_name}</div>
-                        <div className="text-xs text-muted-foreground">Owner Team</div>
-                      </div>
-                    </div>
-                  );
-                }
-                return <span className="text-xs text-muted-foreground">No contacts assigned</span>;
-              })()}
-            </CardContent>
-          </Card>
-
-          <LifecycleSummaryPanel
-            status={(product.status || 'draft').toLowerCase()}
-            certificationLevel={product.certification_level}
-            inheritedCertificationLevel={product.inherited_certification_level}
-            certifiedAt={product.certified_at}
-            certifiedBy={product.certified_by}
-            certificationExpiresAt={product.certification_expires_at}
-            publicationScope={product.publication_scope}
-            publishedAt={product.published_at}
-            publishedBy={product.published_by}
-            certificationLevels={certificationLevels}
-          />
-
-          {/* Overall Data Quality */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Overall Data Quality (0-100%)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {qualitySummary && qualitySummary.items_count > 0 ? (
-                <div className="space-y-2">
-                  <div
-                    style={{
-                      '--progress-color': qualitySummary.overall_score_percent >= 80
-                        ? '#22c55e'
-                        : qualitySummary.overall_score_percent >= 50
-                          ? '#eab308'
-                          : '#ef4444',
-                    } as React.CSSProperties}
-                  >
-                    <Progress
-                      value={qualitySummary.overall_score_percent}
-                      className="h-3 [&>div]:!bg-[var(--progress-color)]"
-                    />
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {Math.round(qualitySummary.overall_score_percent)}%
-                  </div>
-                </div>
-              ) : (
-                <span className="text-xs text-muted-foreground">No quality data available</span>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              }
+              return <span className="text-xs text-muted-foreground">No contacts assigned</span>;
+            })()}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Deliverables (Output Ports) – primary composition surface */}

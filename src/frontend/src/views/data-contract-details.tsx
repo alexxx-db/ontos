@@ -54,7 +54,8 @@ import type { DataProduct } from '@/types/data-product'
 import type { DataProfilingRun } from '@/types/data-contract'
 import { useCopilotContext } from '@/hooks/use-copilot-context'
 import { useApi } from '@/hooks/use-api'
-import LifecycleSummaryPanel from '@/components/common/lifecycle-summary-panel'
+import CertificationBadge from '@/components/common/certification-badge'
+import PublicationScopeBadge from '@/components/common/publication-scope-badge'
 import { DirectCertifyDialog, DirectPublishDialog } from '@/components/common/direct-lifecycle-dialogs'
 import type { CertificationLevel, PublicationScope } from '@/types/lifecycle'
 import { userHasApprovalPrivilege } from '@/lib/permissions'
@@ -1852,118 +1853,145 @@ export default function DataContractDetails() {
         </Alert>
       )}
 
-      {/* Core Metadata Card + lifecycle sidebar */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
+      {/* Core Metadata Card */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl font-bold flex items-center">
-            <FileText className="mr-3 h-7 w-7 text-primary" />
-            {contract.name}
-          </CardTitle>
-          <CardDescription className="pt-1">
-            {contract.description?.purpose || 'No description provided'}
-          </CardDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-2xl font-bold flex items-center">
+                <FileText className="mr-3 h-7 w-7 text-primary shrink-0" />
+                <span className="truncate">{contract.name}</span>
+              </CardTitle>
+              <CardDescription className="pt-1">
+                {contract.description?.purpose || 'No description provided'}
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <Badge variant={getStatusColor(contract.status)}>
+                {contract.status || '—'}
+              </Badge>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid md:grid-cols-3 gap-x-6 gap-y-2">
             <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground min-w-[4rem]">Status:</Label>
-              <div className="flex items-center gap-1.5">
-                <Badge variant={getStatusColor(contract.status)} className="text-xs">
-                  {contract.status || t('common:states.notAvailable')}
-                </Badge>
-                {contract.publication_scope && contract.publication_scope !== 'none' && (
-                  <Badge variant="default" className="bg-green-600 text-xs">Published</Badge>
-                )}
-              </div>
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
+              {contract.version ? (
+                <Badge variant="outline" className="text-xs">{contract.version}</Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
-              <Badge variant="outline" className="text-xs">{contract.version || t('common:states.notAvailable')}</Badge>
-            </div>
-            {/* Hide Domain if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.domainId || contract.domain) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
-                {(() => {
-                  const domainId = contract.domainId;
-                  const domainName = getDomainName(domainId) || contract.domain;
-                  return domainName && domainId ? (
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
+              {(() => {
+                const domainId = contract.domainId;
+                const domainName = getDomainName(domainId) || contract.domain;
+                if (domainName && domainId) {
+                  return (
                     <span
                       className="text-xs cursor-pointer text-primary hover:underline truncate"
                       onClick={() => navigate(`/settings/data-domains/${domainId}`)}
                     >
                       {domainName}
                     </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{contract.domain || t('common:states.notAssigned')}</span>
                   );
-                })()}
-              </div>
-            )}
-            {/* Hide Project if empty in minimal mode */}
-            {(viewMode !== 'minimal' || ((contract as any).project_id && contract.project_name)) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
-                {(contract as any).project_id && contract.project_name ? (
-                  <span
-                    className="text-xs cursor-pointer text-primary hover:underline truncate"
-                    onClick={() => navigate(`/projects/${(contract as any).project_id}`)}
-                    title={`Project ID: ${(contract as any).project_id}`}
-                  >
-                    {contract.project_name}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                )}
-              </div>
-            )}
-            {/* Hide Tenant if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.tenant) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
-                <span className="text-xs text-muted-foreground truncate">{contract.tenant || t('common:states.notAssigned')}</span>
-              </div>
-            )}
-            {/* Hide Owner if empty in minimal mode */}
-            {(viewMode !== 'minimal' || (contract.owner_team_id && contract.owner_team_name)) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Owner:</Label>
-                {contract.owner_team_id && contract.owner_team_name ? (
-                  <span
-                    className="text-xs cursor-pointer text-primary hover:underline truncate"
-                    onClick={() => navigate(`/teams/${contract.owner_team_id}`)}
-                    title={`Team ID: ${contract.owner_team_id}`}
-                  >
-                    {contract.owner_team_name}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                )}
-              </div>
-            )}
+                }
+                if (domainName) {
+                  return <span className="text-xs text-muted-foreground truncate">{domainName}</span>;
+                }
+                return <span className="text-xs text-muted-foreground">—</span>;
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
+              {(contract as any).project_id && contract.project_name ? (
+                <span
+                  className="text-xs cursor-pointer text-primary hover:underline truncate"
+                  onClick={() => navigate(`/projects/${(contract as any).project_id}`)}
+                  title={`Project ID: ${(contract as any).project_id}`}
+                >
+                  {contract.project_name}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
+              {contract.tenant ? (
+                <span className="text-xs text-muted-foreground truncate">{contract.tenant}</span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Owner:</Label>
+              {contract.owner_team_id && contract.owner_team_name ? (
+                <span
+                  className="text-xs cursor-pointer text-primary hover:underline truncate"
+                  onClick={() => navigate(`/teams/${contract.owner_team_id}`)}
+                  title={`Team ID: ${contract.owner_team_id}`}
+                >
+                  {contract.owner_team_name}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
               {contract.apiVersion ? (
                 <Badge variant="outline" className="text-xs">{contract.apiVersion}</Badge>
               ) : (
-                <span className="text-xs text-muted-foreground">N/A</span>
+                <span className="text-xs text-muted-foreground">—</span>
               )}
             </div>
-            {/* Hide Created if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.created) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+              {contract.created ? (
                 <span className="text-xs text-muted-foreground truncate">{formatDate(contract.created)}</span>
-              </div>
-            )}
-            {/* Hide Updated if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.updated) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+              {contract.updated ? (
                 <span className="text-xs text-muted-foreground truncate">{formatDate(contract.updated)}</span>
-              </div>
-            )}
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Cert:</Label>
+              {(contract.certification_level || contract.inherited_certification_level) ? (
+                <CertificationBadge
+                  certificationLevel={contract.certification_level}
+                  inheritedCertificationLevel={contract.inherited_certification_level}
+                  certifiedAt={contract.certified_at}
+                  certifiedBy={contract.certified_by}
+                  levels={certificationLevels}
+                  size="sm"
+                />
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Published:</Label>
+              {contract.publication_scope && contract.publication_scope !== 'none' ? (
+                <PublicationScopeBadge
+                  scope={contract.publication_scope as PublicationScope}
+                  publishedAt={contract.published_at}
+                  publishedBy={contract.published_by}
+                  size="sm"
+                />
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
           </div>
 
           <div className="pt-2 border-t">
@@ -1992,22 +2020,6 @@ export default function DataContractDetails() {
           </div>
         </CardContent>
       </Card>
-
-      <div className="space-y-4">
-        <LifecycleSummaryPanel
-          status={(contract.status || 'draft').toLowerCase()}
-          certificationLevel={contract.certification_level}
-          inheritedCertificationLevel={contract.inherited_certification_level}
-          certifiedAt={contract.certified_at}
-          certifiedBy={contract.certified_by}
-          certificationExpiresAt={contract.certification_expires_at}
-          publicationScope={contract.publication_scope}
-          publishedAt={contract.published_at}
-          publishedBy={contract.published_by}
-          certificationLevels={certificationLevels}
-        />
-      </div>
-      </div>
 
       {/* Structured Description (ODCS) */}
       {shouldShowSection('description') && contract.description && (contract.description.purpose || contract.description.usage || contract.description.limitations) && (

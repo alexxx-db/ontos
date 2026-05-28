@@ -1768,6 +1768,22 @@ class SettingsManager:
             self._db.rollback()
             return [] # Return empty list on error
 
+    def list_app_roles_for_approval(self, approval_entity: Optional[str] = None) -> List[AppRole]:
+        """Lists app roles filtered by approval privilege for a given entity type.
+
+        When *approval_entity* is provided (e.g. ``"CONTRACTS"``), only roles
+        where ``approval_privileges[approval_entity]`` is ``True`` are returned.
+        When omitted, all roles are returned (backward-compatible behaviour).
+        """
+        all_roles = self.list_app_roles()
+        if approval_entity is None:
+            return all_roles
+        entity_key = approval_entity.upper()
+        return [
+            role for role in all_roles
+            if role.approval_privileges.get(ApprovalEntity(entity_key)) is True  # type: ignore[arg-type]
+        ]
+
     def get_app_role(self, role_id: str) -> Optional[AppRole]:
         """Retrieves a specific application role by ID."""
         try:

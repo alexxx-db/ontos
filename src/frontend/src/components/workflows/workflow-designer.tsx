@@ -70,7 +70,9 @@ import {
   Database,
   Send,
   KeyRound,
+  Eye,
 } from 'lucide-react';
+import ApprovalWizardDialog from './approval-wizard-dialog';
 
 import RequiredFieldsEditor, {
   type RequiredField,
@@ -121,6 +123,11 @@ import {
 } from '@/lib/workflow-labels';
 import { TriggerPicker, type TriggerTypeOption } from './trigger-picker';
 import { EntityTypeMultiselect } from './entity-type-multiselect';
+import { PrincipalPicker } from '@/components/common/principal-picker';
+import {
+  joinRoleAndPrincipals,
+  splitRoleAndPrincipals,
+} from '@/lib/workflow-principals';
 
 // Node types registry (default = fallback for unknown step_type)
 const nodeTypes = {
@@ -524,6 +531,10 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
   const [httpConnections, setHttpConnections] = useState<HttpConnectionRef[]>([]);
   const [triggerTypeOptions, setTriggerTypeOptions] = useState<TriggerTypeOption[]>([]);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  // Preview wizard (issue #405) — design-time dry-run. Only meaningful once
+  // the workflow has been persisted (we need its id to fetch the snapshot),
+  // and only for approval-type workflows.
+  const [previewOpen, setPreviewOpen] = useState(false);
   
   // Form state
   const [name, setName] = useState('');
@@ -1128,6 +1139,21 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
           )}
         </div>
         <div className="flex items-center gap-2">
+          {workflowType === 'approval' && !isNew && workflow?.id && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPreviewOpen(true)}
+              // Disabled while dirty so the preview reflects the persisted
+              // workflow — otherwise designers would chase phantom diffs
+              // between the saved snapshot and unsaved edits.
+              disabled={isDirty || isSaving}
+              title={isDirty ? 'Save changes to preview the latest version' : 'Run the wizard in dry-run mode'}
+            >
+              <Eye className="h-4 w-4 mr-2" />
+              Preview wizard
+            </Button>
+          )}
           <div className="flex items-center gap-2 mr-2">
             <Switch checked={isActive} onCheckedChange={setIsActive} />
             <span className="text-sm">{isActive ? 'Active' : 'Inactive'}</span>
@@ -1215,6 +1241,22 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
             </Panel>
           </ReactFlow>
         </div>
+        )}
+
+        {/* Approval Wizard Preview (issue #405) — design-time dry-run launched
+            from the header. Pure FE walk through the persisted workflow; no
+            session, no agreement, no notifications. */}
+        {workflow?.id && workflowType === 'approval' && previewOpen && (
+          <ApprovalWizardDialog
+            isOpen={previewOpen}
+            onOpenChange={setPreviewOpen}
+            entityType="preview"
+            entityId="preview"
+            entityName={name || workflow.name}
+            preselectedWorkflowId={workflow.id}
+            autoStartWithPreselected
+            previewMode
+          />
         )}
 
         {/* Discard changes confirmation dialog */}
@@ -1619,22 +1661,81 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
                   
                   {selectedStep.step_type === 'notification' && (
                     <>
-                      <div>
-                        <Label>Recipients</Label>
-                        <Select 
-                          value={(selectedStep.config as { recipients?: string })?.recipients || ''}
-                          onValueChange={(v) => updateStep(selectedStep.step_id, { 
-                            config: { ...selectedStep.config, recipients: v }
-                          })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select recipients" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {renderGroupedRoles(availableRoles, { requester: true, owner: true })}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {(() => {
+                        const raw = (selectedStep.config as { recipients?: string })?.recipients || '';
+                        const split = splitRoleAndPrincipals(raw);
+                        const customOn =
+                          (selectedStep.config as { recipients_custom?: boolean })?.recipients_custom
+                            ?? split.principals.length > 0;
+                        const setRole = (role: string) => {
+                          const next = joinRoleAndPrincipals(role, split.principals);
+                          updateStep(selectedStep.step_id, {
+                            config: { ...selectedStep.config, recipients: next },
+                          });
+                        };
+                        const setPrincipals = (principals: string[]) => {
+                          const next = joinRoleAndPrincipals(split.roleToken, principals);
+                          updateStep(selectedStep.step_id, {
+                            config: { ...selectedStep.config, recipients: next },
+                          });
+                        };
+                        const toggleCustom = (on: boolean) => {
+                          // Persist the flag on the step config so the
+                          // toggle state survives reloads. Clearing the
+                          // picks when turning off keeps the wire shape
+                          // unsurprising.
+                          if (!on) {
+                            updateStep(selectedStep.step_id, {
+                              config: {
+                                ...selectedStep.config,
+                                recipients_custom: false,
+                                recipients: joinRoleAndPrincipals(split.roleToken, []),
+                              },
+                            });
+                          } else {
+                            updateStep(selectedStep.step_id, {
+                              config: { ...selectedStep.config, recipients_custom: true },
+                            });
+                          }
+                        };
+                        return (
+                          <>
+                            <div>
+                              <Label>Recipients (Role)</Label>
+                              <Select value={split.roleToken} onValueChange={setRole}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select recipients" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {renderGroupedRoles(availableRoles, { requester: true, owner: true })}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex items-center justify-between rounded-md border p-3">
+                              <div className="flex flex-col">
+                                <Label className="text-sm">Custom principals</Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Add specific users or groups alongside the role.
+                                </p>
+                              </div>
+                              <Switch checked={customOn} onCheckedChange={toggleCustom} />
+                            </div>
+                            {customOn && (
+                              <div>
+                                <Label>Users &amp; groups</Label>
+                                <PrincipalPicker
+                                  multiple
+                                  accepts={['user', 'group']}
+                                  value={split.principals}
+                                  onChange={setPrincipals}
+                                  placeholder="Add users or groups…"
+                                  aria-label="Additional recipients"
+                                />
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                       <div>
                         <Label>Template</Label>
                         <Select 
@@ -1734,22 +1835,77 @@ export default function WorkflowDesigner({ workflowId }: WorkflowDesignerProps) 
                   
                   {selectedStep.step_type === 'approval' && (
                     <>
-                      <div>
-                        <Label>Approvers (Role)</Label>
-                        <Select 
-                          value={(selectedStep.config as { approvers?: string })?.approvers || ''}
-                          onValueChange={(v) => updateStep(selectedStep.step_id, { 
-                            config: { ...selectedStep.config, approvers: v }
-                          })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select role" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {renderGroupedRoles(availableRoles, { requester: true })}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {(() => {
+                        const raw = (selectedStep.config as { approvers?: string })?.approvers || '';
+                        const split = splitRoleAndPrincipals(raw);
+                        const customOn =
+                          (selectedStep.config as { approvers_custom?: boolean })?.approvers_custom
+                            ?? split.principals.length > 0;
+                        const setRole = (role: string) => {
+                          const next = joinRoleAndPrincipals(role, split.principals);
+                          updateStep(selectedStep.step_id, {
+                            config: { ...selectedStep.config, approvers: next },
+                          });
+                        };
+                        const setPrincipals = (principals: string[]) => {
+                          const next = joinRoleAndPrincipals(split.roleToken, principals);
+                          updateStep(selectedStep.step_id, {
+                            config: { ...selectedStep.config, approvers: next },
+                          });
+                        };
+                        const toggleCustom = (on: boolean) => {
+                          if (!on) {
+                            updateStep(selectedStep.step_id, {
+                              config: {
+                                ...selectedStep.config,
+                                approvers_custom: false,
+                                approvers: joinRoleAndPrincipals(split.roleToken, []),
+                              },
+                            });
+                          } else {
+                            updateStep(selectedStep.step_id, {
+                              config: { ...selectedStep.config, approvers_custom: true },
+                            });
+                          }
+                        };
+                        return (
+                          <>
+                            <div>
+                              <Label>Approvers (Role)</Label>
+                              <Select value={split.roleToken} onValueChange={setRole}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select role" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {renderGroupedRoles(availableRoles, { requester: true })}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex items-center justify-between rounded-md border p-3">
+                              <div className="flex flex-col">
+                                <Label className="text-sm">Custom principals</Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Add specific users or groups alongside the role.
+                                </p>
+                              </div>
+                              <Switch checked={customOn} onCheckedChange={toggleCustom} />
+                            </div>
+                            {customOn && (
+                              <div>
+                                <Label>Users &amp; groups</Label>
+                                <PrincipalPicker
+                                  multiple
+                                  accepts={['user', 'group']}
+                                  value={split.principals}
+                                  onChange={setPrincipals}
+                                  placeholder="Add users or groups…"
+                                  aria-label="Additional approvers"
+                                />
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                       <div>
                         <Label>Timeout (days)</Label>
                         <Input

@@ -26,6 +26,8 @@ from ..controller.notifications_manager import NotificationsManager
 from ..common.config import get_settings
 from ..common.sanitization import sanitize_markdown_input
 from ..common.search_config_loader import get_search_config_loader
+from ..common.authorization import PermissionChecker
+from ..common.features import FeatureAccessLevel
 
 # Configure logging
 from src.common.logging import get_logger
@@ -38,7 +40,10 @@ SETTINGS_FEATURE_ID = "settings" # Define a feature ID for settings
 ROLE_NOT_FOUND = "Role not found"
 
 @router.get('/settings')
-async def get_settings_route(manager: SettingsManager = Depends(get_settings_manager)):
+async def get_settings_route(
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-general', FeatureAccessLevel.READ_ONLY)),
+):
     """Get all settings including available job clusters"""
     try:
         settings_data = manager.get_settings() # Renamed variable to avoid conflict
@@ -55,7 +60,8 @@ async def update_settings(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     settings_payload: dict, # Renamed to avoid conflict with module
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-general', FeatureAccessLevel.READ_WRITE)),
 ):
     """Update settings"""
     success = False
@@ -192,7 +198,8 @@ async def create_role(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     role_data: AppRoleCreate = Body(..., embed=False),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Create a new application role."""
     success = False
@@ -252,7 +259,8 @@ async def update_role(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     role_data: AppRole = Body(..., embed=False),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Update an existing application role."""
     success = False
@@ -300,7 +308,8 @@ async def delete_role(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Delete an application role."""
     success = False
@@ -343,7 +352,8 @@ async def handle_role_request_decision(
     request_data: HandleRoleRequest = Body(...),
     settings_manager: SettingsManager = Depends(get_settings_manager),
     notifications_manager: NotificationsManager = Depends(get_notifications_manager),
-    change_log_manager = Depends(get_change_log_manager)
+    change_log_manager = Depends(get_change_log_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Handles the admin decision (approve/deny) for a role access request."""
     try:
@@ -873,7 +883,9 @@ async def get_database_schema(manager: SettingsManager = Depends(get_settings_ma
 # --- Search Configuration ---
 
 @router.get('/settings/search-config', response_model=SearchConfigResponse)
-async def get_search_config():
+async def get_search_config(
+    _: bool = Depends(PermissionChecker('settings-search', FeatureAccessLevel.READ_ONLY)),
+):
     """
     Get the current search configuration.
     
@@ -899,7 +911,8 @@ async def update_search_config(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     config_update: SearchConfigUpdate = Body(...),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-search', FeatureAccessLevel.ADMIN)),
 ):
     """
     Update the search configuration.
@@ -987,7 +1000,8 @@ async def rebuild_search_index(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-search', FeatureAccessLevel.ADMIN)),
 ):
     """
     Rebuild the search index.
@@ -1060,7 +1074,8 @@ def _field_config_to_dict(field) -> dict:
 @router.get('/settings/git/status')
 async def get_git_status(
     include_diffs: bool = False,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get the current status of the Git repository.
     
@@ -1092,7 +1107,8 @@ async def clone_git_repository(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_WRITE)),
 ):
     """Clone the Git repository to the UC Volume.
     
@@ -1145,7 +1161,8 @@ async def pull_git_repository(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_WRITE)),
 ):
     """Pull latest changes from the remote Git repository."""
     success = False
@@ -1185,7 +1202,8 @@ async def pull_git_repository(
 
 @router.get('/settings/git/diff')
 async def get_git_diff(
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get detailed diff of all pending changes in the Git repository."""
     try:
@@ -1218,7 +1236,8 @@ async def push_git_repository(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     commit_message: Optional[str] = Body(None, embed=True),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_WRITE)),
 ):
     """Commit and push all pending changes to the remote Git repository.
     
@@ -1265,7 +1284,8 @@ async def push_git_repository(
 
 @router.get('/settings/delivery/status')
 async def get_delivery_status(
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-delivery', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get the current delivery mode configuration and status."""
     try:
@@ -1303,7 +1323,8 @@ async def get_delivery_status(
 async def get_pending_delivery_tasks(
     db: DBSessionDep,
     change_type: Optional[str] = None,
-    notifications_manager = Depends(get_notifications_manager)
+    notifications_manager = Depends(get_notifications_manager),
+    _: bool = Depends(PermissionChecker('settings-delivery', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get pending manual delivery tasks (notifications)."""
     try:
@@ -1329,7 +1350,8 @@ async def complete_delivery_task(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     notes: Optional[str] = Body(None, embed=True),
-    notifications_manager = Depends(get_notifications_manager)
+    notifications_manager = Depends(get_notifications_manager),
+    _: bool = Depends(PermissionChecker('settings-delivery', FeatureAccessLevel.READ_WRITE)),
 ):
     """Mark a manual delivery task as completed.
     

@@ -18,6 +18,7 @@ import LLMConsentDialog, { hasLLMConsent } from '@/components/common/llm-consent
 import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession } from '@/components/search/llm-search-api';
 import { useCopilotStore, type CopilotPageContext } from '@/stores/copilot-store';
 import { useCopilotQuestions } from '@/hooks/use-copilot-questions';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 import type { LLMConfig } from '@/types/llm';
 import type { ChatMessage, LLMSearchStatus, SessionSummary } from '@/types/llm-search';
 
@@ -88,6 +89,7 @@ function CopilotMessage({ message }: { message: ChatMessage }) {
 
 export default function CopilotPanel() {
   const { t } = useTranslation(['search', 'common']);
+  const shortName = useUICustomizationStore((s) => s.getShortName());
   const isOpen = useCopilotStore((s) => s.isOpen);
   const pageContext = useCopilotStore((s) => s.pageContext);
   const { closePanel } = useCopilotStore((s) => s.actions);
@@ -267,7 +269,7 @@ export default function CopilotPanel() {
               <Sparkles className="w-3.5 h-3.5 text-white" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold leading-tight">{t('search:copilot.title')}</h2>
+              <h2 className="text-sm font-semibold leading-tight">{t('search:copilot.title', { shortName })}</h2>
               <p className="text-xs text-muted-foreground">{t('search:copilot.subtitle')}</p>
             </div>
           </div>
@@ -353,7 +355,7 @@ export default function CopilotPanel() {
                     <div className="flex items-start gap-2 pr-6">
                       <Sparkles className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-sm font-medium">{t('search:copilot.welcome')}</p>
+                        <p className="text-sm font-medium">{t('search:copilot.welcome', { shortName })}</p>
                         <p className="text-xs text-muted-foreground mt-1">
                           {t('search:copilot.welcomeDescription')}
                         </p>
@@ -414,7 +416,7 @@ export default function CopilotPanel() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={t('search:copilot.inputPlaceholder')}
+              placeholder={t('search:copilot.inputPlaceholder', { shortName })}
               className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               disabled={isLoading}
             />

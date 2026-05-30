@@ -16,9 +16,11 @@ import { useUserStore } from '@/stores/user-store';
 import ConnectedOverviewTile from '@/components/home/connected-overview-tile';
 import { tileRegistry, tileOrder } from '@/tiles';
 import { Card, CardContent } from '@/components/ui/card';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 
 export default function Home() {
   const { t } = useTranslation(['home', 'common']);
+  const appName = useUICustomizationStore((s) => s.getAppName());
   const { permissions, isLoading: permissionsLoading, hasPermission, requestableRoles, appliedRoleId } = usePermissions();
 
   // Get available tiles based on permissions
@@ -67,7 +69,7 @@ export default function Home() {
             <div className="flex items-center justify-center mb-4">
               <UnityCatalogLogo className="h-16 w-16" />
               <h1 className="text-4xl font-bold ml-2">
-                {t('home:title')}
+                {t('home:title', { appName })}
               </h1>
             </div>
             <p className="text-lg text-muted-foreground mb-6">

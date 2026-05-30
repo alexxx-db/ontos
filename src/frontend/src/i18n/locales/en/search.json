@@ -2,7 +2,7 @@
   "title": "Search",
   "placeholder": "Search across all assets...",
   "tabs": {
-    "askOntos": "Ask Ontos",
+    "askOntos": "Ask {{shortName}}",
     "indexSearch": "Index Search",
     "searchConcepts": "Search Concepts",
     "viewGraph": "View Graph",
@@ -144,7 +144,7 @@
     }
   },
   "llm": {
-    "title": "Ask Ontos",
+    "title": "Ask {{shortName}}",
     "subtitle": "Ask questions about data products, costs, and analytics",
     "rerun": "Run again",
     "copyToInput": "Edit & resend",
@@ -176,13 +176,13 @@
     }
   },
   "copilot": {
-    "title": "Ask Ontos",
+    "title": "Ask {{shortName}}",
     "subtitle": "AI-powered assistant",
-    "button": "Ask Ontos",
-    "welcome": "Welcome to Ask Ontos!",
+    "button": "Ask {{shortName}}",
+    "welcome": "Welcome to Ask {{shortName}}!",
     "welcomeDescription": "Get help with modeling, mappings, product creation, and health insights. Try one of the suggested prompts below or type your own question.",
     "askingAbout": "Asking about:",
-    "inputPlaceholder": "Ask Ontos anything...",
+    "inputPlaceholder": "Ask {{shortName}} anything...",
     "messageSendFailed": "Failed to send message"
   }
 }

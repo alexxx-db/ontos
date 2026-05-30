@@ -47,6 +47,7 @@ import { useToast } from '@/hooks/use-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useCopilotContext } from '@/hooks/use-copilot-context';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 
 interface CatalogItem {
   id: string;
@@ -93,6 +94,7 @@ type RightPanelMode = 'hidden' | 'ask' | 'dual-tree' | 'info' | 'comments';
 
 const CatalogCommander: React.FC = () => {
   const { t } = useTranslation(['catalog-commander', 'common']);
+  const shortName = useUICustomizationStore((s) => s.getShortName());
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkProcessedRef = useRef(false);
   const [searchInput, setSearchInput] = useState('');
@@ -681,7 +683,7 @@ const CatalogCommander: React.FC = () => {
               )}
             >
               <Sparkles className="h-4 w-4 mr-1.5" />
-              {t('askOntos')}
+              {t('askOntos', { shortName })}
             </Button>
             <Button
               variant={rightPanelMode === 'info' ? 'secondary' : 'ghost'}
@@ -942,7 +944,7 @@ const CatalogCommander: React.FC = () => {
                       <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
                         <Sparkles className="w-3 h-3 text-white" />
                       </div>
-                      {t('askPanel.title')}
+                      {t('askPanel.title', { shortName })}
                     </CardTitle>
                     {askMessages.length > 0 && (
                       <Button

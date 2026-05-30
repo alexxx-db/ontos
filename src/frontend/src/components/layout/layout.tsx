@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { useLayoutStore } from '@/stores/layout-store';
 import { useCopilotStore } from '@/stores/copilot-store';
 import CopilotPanel from '@/components/copilot/copilot-panel';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 
 interface HealthState {
   db_ok: boolean;
@@ -23,6 +24,7 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation(['search']);
+  const shortName = useUICustomizationStore((s) => s.getShortName());
   const isSidebarCollapsed = useLayoutStore((state) => state.isSidebarCollapsed);
   const { toggleSidebar } = useLayoutStore((state) => state.actions);
   const isCopilotOpen = useCopilotStore((s) => s.isOpen);
@@ -78,7 +80,7 @@ export default function Layout({ children }: LayoutProps) {
         >
           <Sparkles className="h-4 w-4 shrink-0" />
           <span className="text-xs font-medium [writing-mode:vertical-rl] rotate-180">
-            {t('search:copilot.button')}
+            {t('search:copilot.button', { shortName })}
           </span>
         </button>
       )}

@@ -19,9 +19,11 @@ import type { Connection } from '@/types/connections';
 import type { ImportDepth } from '@/types/schema-import';
 import SchemaBrowser from '@/components/schema-importer/schema-browser';
 import ImportPreviewDialog from '@/components/schema-importer/import-preview-dialog';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 
 export default function SchemaImporterView() {
   const { t } = useTranslation(['settings', 'common']);
+  const appName = useUICustomizationStore((s) => s.getAppName());
   const { get: apiGet } = useApi();
   const setStaticSegments = useBreadcrumbStore((s) => s.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((s) => s.setDynamicTitle);
@@ -81,7 +83,8 @@ export default function SchemaImporterView() {
         <p className="text-muted-foreground">
           {t(
             'settings:schemaImporter.description',
-            'Browse remote systems and import their structure as Ontos assets.',
+            'Browse remote systems and import their structure as {{appName}} assets.',
+            { appName },
           )}
         </p>
       </div>

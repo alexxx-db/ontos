@@ -23,14 +23,23 @@ import {
   Eye,
   RotateCcw,
   ExternalLink,
+  Tag,
 } from 'lucide-react';
 import MarkdownViewer from '@/components/ui/markdown-viewer';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
+import { DEFAULT_APP_NAME } from '@/lib/branding';
+
+const APP_DISPLAY_NAME_MAX_LEN = 64;
+const APP_SHORT_NAME_MAX_LEN = 16;
 
 interface UICustomizationState {
   i18nEnabled: boolean;
   customLogoUrl: string;
   aboutContent: string;
   customCss: string;
+  appDisplayName: string;
+  appShortName: string;
+  faviconUrl: string;
 }
 
 export default function UICustomizationSettings() {
@@ -38,19 +47,23 @@ export default function UICustomizationSettings() {
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
   const hasWriteAccess = hasPermission('settings-ui', FeatureAccessLevel.READ_WRITE);
+  const refreshBranding = useUICustomizationStore((s) => s.fetchSettings);
 
   const [settings, setSettings] = useState<UICustomizationState>({
     i18nEnabled: true,
     customLogoUrl: '',
     aboutContent: '',
     customCss: '',
+    appDisplayName: '',
+    appShortName: '',
+    faviconUrl: '',
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [previewTab, setPreviewTab] = useState<'edit' | 'preview'>('edit');
   const [logoError, setLogoError] = useState(false);
+  const [faviconError, setFaviconError] = useState(false);
 
-  // Fetch settings on mount
   useEffect(() => {
     const fetchSettings = async () => {
       setIsLoading(true);
@@ -63,6 +76,9 @@ export default function UICustomizationSettings() {
             customLogoUrl: data.ui_custom_logo_url || '',
             aboutContent: data.ui_about_content || '',
             customCss: data.ui_custom_css || '',
+            appDisplayName: data.ui_app_display_name || '',
+            appShortName: data.ui_app_short_name || '',
+            faviconUrl: data.ui_favicon_url || '',
           });
         }
       } catch (error) {
@@ -85,6 +101,9 @@ export default function UICustomizationSettings() {
           ui_custom_logo_url: settings.customLogoUrl || null,
           ui_about_content: settings.aboutContent || null,
           ui_custom_css: settings.customCss || null,
+          ui_app_display_name: settings.appDisplayName.trim() || null,
+          ui_app_short_name: settings.appShortName.trim() || null,
+          ui_favicon_url: settings.faviconUrl || null,
         }),
       });
       if (response.ok) {
@@ -92,18 +111,28 @@ export default function UICustomizationSettings() {
           title: t('settings:uiCustomization.messages.saveSuccess', 'UI customization settings saved'),
           description: t('settings:uiCustomization.messages.reloadRequired', 'Reload the page to see some changes.'),
         });
-        // Update localStorage for i18n setting so it takes effect on next load
         if (!settings.i18nEnabled) {
           localStorage.setItem('i18n-disabled', 'true');
         } else {
           localStorage.removeItem('i18n-disabled');
         }
+        // Refresh public UI customization store so branding (title + favicon)
+        // updates in the current session without requiring a hard reload.
+        refreshBranding();
       } else {
-        throw new Error('Failed to save settings');
+        const detail = await response.json().catch(() => null);
+        const message =
+          (detail && typeof detail.detail === 'string' && detail.detail) ||
+          t(
+            'settings:uiCustomization.messages.saveError',
+            'Failed to save UI customization settings',
+          );
+        throw new Error(message);
       }
     } catch (error) {
       toast({
         title: t('settings:uiCustomization.messages.saveError', 'Failed to save UI customization settings'),
+        description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
     } finally {
@@ -116,6 +145,8 @@ export default function UICustomizationSettings() {
     setSettings((prev) => ({ ...prev, [name]: value }));
     if (name === 'customLogoUrl') {
       setLogoError(false);
+    } else if (name === 'faviconUrl') {
+      setFaviconError(false);
     }
   };
 
@@ -136,7 +167,17 @@ export default function UICustomizationSettings() {
     setLogoError(false);
   };
 
-  const validateLogoUrl = (url: string): boolean => {
+  const handleResetFavicon = () => {
+    setSettings((prev) => ({ ...prev, faviconUrl: '' }));
+    setFaviconError(false);
+  };
+
+  const handleResetBrandingNames = () => {
+    setSettings((prev) => ({ ...prev, appDisplayName: '', appShortName: '' }));
+  };
+
+  /** Validate http/https image URL. Shared between custom logo and favicon. */
+  const validateImageUrl = (url: string): boolean => {
     if (!url) return true;
     try {
       const parsed = new URL(url);
@@ -145,6 +186,8 @@ export default function UICustomizationSettings() {
       return false;
     }
   };
+  // Keep legacy alias used by existing logo block.
+  const validateLogoUrl = validateImageUrl;
 
   if (isLoading) {
     return (
@@ -190,6 +233,86 @@ export default function UICustomizationSettings() {
               onCheckedChange={handleI18nToggle}
               disabled={!hasWriteAccess}
             />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Branding (display name + short name) */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Tag className="h-5 w-5 text-muted-foreground" />
+              <h3 className="text-lg font-medium">
+                {t('settings:uiCustomization.branding.title', 'Branding')}
+              </h3>
+            </div>
+            {(settings.appDisplayName || settings.appShortName) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleResetBrandingNames}
+                disabled={!hasWriteAccess}
+              >
+                <RotateCcw className="h-4 w-4 mr-1" />
+                {t('common:actions.reset', 'Reset')}
+              </Button>
+            )}
+          </div>
+          <Alert variant="default">
+            <AlertDescription>
+              {t(
+                'settings:uiCustomization.branding.help',
+                'The display name overrides the product name in welcome/about/copilot copy and in the browser tab title. The PWA manifest name and the static page title set at build time are not updated by these settings.',
+              )}
+            </AlertDescription>
+          </Alert>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="appDisplayName">
+                {t('settings:uiCustomization.branding.displayNameLabel', 'Display name')}
+              </Label>
+              <Input
+                id="appDisplayName"
+                name="appDisplayName"
+                value={settings.appDisplayName}
+                onChange={handleChange}
+                placeholder={DEFAULT_APP_NAME}
+                disabled={!hasWriteAccess}
+                maxLength={APP_DISPLAY_NAME_MAX_LEN}
+              />
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'settings:uiCustomization.branding.displayNameHelp',
+                  'Leave empty to use the default product name ({{defaultName}}). Maximum {{max}} characters.',
+                  { defaultName: DEFAULT_APP_NAME, max: APP_DISPLAY_NAME_MAX_LEN },
+                )}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="appShortName">
+                {t('settings:uiCustomization.branding.shortNameLabel', 'Short name (optional)')}
+              </Label>
+              <Input
+                id="appShortName"
+                name="appShortName"
+                value={settings.appShortName}
+                onChange={handleChange}
+                placeholder={t(
+                  'settings:uiCustomization.branding.shortNamePlaceholder',
+                  'e.g. an acronym for compact UI',
+                )}
+                disabled={!hasWriteAccess}
+                maxLength={APP_SHORT_NAME_MAX_LEN}
+              />
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'settings:uiCustomization.branding.shortNameHelp',
+                  'Used in tight spaces (e.g. "Ask {{shortName}}"). Falls back to the display name when empty. Maximum {{max}} characters.',
+                  { max: APP_SHORT_NAME_MAX_LEN, shortName: settings.appShortName || settings.appDisplayName || DEFAULT_APP_NAME },
+                )}
+              </p>
+            </div>
           </div>
         </div>
 
@@ -258,6 +381,84 @@ export default function UICustomizationSettings() {
               >
                 <ExternalLink className="h-3 w-3" />
                 {t('settings:uiCustomization.logo.openInNewTab', 'Open in new tab')}
+              </a>
+            </div>
+          )}
+        </div>
+
+        <Separator />
+
+        {/* Favicon */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Image className="h-5 w-5 text-muted-foreground" />
+              <h3 className="text-lg font-medium">
+                {t('settings:uiCustomization.favicon.title', 'Browser Favicon')}
+              </h3>
+            </div>
+            {settings.faviconUrl && (
+              <Button variant="ghost" size="sm" onClick={handleResetFavicon} disabled={!hasWriteAccess}>
+                <RotateCcw className="h-4 w-4 mr-1" />
+                {t('common:actions.reset', 'Reset')}
+              </Button>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="faviconUrl">
+              {t('settings:uiCustomization.favicon.urlLabel', 'Favicon URL')}
+            </Label>
+            <Input
+              id="faviconUrl"
+              name="faviconUrl"
+              value={settings.faviconUrl}
+              onChange={handleChange}
+              placeholder={t(
+                'settings:uiCustomization.favicon.urlPlaceholder',
+                'https://example.com/favicon.svg',
+              )}
+              disabled={!hasWriteAccess}
+            />
+            {settings.faviconUrl && !validateImageUrl(settings.faviconUrl) && (
+              <p className="text-sm text-destructive">
+                {t('settings:uiCustomization.favicon.invalidUrl', 'Please enter a valid HTTP or HTTPS URL')}
+              </p>
+            )}
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'settings:uiCustomization.favicon.help',
+                'Applied at runtime to the browser tab. The static <link rel="icon"> in the shipped index.html and the PWA manifest are not updated by this setting.',
+              )}
+            </p>
+          </div>
+          {settings.faviconUrl && validateImageUrl(settings.faviconUrl) && (
+            <div className="flex items-center gap-4 p-4 rounded-lg border bg-muted/30">
+              <span className="text-sm text-muted-foreground">
+                {t('settings:uiCustomization.favicon.preview', 'Preview:')}
+              </span>
+              {faviconError ? (
+                <div className="flex items-center gap-2 text-destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span className="text-sm">
+                    {t('settings:uiCustomization.favicon.loadError', 'Failed to load image')}
+                  </span>
+                </div>
+              ) : (
+                <img
+                  src={settings.faviconUrl}
+                  alt="Favicon preview"
+                  className="h-6 w-6 object-contain"
+                  onError={() => setFaviconError(true)}
+                />
+              )}
+              <a
+                href={settings.faviconUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-primary hover:underline flex items-center gap-1"
+              >
+                <ExternalLink className="h-3 w-3" />
+                {t('settings:uiCustomization.favicon.openInNewTab', 'Open in new tab')}
               </a>
             </div>
           )}

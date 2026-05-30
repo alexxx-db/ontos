@@ -87,6 +87,11 @@ async def update_settings(
         updated = manager.update_settings(settings_payload)
         success = True
         return updated.to_dict()
+    except ValueError as e:
+        # Validation errors from manager (e.g. invalid branding URL, name too long)
+        logger.warning(f"Settings validation error: {e}")
+        details['exception'] = str(e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Error updating settings", exc_info=True)
         details['exception'] = str(e)
@@ -121,12 +126,15 @@ async def get_llm_config():
 @router.get('/settings/ui-customization')
 async def get_ui_customization():
     """Get UI customization settings (publicly accessible for UI theming and branding).
-    
+
     Returns settings for:
     - i18n_enabled: Whether internationalization is enabled (disable forces English)
     - custom_logo_url: URL to custom logo image
     - about_content: Custom Markdown content for About page
     - custom_css: Custom CSS to inject into the app
+    - app_display_name: Global application display name (overrides default product name)
+    - app_short_name: Optional short/abbreviated name for compact UI surfaces
+    - favicon_url: URL to custom favicon image
     """
     try:
         app_settings = get_settings()
@@ -135,6 +143,9 @@ async def get_ui_customization():
             "custom_logo_url": app_settings.UI_CUSTOM_LOGO_URL,
             "about_content": sanitize_markdown_input(app_settings.UI_ABOUT_CONTENT) if app_settings.UI_ABOUT_CONTENT else None,
             "custom_css": app_settings.UI_CUSTOM_CSS,
+            "app_display_name": app_settings.UI_APP_DISPLAY_NAME,
+            "app_short_name": app_settings.UI_APP_SHORT_NAME,
+            "favicon_url": app_settings.UI_FAVICON_URL,
         }
     except Exception as e:
         logger.error("Error getting UI customization settings", exc_info=True)

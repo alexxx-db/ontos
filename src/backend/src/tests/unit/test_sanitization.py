@@ -8,7 +8,13 @@ Tests HTML/Markdown sanitization including:
 """
 import pytest
 
-from src.common.sanitization import sanitize_markdown_input
+from src.common.sanitization import (
+    APP_DISPLAY_NAME_MAX_LEN,
+    APP_SHORT_NAME_MAX_LEN,
+    sanitize_app_display_name,
+    sanitize_markdown_input,
+    validate_branding_url,
+)
 
 
 class TestSanitization:
@@ -115,4 +121,93 @@ class TestSanitization:
         assert "<strong>" in result
         assert "<em>" in result
         assert "Nested text" in result
+
+
+class TestAppDisplayNameSanitization:
+    """Unit tests for sanitize_app_display_name (issue #240)."""
+
+    def test_none_returns_none(self):
+        assert sanitize_app_display_name(None) is None
+
+    def test_empty_returns_none(self):
+        assert sanitize_app_display_name("") is None
+
+    def test_whitespace_only_returns_none(self):
+        assert sanitize_app_display_name("   \t \n ") is None
+
+    def test_trims_surrounding_whitespace(self):
+        assert sanitize_app_display_name("  Acme Catalog  ") == "Acme Catalog"
+
+    def test_strips_control_characters(self):
+        assert sanitize_app_display_name("Acme\x00Catalog\x07") == "AcmeCatalog"
+
+    def test_max_length_default(self):
+        ok = "X" * APP_DISPLAY_NAME_MAX_LEN
+        assert sanitize_app_display_name(ok) == ok
+
+    def test_max_length_default_exceeded_raises(self):
+        with pytest.raises(ValueError):
+            sanitize_app_display_name("X" * (APP_DISPLAY_NAME_MAX_LEN + 1))
+
+    def test_short_name_max_length_enforced(self):
+        with pytest.raises(ValueError):
+            sanitize_app_display_name(
+                "X" * (APP_SHORT_NAME_MAX_LEN + 1),
+                max_len=APP_SHORT_NAME_MAX_LEN,
+            )
+
+    def test_non_string_raises(self):
+        with pytest.raises(ValueError):
+            sanitize_app_display_name(123)  # type: ignore[arg-type]
+
+
+class TestBrandingUrlValidation:
+    """Unit tests for validate_branding_url (issue #240)."""
+
+    def test_none_returns_none(self):
+        assert validate_branding_url(None) is None
+
+    def test_empty_returns_none(self):
+        assert validate_branding_url("") is None
+
+    def test_whitespace_only_returns_none(self):
+        assert validate_branding_url("   ") is None
+
+    def test_http_allowed(self):
+        url = "http://example.com/favicon.svg"
+        assert validate_branding_url(url) == url
+
+    def test_https_allowed(self):
+        url = "https://example.com/favicon.svg"
+        assert validate_branding_url(url) == url
+
+    def test_strips_surrounding_whitespace(self):
+        assert (
+            validate_branding_url("  https://example.com/x.png  ")
+            == "https://example.com/x.png"
+        )
+
+    def test_rejects_javascript_scheme(self):
+        with pytest.raises(ValueError):
+            validate_branding_url("javascript:alert(1)")
+
+    def test_rejects_data_scheme(self):
+        with pytest.raises(ValueError):
+            validate_branding_url("data:image/png;base64,AAAA")
+
+    def test_rejects_file_scheme(self):
+        with pytest.raises(ValueError):
+            validate_branding_url("file:///etc/passwd")
+
+    def test_rejects_missing_host(self):
+        with pytest.raises(ValueError):
+            validate_branding_url("https://")
+
+    def test_rejects_scheme_only(self):
+        with pytest.raises(ValueError):
+            validate_branding_url("not-a-url")
+
+    def test_non_string_raises(self):
+        with pytest.raises(ValueError):
+            validate_branding_url(123)  # type: ignore[arg-type]
 

@@ -167,6 +167,10 @@ class Settings(BaseSettings):
     UI_CUSTOM_LOGO_URL: Optional[str] = Field(None, env='UI_CUSTOM_LOGO_URL')  # URL to custom logo image
     UI_ABOUT_CONTENT: Optional[str] = Field(None, env='UI_ABOUT_CONTENT')  # Custom Markdown content for About page
     UI_CUSTOM_CSS: Optional[str] = Field(None, env='UI_CUSTOM_CSS')  # Custom CSS to inject into the app
+    # Branding (issue #240): runtime-configurable display name + favicon
+    UI_APP_DISPLAY_NAME: Optional[str] = Field(None, env='UI_APP_DISPLAY_NAME')  # Global application display name (overrides default product name in UI copy)
+    UI_APP_SHORT_NAME: Optional[str] = Field(None, env='UI_APP_SHORT_NAME')  # Optional short/abbreviated name for compact UI surfaces
+    UI_FAVICON_URL: Optional[str] = Field(None, env='UI_FAVICON_URL')  # URL to custom favicon image (http/https)
 
     # Replace nested Config class with model_config dictionary
     model_config = SettingsConfigDict(

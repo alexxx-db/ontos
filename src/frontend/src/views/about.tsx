@@ -15,6 +15,7 @@ export default function About() {
   const { t } = useTranslation(['about', 'features']);
   const allowedMaturities = useFeatureVisibilityStore((state) => state.allowedMaturities);
   const customAboutContent = useUICustomizationStore((state) => state.aboutContent);
+  const appName = useUICustomizationStore((state) => state.getAppName());
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [serverStartTime, setServerStartTime] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,7 +77,7 @@ export default function About() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-4xl font-bold mb-6">{t('about:title')}</h1>
+      <h1 className="text-4xl font-bold mb-6">{t('about:title', { appName })}</h1>
       <p className="text-lg text-muted-foreground mb-6">{t('about:intro')}</p>
       
       {/* Version and Runtime Info */}

@@ -418,7 +418,20 @@ async def health_check():
 
 @app.post("/api/health/retry", tags=["System"])
 async def retry_startup():
-    """Re-attempt database init + manager init after a maintenance-mode failure."""
+    """Re-attempt database init + manager init after a maintenance-mode failure.
+
+    NOTE: intentionally NOT gated by ``PermissionChecker``:
+      1. Any authenticated user hitting the UI during a DB outage gets
+         served the "retrying DB" interstitial, which POSTs here. Requiring
+         a role-level permission would break recovery for non-admins, who
+         are the majority of users.
+      2. ``PermissionChecker`` transitively requires ``auth_manager`` from
+         ``app.state.managers`` — the very thing this endpoint recovers when
+         broken — so gating would create a chicken-and-egg failure mode.
+
+    Edge authentication by the Databricks Apps platform still blocks
+    anonymous callers in prod. The operation is idempotent.
+    """
     settings = get_settings()
     try:
         initialize_database(settings=settings)

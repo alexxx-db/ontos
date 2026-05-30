@@ -252,17 +252,16 @@ test.describe('Marketplace — Scope Filtering', () => {
 // 5. Data Product Detail Page — Lifecycle UI (Phase 6)
 // =========================================================================
 test.describe('Data Product Detail — Lifecycle Panel & Badges', () => {
-  test('detail page shows lifecycle summary panel', async ({ page }) => {
+  test('detail page shows cert and publication metadata', async ({ page }) => {
     await page.goto('/data-products')
     const rows = page.locator('table >> tbody >> tr')
     if ((await rows.count()) === 0) return
     await rows.first().click()
 
-    // LifecycleSummaryPanel should be visible
-    const panel = page.getByText(/certification/i)
-      .or(page.getByText(/publication/i))
-      .or(page.locator('[data-testid="lifecycle-panel"]'))
-    await expect(panel.first()).toBeVisible({ timeout: 10_000 })
+    // Cert + Published cells are now part of the basic-info metadata grid
+    const certLabel = page.getByText(/^cert:?$/i)
+    const publishedLabel = page.getByText(/^published:?$/i)
+    await expect(certLabel.first().or(publishedLabel.first())).toBeVisible({ timeout: 10_000 })
   })
 
   test('certify button visible for admin users', async ({ page }) => {
@@ -308,15 +307,15 @@ test.describe('Data Product Detail — Lifecycle Panel & Badges', () => {
 // 6. Data Contract Detail Page — Lifecycle UI (Phase 6)
 // =========================================================================
 test.describe('Data Contract Detail — Lifecycle Panel & Badges', () => {
-  test('detail page shows lifecycle summary panel', async ({ page }) => {
+  test('detail page shows cert and publication metadata', async ({ page }) => {
     await page.goto('/data-contracts')
     const rows = page.locator('table >> tbody >> tr')
     if ((await rows.count()) === 0) return
     await rows.first().click()
 
-    const panel = page.getByText(/certification/i)
-      .or(page.getByText(/publication/i))
-    await expect(panel.first()).toBeVisible({ timeout: 10_000 })
+    const certLabel = page.getByText(/^cert:?$/i)
+    const publishedLabel = page.getByText(/^published:?$/i)
+    await expect(certLabel.first().or(publishedLabel.first())).toBeVisible({ timeout: 10_000 })
   })
 
   test('contract list shows certification and publication badges', async ({ page }) => {

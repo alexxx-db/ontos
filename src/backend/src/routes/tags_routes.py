@@ -23,6 +23,9 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["Tags"])
 
 # --- Tag Namespace Routes ---
+# Namespaces define the tag taxonomy. Management is gated by the Settings -> Tags
+# admin permission so namespace administrators can be delegated independently
+# from regular tag-applying users.
 @router.post("/tags/namespaces", response_model=TagNamespace, status_code=status.HTTP_201_CREATED)
 async def create_tag_namespace(
     namespace_in: TagNamespaceCreate,
@@ -32,7 +35,8 @@ async def create_tag_namespace(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -77,7 +81,8 @@ async def list_tag_namespaces(
     db: DBSessionDep,
     manager: TagsManager = Depends(get_tags_manager),
     skip: int = 0,
-    limit: int = Query(default=100, le=1000)
+    limit: int = Query(default=100, le=1000),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     return manager.list_namespaces(db, skip=skip, limit=limit)
 
@@ -85,7 +90,8 @@ async def list_tag_namespaces(
 async def get_tag_namespace(
     namespace_id: UUID,
     db: DBSessionDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     namespace = manager.get_namespace(db, namespace_id=namespace_id)
     if not namespace:
@@ -102,7 +108,8 @@ async def update_tag_namespace(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -152,7 +159,8 @@ async def delete_tag_namespace(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -239,7 +247,8 @@ async def list_tags(
     name_contains: Optional[str] = Query(None, description="Filter by tag name containing string (case-insensitive)"),
     status: Optional[TagStatus] = Query(None, description="Filter by tag status"),
     parent_id: Optional[UUID] = Query(None, description="Filter by parent tag ID"),
-    is_root: Optional[bool] = Query(None, description="Filter for root tags (parent_id is null) or non-root tags")
+    is_root: Optional[bool] = Query(None, description="Filter for root tags (parent_id is null) or non-root tags"),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     return manager.list_tags(db, skip=skip, limit=limit, namespace_id=namespace_id, namespace_name=namespace_name,
                              name_contains=name_contains, status=status, parent_id=parent_id, is_root=is_root)
@@ -248,7 +257,8 @@ async def list_tags(
 async def get_tag(
     tag_id: UUID,
     db: DBSessionDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     tag = manager.get_tag(db, tag_id=tag_id)
     if not tag:
@@ -261,7 +271,8 @@ async def get_entities_for_tag(
     tag_id: UUID,
     db: DBSessionDep,
     entity_type: Optional[str] = Query(None, description="Filter by entity type (e.g., data_product, data_contract, dataset)"),
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get all entities that have this tag assigned."""
     # Verify tag exists
@@ -275,7 +286,8 @@ async def get_entities_for_tag(
 async def get_tag_by_fully_qualified_name_route(
     fully_qualified_name: str,
     db: DBSessionDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     # Example: /api/tags/fqn/default/my-tag or /api/tags/fqn/custom_ns/another-tag
     tag = manager.get_tag_by_fqn(db, fqn=fully_qualified_name)
@@ -292,7 +304,8 @@ async def update_tag(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_WRITE)),
 ):
     success = False
     details = {
@@ -334,7 +347,8 @@ async def delete_tag(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -367,6 +381,7 @@ async def delete_tag(
         )
 
 # --- Tag Namespace Permission Routes ---
+# These manage who can write to a specific namespace. Always Settings -> Tags admin.
 @router.post("/tags/namespaces/{namespace_id}/permissions", response_model=TagNamespacePermission, status_code=status.HTTP_201_CREATED)
 async def add_namespace_permission(
     namespace_id: UUID,
@@ -376,7 +391,8 @@ async def add_namespace_permission(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -416,7 +432,8 @@ async def list_namespace_permissions(
     db: DBSessionDep,
     manager: TagsManager = Depends(get_tags_manager),
     skip: int = 0,
-    limit: int = Query(default=100, le=1000)
+    limit: int = Query(default=100, le=1000),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.READ_ONLY)),
 ):
     # Check if namespace exists first (optional, manager method might do it)
     ns = manager.get_namespace(db, namespace_id=namespace_id)
@@ -429,7 +446,8 @@ async def get_namespace_permission_detail(
     namespace_id: UUID, # Keep for path consistency, though perm_id is unique
     permission_id: UUID,
     db: DBSessionDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.READ_ONLY)),
 ):
     permission = manager.get_namespace_permission(db, perm_id=permission_id)
     if not permission or permission.namespace_id != namespace_id:
@@ -446,7 +464,8 @@ async def update_namespace_permission(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -495,7 +514,8 @@ async def delete_namespace_permission(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('settings-tags', FeatureAccessLevel.ADMIN)),
 ):
     success = False
     details = {
@@ -534,12 +554,16 @@ async def delete_namespace_permission(
         )
 
 # --- Generic Entity Tagging Routes ---
+# Reads use tags:READ_ONLY (widely granted, drives entity detail panels).
+# Writes use tags:READ_WRITE; per-namespace permissions are additionally enforced
+# inside TagsManager via TagNamespacePermission.
 @router.get("/entities/{entity_type}/{entity_id}/tags", response_model=List[AssignedTag])
 async def list_entity_tags(
     entity_type: str,
     entity_id: str,
     db: DBSessionDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_ONLY)),
 ):
     return manager.list_assigned_tags(db, entity_id=entity_id, entity_type=entity_type)
 
@@ -553,7 +577,8 @@ async def set_entity_tags(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_WRITE)),
 ):
     success = False
     details = {
@@ -597,7 +622,8 @@ async def add_tag_to_entity_route(
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
     assigned_value: Optional[str] = None,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_WRITE)),
 ):
     success = False
     details = {
@@ -640,7 +666,8 @@ async def remove_tag_from_entity_route(
     current_user: CurrentUserDep,
     audit_manager: AuditManagerDep,
     audit_user: AuditCurrentUserDep,
-    manager: TagsManager = Depends(get_tags_manager)
+    manager: TagsManager = Depends(get_tags_manager),
+    _: None = Depends(PermissionChecker('tags', FeatureAccessLevel.READ_WRITE)),
 ):
     success = False
     details = {

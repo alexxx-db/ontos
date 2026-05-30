@@ -17,6 +17,8 @@ from ..common.dependencies import (
 from ..common.config import get_settings
 from ..common.workspace_client import get_workspace_client
 from ..common.logging import get_logger
+from ..common.authorization import PermissionChecker
+from ..common.features import FeatureAccessLevel
 from ..controller.connections_manager import ConnectionsManager
 from ..models.connections import ConnectionCreate, ConnectionUpdate, ConnectionResponse
 
@@ -45,6 +47,7 @@ def _get_manager(db: Session = Depends(get_db)) -> ConnectionsManager:
 async def list_connections(
     connector_type: Optional[str] = None,
     manager: ConnectionsManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
 ):
     """List all connections, optionally filtered by connector type."""
     return manager.list_connections(connector_type=connector_type)
@@ -53,6 +56,7 @@ async def list_connections(
 @router.get("/connections/types")
 async def list_connector_types(
     manager: ConnectionsManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
 ):
     """List available connector types with metadata and config field hints."""
     return manager.list_connector_types()
@@ -62,6 +66,7 @@ async def list_connector_types(
 async def get_connection(
     connection_id: UUID,
     manager: ConnectionsManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
 ):
     """Get a single connection by ID."""
     conn = manager.get_connection(connection_id)
@@ -78,6 +83,7 @@ async def create_connection(
     manager: ConnectionsManager = Depends(_get_manager),
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
 ):
     """Create a new connection."""
     try:
@@ -110,6 +116,7 @@ async def update_connection(
     manager: ConnectionsManager = Depends(_get_manager),
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
 ):
     """Update an existing connection."""
     result = manager.update_connection(connection_id, payload)
@@ -136,6 +143,7 @@ async def delete_connection(
     manager: ConnectionsManager = Depends(_get_manager),
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.ADMIN)),
 ):
     """Delete a connection (system connections cannot be deleted)."""
     try:
@@ -165,6 +173,7 @@ async def delete_connection(
 async def test_connection(
     connection_id: UUID,
     manager: ConnectionsManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
 ):
     """Test connectivity for a specific connection."""
     result = manager.test_connection(connection_id)

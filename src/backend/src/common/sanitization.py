@@ -5,7 +5,15 @@ This module provides centralized sanitization functions using bleach
 to clean user input and LLM-generated content before rendering in the UI.
 """
 
+from typing import Optional
+from urllib.parse import urlparse
+
 import bleach
+
+# Branding constraints (issue #240)
+APP_DISPLAY_NAME_MAX_LEN = 64
+APP_SHORT_NAME_MAX_LEN = 16
+BRANDING_URL_SCHEMES = ('http', 'https')
 
 # HTML/Markdown sanitization configuration
 ALLOWED_TAGS = [
@@ -39,3 +47,54 @@ def sanitize_markdown_input(user_input: str) -> str:
         attributes=ALLOWED_ATTRIBUTES,
         strip=True
     )
+
+
+def sanitize_app_display_name(
+    value: Optional[str], *, max_len: int = APP_DISPLAY_NAME_MAX_LEN, field: str = 'display name',
+) -> Optional[str]:
+    """Validate and clean a branding display/short name.
+
+    Strips surrounding whitespace and control characters (incl. newlines/tabs),
+    enforces a max length, and returns ``None`` for empty/whitespace-only input
+    so callers can treat "cleared" as "fall back to default product name".
+
+    Raises ``ValueError`` (caught by the settings route -> 400) when the
+    cleaned value exceeds ``max_len``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    cleaned = ''.join(ch for ch in value if ch.isprintable()).strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > max_len:
+        raise ValueError(f"{field} must be at most {max_len} characters")
+    return cleaned
+
+
+def validate_branding_url(value: Optional[str], *, field: str = 'URL') -> Optional[str]:
+    """Validate a branding image URL (custom logo, favicon).
+
+    Returns ``None`` for empty input. Enforces http/https schemes (rejecting
+    ``javascript:``, ``data:``, file paths, etc.) and requires a host. Raises
+    ``ValueError`` on invalid input; the settings route maps this to a 400.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = urlparse(cleaned)
+    except Exception as exc:
+        raise ValueError(f"{field} is not a valid URL") from exc
+    if parsed.scheme not in BRANDING_URL_SCHEMES:
+        raise ValueError(
+            f"{field} must use http or https (got '{parsed.scheme or 'no scheme'}')"
+        )
+    if not parsed.netloc:
+        raise ValueError(f"{field} is missing a host")
+    return cleaned

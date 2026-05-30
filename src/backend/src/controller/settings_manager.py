@@ -12,6 +12,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import func
 
 from src.common.config import Settings
+from src.common.sanitization import (
+    APP_SHORT_NAME_MAX_LEN,
+    sanitize_app_display_name,
+    validate_branding_url,
+)
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.controller.notifications_manager import NotificationsManager
@@ -296,6 +301,19 @@ class SettingsManager:
             if 'UI_CUSTOM_CSS' in all_settings and all_settings['UI_CUSTOM_CSS'] is not None:
                 self._settings.UI_CUSTOM_CSS = all_settings['UI_CUSTOM_CSS']
                 logger.debug("Loaded UI_CUSTOM_CSS from database")
+
+            # Branding settings (issue #240)
+            if 'UI_APP_DISPLAY_NAME' in all_settings and all_settings['UI_APP_DISPLAY_NAME'] is not None:
+                self._settings.UI_APP_DISPLAY_NAME = all_settings['UI_APP_DISPLAY_NAME']
+                logger.debug("Loaded UI_APP_DISPLAY_NAME from database")
+
+            if 'UI_APP_SHORT_NAME' in all_settings and all_settings['UI_APP_SHORT_NAME'] is not None:
+                self._settings.UI_APP_SHORT_NAME = all_settings['UI_APP_SHORT_NAME']
+                logger.debug("Loaded UI_APP_SHORT_NAME from database")
+
+            if 'UI_FAVICON_URL' in all_settings and all_settings['UI_FAVICON_URL'] is not None:
+                self._settings.UI_FAVICON_URL = all_settings['UI_FAVICON_URL']
+                logger.debug("Loaded UI_FAVICON_URL from database")
 
             # Connector configurations are now managed via the `connections`
             # table and loaded by ConnectionsManager at startup.
@@ -1236,6 +1254,9 @@ class SettingsManager:
             'ui_custom_logo_url': self._settings.UI_CUSTOM_LOGO_URL,
             'ui_about_content': self._settings.UI_ABOUT_CONTENT,
             'ui_custom_css': self._settings.UI_CUSTOM_CSS,
+            'ui_app_display_name': self._settings.UI_APP_DISPLAY_NAME,
+            'ui_app_short_name': self._settings.UI_APP_SHORT_NAME,
+            'ui_favicon_url': self._settings.UI_FAVICON_URL,
         }
 
     def update_settings(self, settings: dict) -> Settings:
@@ -1525,7 +1546,9 @@ class SettingsManager:
             logger.info(f"Updated UI_I18N_ENABLED to: {value}")
         
         if 'ui_custom_logo_url' in settings:
-            value = settings.get('ui_custom_logo_url') or None
+            value = validate_branding_url(
+                settings.get('ui_custom_logo_url') or None, field='custom logo URL'
+            )
             app_settings_repo.set(self._db, 'UI_CUSTOM_LOGO_URL', value)
             self._settings.UI_CUSTOM_LOGO_URL = value
             logger.info(f"Updated UI_CUSTOM_LOGO_URL")
@@ -1541,6 +1564,33 @@ class SettingsManager:
             app_settings_repo.set(self._db, 'UI_CUSTOM_CSS', value)
             self._settings.UI_CUSTOM_CSS = value
             logger.info(f"Updated UI_CUSTOM_CSS")
+
+        # Branding (issue #240)
+        if 'ui_app_display_name' in settings:
+            value = sanitize_app_display_name(
+                settings.get('ui_app_display_name'), field='application display name'
+            )
+            app_settings_repo.set(self._db, 'UI_APP_DISPLAY_NAME', value)
+            self._settings.UI_APP_DISPLAY_NAME = value
+            logger.info(f"Updated UI_APP_DISPLAY_NAME")
+
+        if 'ui_app_short_name' in settings:
+            value = sanitize_app_display_name(
+                settings.get('ui_app_short_name'),
+                max_len=APP_SHORT_NAME_MAX_LEN,
+                field='application short name',
+            )
+            app_settings_repo.set(self._db, 'UI_APP_SHORT_NAME', value)
+            self._settings.UI_APP_SHORT_NAME = value
+            logger.info(f"Updated UI_APP_SHORT_NAME")
+
+        if 'ui_favicon_url' in settings:
+            value = validate_branding_url(
+                settings.get('ui_favicon_url') or None, field='favicon URL'
+            )
+            app_settings_repo.set(self._db, 'UI_FAVICON_URL', value)
+            self._settings.UI_FAVICON_URL = value
+            logger.info(f"Updated UI_FAVICON_URL")
 
         # Reinitialize Git service if any Git settings were changed
         git_settings_changed = any(key in settings for key in ['git_repo_url', 'git_branch', 'git_username', 'git_password'])

@@ -2,7 +2,7 @@
   "title": "Zoeken",
   "placeholder": "Zoek over alle assets...",
   "tabs": {
-    "askOntos": "Vraag Ontos",
+    "askOntos": "Vraag {{shortName}}",
     "indexSearch": "Index Zoeken",
     "viewGraph": "Grafiek Bekijken",
     "searchGraph": "Grafiek Zoeken",
@@ -94,7 +94,7 @@
     }
   },
   "llm": {
-    "title": "Vraag Ontos",
+    "title": "Vraag {{shortName}}",
     "subtitle": "Stel vragen over dataproducten, kosten en analytics",
     "rerun": "Opnieuw uitvoeren",
     "copyToInput": "Bewerken & opnieuw verzenden",

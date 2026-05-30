@@ -549,7 +549,7 @@
   },
   "schemaImporter": {
     "title": "Schema Importer",
-    "description": "Browse remote systems and import their structure as Ontos assets."
+    "description": "Browse remote systems and import their structure as {{appName}} assets."
   },
   "assetBulk": {
     "title": "Asset Import / Export",

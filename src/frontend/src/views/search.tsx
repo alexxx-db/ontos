@@ -6,6 +6,7 @@ import { Search as SearchIcon } from 'lucide-react';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import IndexSearch from '@/components/search/index-search';
 import LLMSearch from '@/components/search/llm-search';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 
 // Map URL slugs to tab values
 const SLUG_TO_TAB: Record<string, 'llm' | 'index'> = {
@@ -22,6 +23,7 @@ export default function SearchView() {
   const navigate = useNavigate();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
+  const shortName = useUICustomizationStore((state) => state.getShortName());
 
   // Extract current tab from URL path
   const pathParts = location.pathname.split('/').filter(Boolean);
@@ -63,7 +65,7 @@ export default function SearchView() {
       </h1>
       <Tabs value={currentTab} onValueChange={(v) => handleModeChange(v as 'llm' | 'index')}>
         <TabsList>
-          <TabsTrigger value="llm">{t('tabs.askOntos')}</TabsTrigger>
+          <TabsTrigger value="llm">{t('tabs.askOntos', { shortName })}</TabsTrigger>
           <TabsTrigger value="index">{t('tabs.indexSearch')}</TabsTrigger>
         </TabsList>
 

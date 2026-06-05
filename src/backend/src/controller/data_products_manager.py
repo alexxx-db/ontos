@@ -2989,7 +2989,7 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 subscriber_email=subscriber_email,
                 reason=reason
             )
-            
+
             # Log to change log for audit
             self._log_subscription_change(
                 db_session,
@@ -2998,9 +2998,62 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 action="SUBSCRIBE",
                 reason=reason
             )
-            
+
             db_session.commit()
-            
+
+            # Fire the ON_SUBSCRIBE trigger so workflows can react
+            # (e.g. notify the DP owner, post to ITSM, etc.). Mirror
+            # the access-grant enrichment pattern so webhook templates
+            # can use ``${entity.catalogs}`` / ``${entity.output_ports}``
+            # on subscription events too. Failures are isolated — a
+            # trigger error must not roll back the subscription.
+            try:
+                from src.common.workflow_triggers import (
+                    enrich_entity_data_with_data_product,
+                    get_trigger_registry,
+                )
+                from src.db_models.data_products import DataProductDb as _DataProductDb
+                from src.models.process_workflows import EntityType as _WfEntityType
+
+                # Resolve the underlying DP for enrichment. ``product``
+                # above is the API model; we need the DB row for ports.
+                dp_db = db_session.query(_DataProductDb).filter(
+                    _DataProductDb.id == product_id
+                ).first()
+
+                trigger_entity_data: Dict[str, Any] = {
+                    "product_id": product_id,
+                    "subscriber_email": subscriber_email,
+                    "reason": reason,
+                }
+                if dp_db is not None:
+                    enrich_entity_data_with_data_product(
+                        trigger_entity_data, dp_db
+                    )
+                    if (
+                        "data_product_name" not in trigger_entity_data
+                        and dp_db.name
+                    ):
+                        trigger_entity_data["data_product_name"] = dp_db.name
+
+                trigger_registry = get_trigger_registry(db_session)
+                trigger_registry.on_subscribe(
+                    entity_type=_WfEntityType.DATA_PRODUCT,
+                    entity_id=product_id,
+                    entity_name=getattr(product, 'name', None) or product_id,
+                    entity_data=trigger_entity_data,
+                    user_email=subscriber_email,
+                    blocking=False,
+                )
+            except Exception as workflow_err:
+                logger.error(
+                    "Failed to fire on_subscribe trigger for product "
+                    "%s: %s",
+                    product_id,
+                    workflow_err,
+                    exc_info=True,
+                )
+
             logger.info(f"User {subscriber_email} subscribed to product {product_id}")
             return SubscriptionResponse(
                 subscribed=True,

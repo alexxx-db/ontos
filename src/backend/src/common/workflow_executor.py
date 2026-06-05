@@ -39,13 +39,43 @@ logger = get_logger(__name__)
 
 def substitute_template(template: str, context: 'StepContext') -> str:
     """Replace ${variable} and {{variable}} placeholders with context values.
-    
+
     Supports:
       ${entity_name}, ${entity_type}, ${entity_id}, ${user_email},
       ${workflow_name}, ${workflow_id}, ${execution_id},
-      ${entity.field}, ${step_results.step_id.field}
+      ${entity.field}, ${entity.field.subfield} (nested dot-path on dicts),
+      ${step_results.step_id.field}
+
+    Primitive entity/step-result values render as their stringified form.
+    List or dict values render as compact JSON so webhook templates can
+    splice arrays/objects (e.g. ``${entity.catalogs}``) directly into a
+    JSON body. Use a nested path (``${entity.foo.bar}``) to reach into a
+    dict member as a primitive.
     """
     import re
+
+    def _render(value: Any) -> str:
+        """Render a value for template substitution.
+
+        Primitives → str(value). Lists/dicts → compact JSON so they slot
+        into JSON body_templates without manual quoting. None → empty
+        string.
+        """
+        if value is None:
+            return ''
+        if isinstance(value, bool):
+            # ``bool`` is an ``int`` subclass in Python — keep JSON-style
+            # ``true``/``false`` rather than Python's ``True``/``False``
+            # so webhook bodies stay valid JSON.
+            return 'true' if value else 'false'
+        if isinstance(value, (str, int, float)):
+            return str(value)
+        if isinstance(value, (list, dict)):
+            try:
+                return json.dumps(value, default=str)
+            except (TypeError, ValueError):
+                return str(value)
+        return str(value)
 
     substitutions = {
         'entity_type': context.entity_type,
@@ -58,18 +88,21 @@ def substitute_template(template: str, context: 'StepContext') -> str:
     }
 
     for key, value in context.entity.items():
-        if isinstance(value, (str, int, float, bool)):
-            substitutions[f'entity.{key}'] = str(value)
+        substitutions[f'entity.{key}'] = _render(value)
+        # Surface one level of dict nesting as primitive paths so
+        # workflow authors can write ``${entity.on_behalf_of.value}``
+        # without manually JSON-parsing the parent.
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                substitutions[f'entity.{key}.{sub_key}'] = _render(sub_value)
 
     for step_id, step_data in context.step_results.items():
         if isinstance(step_data, dict):
             for key, value in step_data.items():
-                if isinstance(value, (str, int, float, bool)):
-                    substitutions[f'step_results.{step_id}.{key}'] = str(value)
-                elif isinstance(value, dict):
+                substitutions[f'step_results.{step_id}.{key}'] = _render(value)
+                if isinstance(value, dict):
                     for k, v in value.items():
-                        if isinstance(v, (str, int, float, bool)):
-                            substitutions[f'step_results.{step_id}.{key}.{k}'] = str(v)
+                        substitutions[f'step_results.{step_id}.{key}.{k}'] = _render(v)
 
     def _replace(match):
         var_name = match.group(1)

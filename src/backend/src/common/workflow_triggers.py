@@ -851,12 +851,97 @@ class TriggerRegistry:
 
 def get_trigger_registry(db: Session) -> TriggerRegistry:
     """Get a trigger registry instance.
-    
+
     Args:
         db: Database session
-        
+
     Returns:
         TriggerRegistry instance
     """
     return TriggerRegistry(db)
+
+
+# ============================================================================
+# Entity Data Enrichment Helpers
+# ============================================================================
+#
+# Workflow authors reference entity attributes in webhook ``body_template``s
+# via ``${entity.<field>}`` substitution. For data-product triggers we
+# pre-resolve the underlying DP's output ports into structured records so
+# templates can reach catalog/schema/table without each author re-parsing
+# ODPS ``asset_identifier`` strings.
+
+
+def enrich_entity_data_with_data_product(
+    entity_data: Dict[str, Any],
+    data_product,
+) -> Dict[str, Any]:
+    """Enrich ``entity_data`` with output-port-derived fields from a DP.
+
+    Adds two keys (only when not already supplied — caller wins):
+
+    - ``output_ports``: list of ``{name, catalog, schema, table, fqn}``
+      dicts, one per OutputPortDb whose ``asset_identifier`` parses as
+      a 3-part Unity Catalog reference (``catalog.schema.table``). Ports
+      without a usable identifier are skipped so the workflow author
+      never sees half-formed rows.
+    - ``catalogs``: sorted, deduplicated list of catalog names across
+      every usable output port. Empty list when the DP has no parseable
+      ports.
+
+    The function is intentionally tolerant: a missing ``output_ports``
+    relationship, ``None`` identifiers, or non-3-part identifiers are
+    all logged at debug-level and silently skipped. Failures here must
+    never break the trigger-fire path that wraps this call.
+
+    Args:
+        entity_data: The entity_data dict to mutate. Returned for
+            convenience; mutation is in place. Caller-supplied keys
+            (``output_ports``/``catalogs``) are preserved.
+        data_product: Resolved ``DataProductDb`` row. May be ``None``,
+            in which case the function is a no-op.
+
+    Returns:
+        The (possibly mutated) ``entity_data`` dict.
+    """
+    if data_product is None:
+        return entity_data
+
+    ports = getattr(data_product, 'output_ports', None) or []
+    parsed_ports: List[Dict[str, Any]] = []
+    catalogs_seen: set = set()
+
+    for port in ports:
+        identifier = getattr(port, 'asset_identifier', None)
+        if not identifier or not isinstance(identifier, str):
+            continue
+        parts = identifier.split('.')
+        # Require exactly catalog.schema.table — anything else is a
+        # non-UC asset (file path, job id, etc.) and isn't useful to a
+        # webhook template that wants per-catalog grants.
+        if len(parts) != 3:
+            logger.debug(
+                "Skipping output port '%s' on DP %s: asset_identifier "
+                "'%s' did not parse as catalog.schema.table",
+                getattr(port, 'name', '?'),
+                getattr(data_product, 'id', '?'),
+                identifier,
+            )
+            continue
+        catalog, schema, table = parts
+        parsed_ports.append({
+            'name': getattr(port, 'name', None) or '',
+            'catalog': catalog,
+            'schema': schema,
+            'table': table,
+            'fqn': identifier,
+        })
+        catalogs_seen.add(catalog)
+
+    if 'output_ports' not in entity_data:
+        entity_data['output_ports'] = parsed_ports
+    if 'catalogs' not in entity_data:
+        entity_data['catalogs'] = sorted(catalogs_seen)
+
+    return entity_data
 

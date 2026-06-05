@@ -10,7 +10,7 @@ Manages time-limited access grants to assets including:
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -143,22 +143,55 @@ class AccessGrantsManager:
         )
         
         db.commit()
-        
+
+        # Build entity_data for the trigger. Workflow authors reference
+        # these fields via ``${entity.<key>}`` substitution in webhook
+        # body_templates, so we enrich with properties of the underlying
+        # data product (catalogs, output ports) up front — otherwise
+        # every workflow author would need to re-resolve them by hand.
+        entity_data: Dict[str, Any] = {
+            "request_id": str(request_db.id),
+            "entity_type": data.entity_type,
+            "entity_id": data.entity_id,
+            "entity_name": data.entity_name,
+            "requested_duration_days": data.requested_duration_days,
+            "permission_level": data.permission_level.value,
+            "reason": data.reason,
+        }
+
+        # Enrich with data-product fields when the request targets a DP.
+        # Failures are isolated: a missing or unreadable DP must not
+        # break the access-grant submission flow.
+        if data.entity_type == "data_product":
+            try:
+                from src.common.workflow_triggers import (
+                    enrich_entity_data_with_data_product,
+                )
+                from src.repositories.data_products_repository import (
+                    data_product_repo,
+                )
+
+                dp = data_product_repo.get(db, id=data.entity_id)
+                if dp is not None:
+                    enrich_entity_data_with_data_product(entity_data, dp)
+                    if "data_product_name" not in entity_data and dp.name:
+                        entity_data["data_product_name"] = dp.name
+            except Exception:
+                logger.exception(
+                    "Failed to enrich access-grant entity_data with "
+                    "data-product fields for entity_id=%s; webhook "
+                    "templates referencing ${entity.output_ports} or "
+                    "${entity.catalogs} will resolve to empty values.",
+                    data.entity_id,
+                )
+
         # Fire the ON_REQUEST_ACCESS trigger
         trigger_registry = get_trigger_registry(db)
         executions = trigger_registry.on_request_access(
             entity_type=EntityType.ACCESS_GRANT,
             entity_id=str(request_db.id),
             entity_name=data.entity_name,
-            entity_data={
-                "request_id": str(request_db.id),
-                "entity_type": data.entity_type,
-                "entity_id": data.entity_id,
-                "entity_name": data.entity_name,
-                "requested_duration_days": data.requested_duration_days,
-                "permission_level": data.permission_level.value,
-                "reason": data.reason,
-            },
+            entity_data=entity_data,
             user_email=requester_email,
         )
         

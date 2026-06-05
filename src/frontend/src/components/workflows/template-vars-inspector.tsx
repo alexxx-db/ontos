@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Check, Copy, Search, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Accordion,
   AccordionContent,
@@ -13,6 +14,7 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import type {
   TemplateVarDescriptor,
+  TemplateVarGroup,
   TemplateVarsResponse,
 } from '@/types/template-vars';
 
@@ -51,7 +53,15 @@ function truncate(value: string, max = 60): string {
   return `${value.slice(0, max - 1)}…`;
 }
 
-function VariableRow({ descriptor }: { descriptor: TemplateVarDescriptor }) {
+function VariableRow({
+  descriptor,
+  groupLabel,
+}: {
+  descriptor: TemplateVarDescriptor;
+  // Shown only when this row is rendered in the flat search-result list,
+  // so authors can see which namespace a hit came from.
+  groupLabel?: string;
+}) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
@@ -77,43 +87,89 @@ function VariableRow({ descriptor }: { descriptor: TemplateVarDescriptor }) {
   };
 
   return (
-    <div className="flex items-start gap-2 py-2 border-b last:border-b-0">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
-            {placeholder}
-          </code>
-          <Badge variant="outline" className="text-xs">
-            {descriptor.type}
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          {descriptor.description}
-        </p>
-        {sample && (
-          <p
-            className="text-xs text-muted-foreground/80 mt-0.5 font-mono truncate"
-            title={sample}
-          >
-            e.g. {truncate(sample)}
-          </p>
-        )}
+    <div className="py-2 border-b last:border-b-0">
+      {/* Path + type pill + copy button. ``ml-auto`` on the button
+          guarantees daylight between the bg-muted placeholder and the
+          icon even when the row is narrow. ``inline-block`` on the code
+          stops its background from stretching across leftover whitespace. */}
+      <div className="flex items-center gap-2">
+        <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded inline-block break-all">
+          {placeholder}
+        </code>
+        <Badge variant="outline" className="text-xs shrink-0">
+          {descriptor.type}
+        </Badge>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleCopy}
+          aria-label={`Copy ${placeholder}`}
+          title={`Copy ${placeholder}`}
+          className="ml-auto shrink-0 h-7 w-7 p-0"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </Button>
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={handleCopy}
-        aria-label={`Copy ${placeholder}`}
-        className="shrink-0 h-7 w-7 p-0"
-      >
-        {copied ? (
-          <Check className="h-3.5 w-3.5 text-emerald-600" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
-      </Button>
+      {groupLabel && (
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mt-1">
+          {groupLabel}
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground mt-1">
+        {descriptor.description}
+      </p>
+      {sample && (
+        <p
+          className="text-xs text-muted-foreground/80 mt-0.5 font-mono truncate"
+          title={sample}
+        >
+          e.g. {truncate(sample)}
+        </p>
+      )}
     </div>
   );
+}
+
+// Case-insensitive substring match across path, description, and the
+// rendered sample preview. Splitting the query on whitespace lets
+// authors type multiple tokens that must all hit (e.g. "catalog array"
+// surfaces the catalogs array variable).
+function matchesQuery(
+  descriptor: TemplateVarDescriptor,
+  tokens: string[],
+): boolean {
+  if (tokens.length === 0) return true;
+  const haystack = [
+    descriptor.path,
+    descriptor.description,
+    descriptor.type,
+    formatSample(descriptor.sample),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return tokens.every((tok) => haystack.includes(tok));
+}
+
+function filterGroups(
+  groups: TemplateVarGroup[],
+  query: string,
+): { namespace: string; description: string; variables: TemplateVarDescriptor[] }[] {
+  const tokens = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0) return groups;
+  return groups
+    .map((g) => ({
+      ...g,
+      variables: g.variables.filter((v) => matchesQuery(v, tokens)),
+    }))
+    .filter((g) => g.variables.length > 0);
 }
 
 export default function TemplateVarsInspector({
@@ -124,6 +180,7 @@ export default function TemplateVarsInspector({
   const [data, setData] = useState<TemplateVarsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     if (!triggerType || !entityType) {
@@ -158,6 +215,21 @@ export default function TemplateVarsInspector({
       cancelled = true;
     };
   }, [triggerType, entityType, get]);
+
+  // Reset the search whenever the (trigger, entity_type) pair changes so
+  // we don't strand a query that doesn't match the new descriptor set.
+  useEffect(() => {
+    setQuery('');
+  }, [triggerType, entityType]);
+
+  const filteredGroups = useMemo(
+    () => (data ? filterGroups(data.groups, query) : []),
+    [data, query],
+  );
+  const totalMatches = useMemo(
+    () => filteredGroups.reduce((acc, g) => acc + g.variables.length, 0),
+    [filteredGroups],
+  );
 
   if (!triggerType || !entityType) {
     return (
@@ -200,45 +272,96 @@ export default function TemplateVarsInspector({
     );
   }
 
+  const isSearching = query.trim().length > 0;
   // Default-open the entity group (first) since that's the most useful.
   const defaultOpen = data.groups[0]?.namespace;
 
   return (
-    <div className="rounded-md border overflow-hidden">
+    <div className="rounded-md border overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b bg-muted/30">
         <p className="text-xs font-medium">Available variables</p>
         <p className="text-xs text-muted-foreground">
           Click the copy icon to grab a placeholder.
         </p>
       </div>
-      <Accordion type="multiple" defaultValue={defaultOpen ? [defaultOpen] : []}>
-        {data.groups.map((group) => (
-          <AccordionItem
-            key={group.namespace}
-            value={group.namespace}
-            className="border-b last:border-b-0"
-          >
-            <AccordionTrigger className="px-3 py-2 text-xs font-medium hover:no-underline">
-              <span>
-                {group.namespace}
-                <span className="ml-2 text-muted-foreground font-normal">
-                  ({group.variables.length})
+      <div className="px-3 py-2 border-b">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter by name or description…"
+            className="h-8 text-xs pl-7 pr-7"
+            aria-label="Search template variables"
+          />
+          {isSearching && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {isSearching && (
+          <p className="text-[11px] text-muted-foreground mt-1">
+            {totalMatches} match{totalMatches === 1 ? '' : 'es'}
+          </p>
+        )}
+      </div>
+
+      {isSearching ? (
+        // Flat list view when searching — easier to scan than expanding
+        // every accordion group. Empty state lives inline.
+        <div className="px-3">
+          {totalMatches === 0 ? (
+            <p className="text-xs text-muted-foreground py-3">
+              No variables match <code className="font-mono">{query}</code>.
+            </p>
+          ) : (
+            filteredGroups.flatMap((group) =>
+              group.variables.map((variable) => (
+                <VariableRow
+                  key={`${group.namespace}.${variable.path}`}
+                  descriptor={variable}
+                  groupLabel={group.namespace}
+                />
+              )),
+            )
+          )}
+        </div>
+      ) : (
+        <Accordion type="multiple" defaultValue={defaultOpen ? [defaultOpen] : []}>
+          {data.groups.map((group) => (
+            <AccordionItem
+              key={group.namespace}
+              value={group.namespace}
+              className="border-b last:border-b-0"
+            >
+              <AccordionTrigger className="px-3 py-2 text-xs font-medium hover:no-underline">
+                <span>
+                  {group.namespace}
+                  <span className="ml-2 text-muted-foreground font-normal">
+                    ({group.variables.length})
+                  </span>
                 </span>
-              </span>
-            </AccordionTrigger>
-            <AccordionContent className="px-3 pb-2 pt-0">
-              <p className="text-xs text-muted-foreground mb-1">
-                {group.description}
-              </p>
-              <div>
-                {group.variables.map((variable) => (
-                  <VariableRow key={variable.path} descriptor={variable} />
-                ))}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        ))}
-      </Accordion>
+              </AccordionTrigger>
+              <AccordionContent className="px-3 pb-2 pt-0">
+                <p className="text-xs text-muted-foreground mb-1">
+                  {group.description}
+                </p>
+                <div>
+                  {group.variables.map((variable) => (
+                    <VariableRow key={variable.path} descriptor={variable} />
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      )}
     </div>
   );
 }

@@ -309,17 +309,25 @@
       "on_request_access": "Access Request",
       "on_request_publish": "Publish Request",
       "on_request_status_change": "Status Change Request",
+      "on_request_certify": "Certification Request",
+      "on_certify": "On Certify",
+      "on_decertify": "On Decertify",
+      "before_status_change": "Before Status Change",
+      "on_publish": "On Publish",
+      "on_unpublish": "On Unpublish",
       "on_job_success": "Job Success",
       "on_job_failure": "Job Failure",
       "on_subscribe": "Subscription",
       "on_unsubscribe": "Unsubscription",
       "on_expiring": "Expiring Soon",
       "on_revoke": "Access Revoked",
+      "on_first_access": "On First Access",
       "for_approval_response": "Approval Response (Wizard)",
       "for_subscribe": "Subscribe (Wizard)",
       "for_request_review": "Request Review (Wizard)",
       "for_request_access": "Request Access (Wizard)",
       "for_request_publish": "Request Publish (Wizard)",
+      "for_request_certify": "Request Certification (Wizard)",
       "for_request_status_change": "Request Status Change (Wizard)"
     },
     "entityTypes": {
@@ -336,11 +344,12 @@
       "role": "Role",
       "data_asset_review": "Asset Review",
       "job": "Job",
-      "subscription": "Subscription"
+      "subscription": "Subscription",
+      "user": "User"
     },
     "stepTypes": {
       "validation": "Validation",
-      "approval": "Approval",
+      "approval": "Request Approval",
       "notification": "Notification",
       "assign_tag": "Assign Tag",
       "remove_tag": "Remove Tag",
@@ -351,7 +360,17 @@
       "policy_check": "Policy Check",
       "delivery": "Delivery",
       "create_asset_review": "Create Asset Review",
-      "webhook": "Webhook"
+      "webhook": "Webhook",
+      "user_action": "User Action",
+      "entity_action": "Entity Action",
+      "legal_document": "Legal Document",
+      "acknowledgement_checklist": "Acknowledgement Checklist",
+      "co_signers": "Co-Signers",
+      "persist_agreement": "Persist Agreement",
+      "generate_pdf": "Generate PDF",
+      "deliver": "Deliver",
+      "grant_permissions": "Grant Permissions",
+      "on_behalf_of": "On Behalf Of"
     }
   }
 }

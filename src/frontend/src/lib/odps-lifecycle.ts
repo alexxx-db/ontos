@@ -8,57 +8,52 @@
 import { DataProductStatus } from '@/types/data-product';
 
 /**
- * Defines allowed status transitions for ODPS lifecycle (aligned with ODCS).
+ * Defines allowed status transitions for ODPS lifecycle.
  *
  * Lifecycle flow:
- * draft → [sandbox] → proposed → under_review → approved → active → certified → deprecated → retired
+ * draft → [sandbox] → proposed → under_review → approved → active → deprecated → retired
  *
  * Key rules:
  * - Sandbox is optional for testing before review
  * - Can return to draft from review states for revisions
  * - Can jump to deprecated from any status (emergency deprecation)
- * - Certified is elevated status after active
+ * - Certification is a separate dimension (not a status)
  * - Retired is terminal (no transitions out)
  */
 export const ALLOWED_TRANSITIONS: Record<string, string[]> = {
   [DataProductStatus.DRAFT]: [
     DataProductStatus.SANDBOX,
     DataProductStatus.PROPOSED,
-    DataProductStatus.DEPRECATED, // Emergency deprecation
+    DataProductStatus.DEPRECATED,
   ],
   [DataProductStatus.SANDBOX]: [
     DataProductStatus.DRAFT,
     DataProductStatus.PROPOSED,
-    DataProductStatus.DEPRECATED, // Emergency deprecation
+    DataProductStatus.DEPRECATED,
   ],
   [DataProductStatus.PROPOSED]: [
-    DataProductStatus.DRAFT, // Back for revisions
+    DataProductStatus.DRAFT,
     DataProductStatus.UNDER_REVIEW,
-    DataProductStatus.DEPRECATED, // Emergency deprecation
+    DataProductStatus.DEPRECATED,
   ],
   [DataProductStatus.UNDER_REVIEW]: [
-    DataProductStatus.DRAFT, // Rejected, needs revisions
+    DataProductStatus.DRAFT,
     DataProductStatus.APPROVED,
-    DataProductStatus.DEPRECATED, // Emergency deprecation
+    DataProductStatus.DEPRECATED,
   ],
   [DataProductStatus.APPROVED]: [
     DataProductStatus.ACTIVE,
-    DataProductStatus.DRAFT, // Back for revisions
-    DataProductStatus.DEPRECATED, // Emergency deprecation
+    DataProductStatus.DRAFT,
+    DataProductStatus.DEPRECATED,
   ],
   [DataProductStatus.ACTIVE]: [
-    DataProductStatus.CERTIFIED, // Elevate to certified
     DataProductStatus.DEPRECATED,
-  ],
-  [DataProductStatus.CERTIFIED]: [
-    DataProductStatus.DEPRECATED,
-    DataProductStatus.ACTIVE, // Demote from certified
   ],
   [DataProductStatus.DEPRECATED]: [
     DataProductStatus.RETIRED,
-    DataProductStatus.ACTIVE, // Reactivation (if deprecation was premature)
+    DataProductStatus.ACTIVE,
   ],
-  [DataProductStatus.RETIRED]: [], // Terminal state
+  [DataProductStatus.RETIRED]: [],
 };
 
 /**
@@ -107,12 +102,6 @@ export const STATUS_CONFIG: Record<string, StatusConfig> = {
     description: 'Published and available for consumption',
     variant: 'default',
     icon: '✅',
-  },
-  [DataProductStatus.CERTIFIED]: {
-    label: 'Certified',
-    description: 'Verified for high-value or regulated use',
-    variant: 'default',
-    icon: '🏅',
   },
   [DataProductStatus.DEPRECATED]: {
     label: 'Deprecated',
@@ -222,9 +211,7 @@ export function getRecommendedAction(currentStatus: string): string | null {
     case DataProductStatus.APPROVED:
       return 'Publish to Active to make available';
     case DataProductStatus.ACTIVE:
-      return 'Certify for elevated status or deprecate when retiring';
-    case DataProductStatus.CERTIFIED:
-      return 'Deprecate when planning retirement';
+      return 'Deprecate when retiring; use the certification panel for certification';
     case DataProductStatus.DEPRECATED:
       return 'Retire when no longer in use';
     case DataProductStatus.RETIRED:

@@ -4,7 +4,13 @@ export type DataContractListItem = {
   name: string
   version: string
   status: string
-  published?: boolean // Marketplace publication status
+  publication_scope?: string | null
+  published_at?: string | null
+  published_by?: string | null
+  certification_level?: number | null
+  inherited_certification_level?: number | null
+  certified_at?: string | null
+  certified_by?: string | null
   owner_team_id?: string // UUID of the owning team
   owner_team_name?: string // Resolved owner team name
   project_id?: string // Project association
@@ -14,9 +20,13 @@ export type DataContractListItem = {
   updated?: string
   // Semantic versioning fields
   parentContractId?: string
+  versionFamilyId?: string // PRD #442 — every member of a version family carries this same UUID
   baseName?: string
   // Personal draft visibility
   draftOwnerId?: string // If set, this is a personal draft
+  // Number of visible versions in this row's family — only populated on the
+  // collapsed list view (include_history=false). See PRD #442.
+  versionCount?: number
   // Summary field from list endpoint
   schemaObjectCount?: number
   // Fields returned by summary endpoint for compatibility
@@ -28,10 +38,32 @@ export type DataContractListItem = {
   description?: ContractDescription
 }
 
+// ODCS v3.1.0 relationship (foreign key) at schema or property level
+export type SchemaRelationship = {
+  id?: string
+  type: string
+  from?: string | string[] // schema-level only; absent for property-level
+  to: string | string[]
+  customProperties?: { property: string; value: any }[]
+}
+
+// ODCS v3.1.0 Team object metadata
+export type TeamMetadata = {
+  id?: string
+  contract_id?: string
+  stable_id?: string
+  name?: string
+  description?: string
+  tags?: string[]
+  customProperties?: { property: string; value: any }[]
+  authoritativeDefinitions?: { url: string; type: string }[]
+}
+
 // ODCS compliant column property
 export type ColumnProperty = {
   name: string
   logicalType: string
+  stableId?: string // ODCS v3.1.0 StableId
   physicalType?: string // Physical data type (VARCHAR(50), INT, etc.)
   physicalName?: string // Physical column name
   required?: boolean
@@ -65,7 +97,7 @@ export type ColumnProperty = {
   itemType?: string
   minItems?: number
   maxItems?: number
-  // ODCS v3.0.2 additional property fields
+  // ODCS additional property fields
   businessName?: string
   encryptedName?: string
   criticalDataElement?: boolean
@@ -76,11 +108,14 @@ export type ColumnProperty = {
   quality?: QualityRule[]  // Property-level quality checks
   tags?: string[]  // ODCS tags for categorization
   customProperties?: Record<string, any>  // ODCS custom properties
+  // ODCS v3.1.0 relationships (property-level FKs)
+  relationships?: SchemaRelationship[]
 }
 
 // ODCS compliant schema object
 export type SchemaObject = {
   name: string
+  stableId?: string // ODCS v3.1.0 StableId
   physicalName?: string
   properties: ColumnProperty[]
   propertyCount?: number
@@ -91,7 +126,7 @@ export type SchemaObject = {
   createdAt?: string
   updatedAt?: string
   tableProperties?: Record<string, any>
-  // ODCS v3.0.2 fields
+  // ODCS fields
   businessName?: string
   physicalType?: string
   dataGranularityDescription?: string
@@ -99,6 +134,8 @@ export type SchemaObject = {
   authoritativeDefinitions?: { url: string; type: string }[]
   // Optional local helper used by wizard/editor to collect concepts
   semanticConcepts?: { iri: string; label?: string }[]
+  // ODCS v3.1.0 relationships (schema-level FKs)
+  relationships?: SchemaRelationship[]
 }
 
 // Lightweight schema summary for listing (no properties loaded)
@@ -127,7 +164,7 @@ export type ContractDescription = {
   limitations?: string
 }
 
-// ODCS v3.0.2 compliant team member
+// ODCS compliant team member
 export type TeamMember = {
   username: string // Required by ODCS - maps to email/identifier
   role: string
@@ -165,7 +202,7 @@ export type SLARequirements = {
   dataFreshnessMinutes?: number
 }
 
-// ODCS v3.0.2 compliant quality rule (matches backend QualityRule model)
+// ODCS compliant quality rule (matches backend QualityRule model)
 export type QualityRule = {
   name?: string
   description?: string
@@ -211,14 +248,13 @@ export type ServerConfig = {
   properties?: Record<string, string>
 }
 
-// Full ODCS v3.0.2 compliant data contract
+// Full ODCS compliant data contract
 export interface DataContract {
   id: string
   kind: string
   apiVersion: string
   version: string
   status: string
-  published?: boolean // Marketplace publication status
   name: string
   tenant?: string
   domain?: string // Legacy field (domain name)
@@ -241,13 +277,20 @@ export interface DataContract {
   created?: string
   updated?: string
   // Semantic versioning fields
-  parentContractId?: string // Parent version reference
-  baseName?: string // Base name without version suffix
+  parentContractId?: string // Parent version reference (lineage edge)
+  versionFamilyId?: string // PRD #442 — canonical family grouping key
+  baseName?: string // Legacy base name; superseded by versionFamilyId
   changeSummary?: string // Summary of changes in this version
-  // Personal draft visibility (three-tier model)
-  // Tier 1: draftOwnerId set = personal draft, only owner can see
-  // Tier 2: draftOwnerId null, published=false = team/project visible
-  // Tier 3: published=true = marketplace visible to all
+  // Publication & Certification
+  publication_scope?: string | null
+  published_at?: string | null
+  published_by?: string | null
+  certification_level?: number | null
+  inherited_certification_level?: number | null
+  certified_at?: string | null
+  certified_by?: string | null
+  certification_expires_at?: string | null
+  certification_notes?: string | null
   draftOwnerId?: string
 }
 

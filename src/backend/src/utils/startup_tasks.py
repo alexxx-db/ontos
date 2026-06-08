@@ -30,7 +30,6 @@ from src.controller.tags_manager import TagsManager # Import TagsManager
 from src.controller.semantic_models_manager import SemanticModelsManager
 from src.controller.teams_manager import TeamsManager
 from src.controller.projects_manager import ProjectsManager
-from src.controller.datasets_manager import DatasetsManager
 
 # Import repositories (needed for manager instantiation)
 from src.repositories.settings_repository import AppRoleRepository
@@ -73,7 +72,7 @@ from src.connectors.bigquery import BigQueryConnector
 logger = get_logger(__name__)
 
 # Demo data SQL file path
-DEMO_DATA_SQL_FILE = Path(__file__).parent.parent / "data" / "demo_data.sql"
+DEMO_DATA_SQL_FILE = Path(__file__).parent.parent / "data" / "demo_data_retail.sql"
 
 
 def load_demo_data_from_sql() -> bool:
@@ -139,13 +138,24 @@ def initialize_managers(app: FastAPI):
     db_session = None
     ws_client = None
 
+    # Access health state for soft-fail reporting (set in app.py startup_event)
+    health = getattr(app.state, 'health', {"warnings": []})
+
     try:
-        # --- Initialize Workspace Client --- 
+        # --- Initialize Workspace Client (soft-fail) ---
         logger.info("Attempting to initialize WorkspaceClient...")
-        ws_client = get_workspace_client(settings=settings)
-        if not ws_client:
-            raise RuntimeError("Failed to initialize Databricks WorkspaceClient (returned None).")
-        logger.info("WorkspaceClient initialized successfully.")
+        try:
+            ws_client = get_workspace_client(settings=settings)
+            if not ws_client:
+                raise RuntimeError("WorkspaceClient returned None.")
+            logger.info("WorkspaceClient initialized successfully.")
+            health["ws_ok"] = True
+        except Exception as ws_err:
+            ws_client = None
+            msg = f"Workspace client unavailable: {ws_err}"
+            logger.warning(msg, exc_info=True)
+            health.setdefault("warnings", []).append(msg)
+            health["ws_ok"] = False
         
         # --- Initialize Connector Registry ---
         logger.info("Initializing asset connector registry...")
@@ -291,10 +301,6 @@ def initialize_managers(app: FastAPI):
             app.state.data_contracts_manager = DataContractsManager(data_dir=data_dir, tags_manager=tags_manager)
             logger.info("DataContractsManager initialized with TagsManager integration.")
             
-            # Instantiate DatasetsManager with TagsManager dependency
-            app.state.datasets_manager = DatasetsManager(db=db_session, ws_client=ws_client, tags_manager=tags_manager)
-            logger.info("DatasetsManager initialized with TagsManager integration.")
-
             # Ensure default tag namespace exists (using a new session for this setup task)
             with session_factory() as setup_db:
                 try:
@@ -368,6 +374,13 @@ def initialize_managers(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to initialize EntitySubscriptionsManager: {e}", exc_info=True)
 
+        try:
+            from src.controller.directory_manager import DirectoryManager
+            app.state.directory_manager = DirectoryManager()
+            logger.info("DirectoryManager initialized.")
+        except Exception as e:
+            logger.error(f"Failed to initialize DirectoryManager: {e}", exc_info=True)
+
         logger.info("All managers instantiated and stored in app.state.")
 
         # Defer SearchManager initialization until after initial data loading completes
@@ -375,7 +388,12 @@ def initialize_managers(app: FastAPI):
         
         # --- Ensure default roles exist using the manager method --- 
         app.state.settings_manager.ensure_default_roles_exist()
-        
+
+        # --- Backfill Admin role with ADMIN on any newly-added feature IDs ---
+        # Idempotent migration; covers the settings-* sub-page permissions
+        # added by the Settings permissions refactor and any future additions.
+        app.state.settings_manager.upgrade_admin_role_for_new_features()
+
         # --- Ensure default team and project exist for admins ---
         app.state.settings_manager.ensure_default_team_and_project()
 
@@ -419,8 +437,9 @@ def initialize_managers(app: FastAPI):
 
     except Exception as e:
         logger.critical(f"Failed during application startup (manager init or default roles): {e}", exc_info=True)
-        if db_session: db_session.rollback() # Rollback if any part fails
-        raise RuntimeError("Failed to initialize application managers or default roles.") from e
+        if db_session: db_session.rollback()
+        msg = f"Manager initialization failed: {e}"
+        health.setdefault("warnings", []).append(msg)
     finally:
         # Keep the DB session open for manager singletons that rely on it.
         # It will be managed at application shutdown.
@@ -430,13 +449,35 @@ async def startup_event_handler(app: FastAPI):
     """
     Application startup event handler.
     
-    Note: Demo data is loaded on-demand via POST /api/settings/demo-data/load
-    The demo data SQL file is located at: src/backend/src/data/demo_data.sql
+    Note: Demo data is loaded on-demand via POST /api/settings/demo-data/load.
+    Each preset is a standalone self-contained demo pack:
+        - retail (default): src/backend/src/data/demo_data_retail.sql
+        - hls:               src/backend/src/data/demo_data_hls.sql
+        - fsi:               src/backend/src/data/demo_data_fsi.sql
+        - mfg:               src/backend/src/data/demo_data_mfg.sql
+        - auto:              src/backend/src/data/demo_data_auto.sql
     """
     logger.info("Executing application startup event handler...")
     try:
         initialize_database() # Step 1: Setup Database
         logger.info("Database initialization sequence complete.")
+
+        # Step 1b: Seed reference data that the alembic data-migrations would
+        # have inserted but that `create_all()` cannot. On a fresh database
+        # init_db() takes the create_all() + stamp path (no `alembic upgrade`),
+        # so any rows seeded inside migrations (e.g. Bronze/Silver/Gold in
+        # a8_add_certification_levels_table.py) never get written. The
+        # seed_defaults() calls below are idempotent — they no-op if rows exist.
+        try:
+            from src.repositories.certification_levels_repository import certification_levels_repo
+
+            session_factory = get_session_factory()
+            with session_factory() as db_session:
+                certification_levels_repo.seed_defaults(db_session)
+                db_session.commit()
+            logger.info("Reference data seed step complete.")
+        except Exception as e:
+            logger.warning(f"Failed seeding reference data: {e}", exc_info=True)
 
         # Step 2: Initialize managers (requires ws_client to be set up if managers need it)
         # Create a temporary session for manager initializations that require DB access (like default namespace)

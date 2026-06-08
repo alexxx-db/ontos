@@ -275,45 +275,6 @@ workflows:
         name: "PII Tagged"
         type: "pass"
 
-  # Dataset Subscription Notification
-  - id: "dataset-subscription-notify"
-    name: "Dataset Update Notification"
-    description: "Notifies subscribers when a dataset is updated."
-    trigger:
-      type: "on_update"
-      entity_types:
-        - "dataset"
-    scope:
-      type: "all"
-    is_active: true
-    is_default: true
-    steps:
-      - id: "check-subscribers"
-        name: "Check for Subscribers"
-        type: "conditional"
-        config:
-          condition: |
-            LENGTH(obj.subscribers) > 0 OR LENGTH(obj.subscriptions) > 0
-        on_pass: "notify-subscribers"
-        on_fail: "success-no-subscribers"
-
-      - id: "notify-subscribers"
-        name: "Notify Subscribers"
-        type: "notification"
-        config:
-          recipients: "owner"  # Will be enhanced to support subscriber list
-          template: "dataset_updated"
-          custom_message: "A dataset you are subscribed to has been updated."
-        on_pass: "success"
-
-      - id: "success-no-subscribers"
-        name: "No Subscribers"
-        type: "pass"
-
-      - id: "success"
-        name: "Subscribers Notified"
-        type: "pass"
-
   # Pre-Creation Compliance Check (Inline Validation)
   - id: "pre-creation-compliance"
     name: "Pre-Creation Compliance Validation"
@@ -419,76 +380,6 @@ workflows:
   # =========================================================================
   # Request-Based Workflows
   # =========================================================================
-
-  # Dataset Review Request
-  - id: "dataset-review-request"
-    name: "Dataset Review Request"
-    description: "Handles dataset review requests with data steward approval and creates a formal asset review record."
-    trigger:
-      type: "on_request_review"
-      entity_types:
-        - "dataset"
-    scope:
-      type: "all"
-    is_active: true
-    is_default: true
-    steps:
-      - id: "notify-requester"
-        name: "Confirm Request Received"
-        type: "notification"
-        config:
-          recipients: "requester"
-          template: "request_submitted"
-          custom_message: "Your dataset review request has been submitted. A data steward will review it shortly."
-        on_pass: "create-review"
-
-      - id: "create-review"
-        name: "Create Asset Review"
-        type: "create_asset_review"
-        config:
-          reviewer_role: "DataSteward"
-          review_type: "standard"
-          notes: "Dataset review requested via workflow"
-          use_entity_as_asset: true
-        on_pass: "request-approval"
-
-      - id: "request-approval"
-        name: "Request Data Steward Approval"
-        type: "approval"
-        config:
-          approvers: "DataSteward"
-          timeout_days: 7
-          require_all: false
-        on_pass: "notify-approved"
-        on_fail: "notify-rejected"
-
-      - id: "notify-approved"
-        name: "Notify Approval"
-        type: "notification"
-        config:
-          recipients: "requester"
-          template: "request_approved"
-          custom_message: "Your dataset review request has been approved."
-        on_pass: "success"
-
-      - id: "notify-rejected"
-        name: "Notify Rejection"
-        type: "notification"
-        config:
-          recipients: "requester"
-          template: "request_rejected"
-          custom_message: "Your dataset review request has been denied. Please check the feedback and resubmit if needed."
-        on_pass: "fail-rejected"
-
-      - id: "success"
-        name: "Review Approved"
-        type: "pass"
-
-      - id: "fail-rejected"
-        name: "Review Rejected"
-        type: "fail"
-        config:
-          message: "Dataset review request was rejected"
 
   # Data Contract Review Request
   - id: "contract-review-request"
@@ -619,32 +510,6 @@ workflows:
         type: "fail"
         config:
           message: "Data contract publish request was rejected"
-
-  # Dataset Publish Notification
-  - id: "dataset-publish-notify"
-    name: "Dataset Publish Notification"
-    description: "Notifies the owner when their dataset is published to the marketplace."
-    trigger:
-      type: "on_request_publish"
-      entity_types:
-        - "dataset"
-    scope:
-      type: "all"
-    is_active: true
-    is_default: true
-    steps:
-      - id: "notify-owner"
-        name: "Notify Dataset Owner"
-        type: "notification"
-        config:
-          recipients: "owner"
-          template: "request_approved"
-          custom_message: "Your dataset '{{entity_name}}' has been published to the marketplace and is now discoverable by other users."
-        on_pass: "success"
-
-      - id: "success"
-        name: "Publish Complete"
-        type: "pass"
 
   # Data Product Review Request
   - id: "product-review-request"
@@ -779,11 +644,10 @@ workflows:
   # Status Change Request (Generic)
   - id: "status-change-request"
     name: "Status Change Request"
-    description: "Handles status change requests for datasets and data products that require approval."
+    description: "Handles status change requests for data products that require approval."
     trigger:
       type: "on_request_status_change"
       entity_types:
-        - "dataset"
         - "data_product"
     scope:
       type: "all"
@@ -1062,41 +926,6 @@ workflows:
   # Subscription Workflows
   # =========================================================================
 
-  # Dataset Subscription Welcome
-  - id: "subscription-welcome"
-    name: "Subscription Welcome"
-    description: "Sends a welcome notification when a user subscribes to a dataset."
-    trigger:
-      type: "on_subscribe"
-      entity_types:
-        - "dataset"
-    scope:
-      type: "all"
-    is_active: false  # Disabled by default
-    is_default: true
-    steps:
-      - id: "notify-subscriber"
-        name: "Welcome Subscriber"
-        type: "notification"
-        config:
-          recipients: "requester"
-          template: "request_approved"
-          custom_message: "You have successfully subscribed to this dataset. You will receive updates when changes occur."
-        on_pass: "notify-owner"
-
-      - id: "notify-owner"
-        name: "Notify Dataset Owner"
-        type: "notification"
-        config:
-          recipients: "owner"
-          template: "request_submitted"
-          custom_message: "A new user has subscribed to your dataset."
-        on_pass: "success"
-
-      - id: "success"
-        name: "Subscription Complete"
-        type: "pass"
-
   # =========================================================================
   # Access Grant Lifecycle Workflows
   # =========================================================================
@@ -1191,9 +1020,21 @@ workflows:
   # Default subscription / contract signing workflow (product or dataset subscribe)
   # Used when user subscribes via the approval wizard; completion_action=subscribe runs subscribe after wizard.
   # Looked up by trigger type for_subscribe; name is for display only.
+  # Demonstrates the full approval step catalog: legal_document → acknowledgement_checklist → user_action → pass.
+  #
+  # i18n note (PR #315 review): user-facing strings in this seed workflow
+  # (titles, descriptions, ack labels, item labels, body markdown) are English
+  # defaults intended to be customised per-deployment by the data governance
+  # team using the Workflow Designer UI. They are NOT loaded through the app's
+  # i18n bundles because the workflow definition itself is mutable customer
+  # content — once saved to the DB, the strings are part of the workflow
+  # snapshot and audit trail. Operators replacing these defaults are expected
+  # to localise into their organisation's language; the framework supports it
+  # because every visible string is configurable, not because the seed file
+  # is locale-aware.
   - id: "subscription"
-    name: "Subscription"
-    description: "Default workflow for subscribing to a data product or dataset: reason required, then complete."
+    name: "Subscription Agreement"
+    description: "Full approval workflow for subscribing to a data product — terms review, acknowledgements, and agreement."
     workflow_type: "approval"
     trigger:
       type: "for_subscribe"
@@ -1203,25 +1044,83 @@ workflows:
     is_active: true
     is_default: true
     steps:
-      - id: "reason"
-        name: "Why are you subscribing?"
+      - id: "review-terms"
+        name: "Review Terms"
+        type: "legal_document"
+        config:
+          title: "Terms of Service"
+          description: "Please review the following terms before subscribing."
+          body_markdown: "# Data Product Terms of Service\n\nBy subscribing to this data product, you agree to the following:\n\n1. **Acceptable Use** — You will use the data only for authorized business purposes.\n2. **Confidentiality** — You will not share raw data outside your organization.\n3. **Retention** — Data will be retained according to your organization's data retention policy.\n4. **Compliance** — You will comply with all applicable data protection regulations.\n5. **Termination** — The data product owner may revoke access for policy violations."
+          require_scroll_to_end: true
+          require_acknowledgement_checkbox: true
+          acknowledgement_label: "I have read and understood the Terms of Service"
+        on_pass: "accept-terms"
+        order: 0
+      - id: "accept-terms"
+        name: "Accept Terms"
+        type: "acknowledgement_checklist"
+        config:
+          title: "Acknowledgements"
+          description: "Please confirm each item below."
+          items:
+            - id: "accept_tos"
+              label: "I accept the Terms of Service"
+              required: true
+            - id: "accept_data_use"
+              label: "I will use this data only for authorized purposes"
+              required: true
+            - id: "accept_retention"
+              label: "I understand the data retention policy applies"
+              required: true
+        on_pass: "subscription-details"
+        order: 1
+      - id: "subscription-details"
+        name: "Subscription Details"
         type: "user_action"
         config:
-          title: "Subscribe"
-          description: "Provide a reason for your subscription. This helps data owners understand how their products are used."
-          requires_input: true
-          minimum_input_length: 10
-          primary_field_id: "reason"
+          title: "Subscription Details"
+          description: "Provide details about your intended use of this data product."
           required_fields:
             - id: "reason"
-              label: "Why are you subscribing?"
+              label: "Reason for subscribing"
               type: "text"
               required: true
+            - id: "use_case"
+              label: "Intended use case"
+              type: "text"
+              required: false
+          requires_input: true
+          minimum_input_length: 10
+        on_pass: "persist"
+        order: 2
+      - id: "persist"
+        name: "Save Agreement"
+        type: "persist_agreement"
+        config: {}
+        on_pass: "generate-pdf"
+        order: 3
+      - id: "generate-pdf"
+        name: "Generate PDF"
+        type: "generate_pdf"
+        config: {}
+        on_pass: "deliver-agreement"
+        order: 4
+      - id: "deliver-agreement"
+        name: "Deliver Agreement"
+        type: "deliver"
+        config:
+          channels:
+            - "in_app"
+          recipients:
+            - "signer"
+            - "entity_owner"
         on_pass: "done"
-        on_fail: "done"
+        order: 5
       - id: "done"
-        name: "Done"
+        name: "Complete"
         type: "pass"
+        config: {}
+        order: 6
 
   # =========================================================================
   # FOR_REQUEST_* Wizard Workflows (match ON_REQUEST_* process triggers)
@@ -1443,3 +1342,281 @@ workflows:
         name: "Notification Sent"
         type: "pass"
 
+  # Certification Request Review Workflow
+  - id: "certification-request-review"
+    name: "Certification Request Review"
+    description: "Routes certification requests through an approval workflow. When approved, the entity is automatically certified at the requested level."
+    trigger:
+      type: "on_request_certify"
+      entity_types:
+        - "data_product"
+        - "data_contract"
+    scope:
+      type: "all"
+    is_active: true
+    is_default: true
+    steps:
+      - id: "notify-owner"
+        name: "Notify Entity Owner"
+        type: "notification"
+        config:
+          recipients: "entity_owner"
+          template: "action_required"
+          custom_message: "Certification has been requested for ${entity_type} '${entity_name}' by ${user_email}."
+        on_pass: "approval-gate"
+        on_fail: "approval-gate"
+
+      - id: "approval-gate"
+        name: "Certification Approval"
+        type: "approval"
+        config:
+          approver_role: "data_steward"
+          message: "Please review the certification request for ${entity_type} '${entity_name}'."
+          timeout_hours: 168
+        on_pass: "certify-entity"
+        on_fail: "notify-denied"
+
+      - id: "certify-entity"
+        name: "Apply Certification"
+        type: "entity_action"
+        config:
+          action: "certify"
+          level_source: "from_request"
+        on_pass: "notify-approved"
+        on_fail: "notify-error"
+
+      - id: "notify-approved"
+        name: "Notify Requester (Approved)"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "success"
+          custom_message: "Your certification request for '${entity_name}' has been approved."
+        on_pass: "done"
+        on_fail: "done"
+
+      - id: "notify-denied"
+        name: "Notify Requester (Denied)"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "warning"
+          custom_message: "Your certification request for '${entity_name}' has been denied."
+        on_pass: "done"
+        on_fail: "done"
+
+      - id: "notify-error"
+        name: "Notify Error"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "error"
+          custom_message: "An error occurred while processing the certification for '${entity_name}'."
+        on_pass: "fail-end"
+        on_fail: "fail-end"
+
+      - id: "done"
+        name: "Complete"
+        type: "pass"
+
+      - id: "fail-end"
+        name: "Failed"
+        type: "fail"
+        config:
+          message: "Certification workflow failed"
+
+  # Publication Request Review Workflow
+  - id: "publication-request-review"
+    name: "Publication Request Review"
+    description: "Routes publication requests through an approval workflow. When approved, the entity is automatically published with the requested scope."
+    trigger:
+      type: "on_request_publish"
+      entity_types:
+        - "data_product"
+        - "data_contract"
+    scope:
+      type: "all"
+    is_active: true
+    is_default: true
+    steps:
+      - id: "validate-status"
+        name: "Validate Entity Status"
+        type: "validation"
+        config:
+          rule: |
+            MATCH (obj:Object)
+            ASSERT obj.status == 'active'
+            ON_FAIL FAIL 'Entity must be in active status to be published'
+        on_pass: "notify-owner"
+        on_fail: "notify-invalid"
+
+      - id: "notify-owner"
+        name: "Notify Entity Owner"
+        type: "notification"
+        config:
+          recipients: "entity_owner"
+          template: "action_required"
+          custom_message: "Publication has been requested for ${entity_type} '${entity_name}' by ${user_email}."
+        on_pass: "approval-gate"
+        on_fail: "approval-gate"
+
+      - id: "approval-gate"
+        name: "Publication Approval"
+        type: "approval"
+        config:
+          approver_role: "data_steward"
+          message: "Please review the publication request for ${entity_type} '${entity_name}'."
+          timeout_hours: 168
+        on_pass: "publish-entity"
+        on_fail: "notify-denied"
+
+      - id: "publish-entity"
+        name: "Apply Publication"
+        type: "entity_action"
+        config:
+          action: "publish"
+          scope_source: "from_request"
+        on_pass: "notify-approved"
+        on_fail: "notify-error"
+
+      - id: "notify-approved"
+        name: "Notify Requester (Approved)"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "success"
+          custom_message: "Your publication request for '${entity_name}' has been approved and published."
+        on_pass: "done"
+        on_fail: "done"
+
+      - id: "notify-denied"
+        name: "Notify Requester (Denied)"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "warning"
+          custom_message: "Your publication request for '${entity_name}' has been denied."
+        on_pass: "done"
+        on_fail: "done"
+
+      - id: "notify-invalid"
+        name: "Notify Invalid Status"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "error"
+          custom_message: "Publication request for '${entity_name}' was rejected: entity must be in active status."
+        on_pass: "fail-end"
+        on_fail: "fail-end"
+
+      - id: "notify-error"
+        name: "Notify Error"
+        type: "notification"
+        config:
+          recipients: "trigger_user"
+          template: "error"
+          custom_message: "An error occurred while publishing '${entity_name}'."
+        on_pass: "fail-end"
+        on_fail: "fail-end"
+
+      - id: "done"
+        name: "Complete"
+        type: "pass"
+
+      - id: "fail-end"
+        name: "Failed"
+        type: "fail"
+        config:
+          message: "Publication workflow failed"
+
+
+  # =========================================================================
+  # ON_FIRST_ACCESS — Welcome / Terms-of-Use disclaimer
+  # =========================================================================
+  # Replaces the legacy hardcoded welcome-disclaimer dialog. End-users see this
+  # workflow as a wizard on app mount when:
+  #   1. is_active = true (admin enables in Designer)
+  #   2. they have no `agreements` row at the workflow's current `version`
+  # When admin edits the legal_document body, workflow.version increments and
+  # every user is re-prompted on next mount. Consent record IS the agreements
+  # row keyed on (created_by=user_email, workflow_id, workflow_version).
+  #
+  # Disabled by default — the seed exists so admins can enable + customise the
+  # text rather than authoring a workflow from scratch. Strings are English
+  # defaults; customise in Designer per deployment language.
+  - id: "first-access-welcome"
+    name: "Welcome — Terms of Use"
+    description: "Shown to every user the first time they open the app, and again when the text changes."
+    workflow_type: "approval"
+    trigger:
+      type: "on_first_access"
+      entity_types: ["user"]
+    scope:
+      type: "all"
+    is_active: false
+    is_default: true
+    steps:
+      - id: "tou"
+        name: "Terms of Use"
+        type: "legal_document"
+        config:
+          title: "Welcome to Ontos"
+          description: "Please review the following before continuing."
+          body_markdown: "# Welcome\n\nBy using this application you agree to:\n\n1. Use it only for authorised business purposes.\n2. Treat any data you access as confidential according to your organisation's data classification policy.\n3. Report security concerns to your data governance team.\n\nReplace this text in **Settings → Workflows → Welcome — Terms of Use** to match your organisation's acceptable-use policy."
+          require_scroll_to_end: false
+          require_acknowledgement_checkbox: true
+          acknowledgement_label: "I understand and accept these terms"
+        on_pass: "persist"
+        order: 0
+      - id: "persist"
+        name: "Record Acceptance"
+        type: "persist_agreement"
+        config: {}
+        on_pass: "done"
+        order: 1
+      - id: "done"
+        name: "Complete"
+        type: "pass"
+        config: {}
+        order: 2
+
+  # =========================================================================
+  # ON_REQUEST_ACCESS — Reference grant_permissions Process workflow
+  # =========================================================================
+  # Reference shape for a Process workflow that grants UC permissions to the
+  # requester after an access-grant request is submitted. Disabled by default —
+  # the seed exists so admins can copy + customise rather than authoring from
+  # scratch.
+  #
+  # Pattern: the FQN of the UC securable to grant on must be passed via the
+  # wizard's ``wizard_data.target_full_name`` field (or computed in a
+  # preceding step) and read here via ``target_variable: entity.target_full_name``.
+  # ``target_source: from_entity`` does NOT work for this trigger because the
+  # trigger entity is the access-grant request itself (a UUID), not a UC object.
+  #
+  # ⚠ Deployment requirement (caught during PR #353 E2E, 2026-05-08):
+  # the app's service principal must have explicit ``MANAGE`` on every UC
+  # securable Ontos will grant on. ``ALL_PRIVILEGES`` alone is NOT sufficient on
+  # AWS UC — the platform rejects the grant call with ``"User does not have MANAGE"``.
+  # Document this in customer deployment runbooks alongside the SP setup steps.
+  - id: "on-request-access-grant-permissions-reference"
+    name: "Reference — Grant UC SELECT to requester (on_request_access)"
+    description: "After an access-grant request is submitted, grants SELECT on the requested UC securable to the requester. The FQN must be passed via wizard_data.target_full_name."
+    workflow_type: "process"
+    trigger:
+      type: "on_request_access"
+      entity_types: ["access_grant"]
+    scope:
+      type: "all"
+    is_active: false
+    is_default: true
+    steps:
+      - id: "grant"
+        name: "Grant SELECT to requester"
+        type: "grant_permissions"
+        config:
+          permission_type: "SELECT"
+          target_source: "from_variable"
+          target_variable: "entity.target_full_name"
+          principal_source: "requester"
+        order: 0

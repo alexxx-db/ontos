@@ -205,6 +205,13 @@ class CachingWorkspaceClient(WorkspaceClient):
                     lambda: list(self._parent._client.schemas.list(catalog_name=catalog_name))
                 )()
 
+            def get(self, full_name: str):
+                """Get a schema by full name (catalog.schema) - cached."""
+                cache_key = f'schemas.get::{full_name}'
+                return self._parent._cache_result(cache_key)(
+                    lambda: self._parent._client.schemas.get(full_name=full_name)
+                )()
+
         return CachedSchemas(self)
 
     @property
@@ -265,8 +272,15 @@ def _verify_workspace_client(ws: WorkspaceClient, skip_cluster_check: bool = Fal
             ws.clusters.select_spark_version()
             logger.info("Workspace connectivity verified successfully")
         except Exception as e:
-            logger.error(f"Failed to verify workspace connectivity: {e}")
-            raise
+            # Some workspaces (e.g. gov/restricted) deny clusters API to app SPs even
+            # when basic auth is fine. Fall back to current_user.me() before giving up.
+            logger.warning(f"Cluster API check failed ({e}); falling back to current_user.me()")
+            try:
+                ws.current_user.me()
+                logger.info("Workspace connectivity verified successfully (fallback mode)")
+            except Exception as fallback_e:
+                logger.error(f"Failed to verify workspace connectivity: {fallback_e}")
+                raise
 
     return ws
 
@@ -283,6 +297,17 @@ def get_workspace_client(settings: Optional[Settings] = None, timeout: int = 30)
     Returns:
         Cached workspace client instance with verified connectivity and telemetry
     """
+    # CI/E2E testing mode: return a mock client to avoid real Databricks connections
+    if os.getenv('MOCK_WORKSPACE_CLIENT', '').lower() == 'true':
+        if 'mock_ws' in _CLIENT_CACHE:
+            return _CLIENT_CACHE['mock_ws'][0]
+        from unittest.mock import MagicMock
+        mock = MagicMock(spec=WorkspaceClient)
+        mock.current_user.me.return_value = MagicMock(user_name="ci-test@example.com", display_name="CI Test User")
+        logger.info("Using MOCK workspace client (MOCK_WORKSPACE_CLIENT=true)")
+        _CLIENT_CACHE['mock_ws'] = (mock, 'mock', time.time())
+        return mock
+
     if settings is None:
         settings = get_settings()
 

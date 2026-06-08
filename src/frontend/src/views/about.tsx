@@ -1,4 +1,4 @@
-import { Github, BookOpenCheck } from 'lucide-react';
+import { ExternalLink, BookOpenCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ export default function About() {
   const { t } = useTranslation(['about', 'features']);
   const allowedMaturities = useFeatureVisibilityStore((state) => state.allowedMaturities);
   const customAboutContent = useUICustomizationStore((state) => state.aboutContent);
+  const appName = useUICustomizationStore((state) => state.getAppName());
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [serverStartTime, setServerStartTime] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,7 +77,7 @@ export default function About() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-4xl font-bold mb-6">{t('about:title')}</h1>
+      <h1 className="text-4xl font-bold mb-6">{t('about:title', { appName })}</h1>
       <p className="text-lg text-muted-foreground mb-6">{t('about:intro')}</p>
       
       {/* Version and Runtime Info */}
@@ -169,8 +170,8 @@ export default function About() {
       <h2 className="text-3xl font-semibold mb-6">{t('about:learnMore')}</h2>
       <div className="flex flex-col md:flex-row gap-4">
         <Button asChild size="lg">
-          <a href="https://github.com/larsgeorge/ontos" target="_blank" rel="noopener noreferrer">
-            <Github className="mr-2 h-5 w-5" /> {t('about:cta.github')}
+          <a href="https://github.com/databrickslabs/ontos" target="_blank" rel="noopener noreferrer">
+            <ExternalLink className="mr-2 h-5 w-5" /> {t('about:cta.github')}
           </a>
         </Button>
         <Button variant="outline" asChild size="lg">

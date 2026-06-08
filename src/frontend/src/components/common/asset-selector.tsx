@@ -38,12 +38,17 @@ interface AssetSelectorProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (assets: SelectedAsset[]) => void;
-  relationshipType: string;
+  relationshipType?: string;
   relationshipLabel?: string;
   targetAssetTypes?: string[];
   excludeAssetIds?: string[];
   title?: string;
   description?: string;
+  confirmLabel?: string;
+  /** When false, the dialog stays open after confirm (caller must close it). Default true. */
+  closeOnConfirm?: boolean;
+  /** Additional disable condition for the confirm button (ORed with empty selection). */
+  confirmDisabled?: boolean;
 }
 
 const ASSET_TYPE_ICONS: Record<string, React.ElementType> = {
@@ -150,12 +155,15 @@ export function AssetSelector({
   isOpen,
   onOpenChange,
   onConfirm,
-  relationshipType,
+  relationshipType = '',
   relationshipLabel,
   targetAssetTypes,
   excludeAssetIds = [],
   title = 'Link Assets',
   description,
+  confirmLabel,
+  closeOnConfirm = true,
+  confirmDisabled = false,
 }: AssetSelectorProps) {
   const hasNarrowTypeFilter = !!targetAssetTypes && targetAssetTypes.length > 0 && targetAssetTypes.length <= 2;
 
@@ -315,7 +323,7 @@ export function AssetSelector({
       relationshipType,
     }));
     onConfirm(assets);
-    onOpenChange(false);
+    if (closeOnConfirm) onOpenChange(false);
   };
 
   const resetState = () => {
@@ -350,7 +358,9 @@ export function AssetSelector({
     };
   }, []);
 
-  const descText = description || `Search and select assets to link via "${relationshipLabel || relationshipType}"`;
+  const descText = description || (relationshipLabel || relationshipType
+    ? `Search and select assets to link via "${relationshipLabel || relationshipType}"`
+    : 'Search and select assets');
   const selectedTypeName = assetTypes.find(t => t.id === selectedTypeId)?.name;
 
   return (
@@ -537,8 +547,8 @@ export function AssetSelector({
           <div className="px-6 pb-6 pt-3">
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-              <Button onClick={handleConfirm} disabled={selected.size === 0}>
-                Link {selected.size > 0 ? `${selected.size} Asset${selected.size > 1 ? 's' : ''}` : 'Assets'}
+              <Button onClick={handleConfirm} disabled={selected.size === 0 || confirmDisabled}>
+                {confirmLabel || `Link ${selected.size > 0 ? `${selected.size} Asset${selected.size > 1 ? 's' : ''}` : 'Assets'}`}
               </Button>
             </DialogFooter>
           </div>

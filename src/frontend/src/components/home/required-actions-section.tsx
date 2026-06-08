@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, CheckSquare, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CheckSquare, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ListItemSkeleton } from '@/components/common/list-view-skeleton';
 import { useNotificationsStore } from '@/stores/notifications-store';
 import { Link } from 'react-router-dom';
 import ConfirmRoleRequestDialog from '@/components/settings/confirm-role-request-dialog';
@@ -136,21 +135,16 @@ export default function RequiredActionsSection() {
   };
 
   return (
-    <section className="mb-16">
-      <h2 className="text-2xl font-semibold mb-4">{t('requiredActionsSection.title')}</h2>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Approvals & Actions</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loadingApprovals || isLoading ? (
-            <div className="flex justify-center items-center h-32">{t('requiredActionsSection.loading')}</div>
-          ) : approvalsError ? (
-            <div className="text-sm text-destructive p-6">{approvalsError}</div>
-          ) : unifiedApprovals.length === 0 && actionItems.length === 0 ? (
-            <p className="text-center text-muted-foreground p-12">{t('requiredActionsSection.noActions')}</p>
-          ) : (
+    <>
+      {loadingApprovals || isLoading ? (
+        <div className="p-6">
+          <ListItemSkeleton count={4} height="h-12" className="space-y-2" />
+        </div>
+      ) : approvalsError ? (
+        <div className="text-sm text-destructive p-6">{approvalsError}</div>
+      ) : unifiedApprovals.length === 0 && actionItems.length === 0 ? (
+        <p className="text-center text-muted-foreground p-12">{t('requiredActionsSection.noActions')}</p>
+      ) : (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -283,12 +277,6 @@ export default function RequiredActionsSection() {
               )}
             </>
           )}
-        </CardContent>
-      </Card>
-      <Alert variant="default" className="mt-4">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{t('requiredActionsSection.alertMessage')}</AlertDescription>
-      </Alert>
 
       {/* Role Request Confirmation Dialog */}
       {dialogPayload && (
@@ -302,7 +290,7 @@ export default function RequiredActionsSection() {
           onDecisionMade={handleCloseDialog}
         />
       )}
-    </section>
+    </>
   );
 }
 

@@ -12,7 +12,7 @@ from enum import Enum
 from typing import List, Optional, Dict, Any, Union
 import json
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 from .tags import AssignedTag, AssignedTagCreate
 
@@ -25,16 +25,17 @@ logger = get_logger(__name__)
 # ============================================================================
 
 class DataProductStatus(str, Enum):
-    """ODPS lifecycle status values (aligned with ODCS)."""
+    """ODPS lifecycle status values. Alias for EntityStatus; kept for backward compatibility.
+    Note: CERTIFIED removed — certification is now a separate dimension (see lifecycle.py).
+    """
     DRAFT = "draft"
-    SANDBOX = "sandbox"  # Optional testing state
+    SANDBOX = "sandbox"
     PROPOSED = "proposed"
-    UNDER_REVIEW = "under_review"  # Formal review
-    APPROVED = "approved"  # Approved but not yet active
+    UNDER_REVIEW = "under_review"
+    APPROVED = "approved"
     ACTIVE = "active"
-    CERTIFIED = "certified"  # Elevated status after active
     DEPRECATED = "deprecated"
-    RETIRED = "retired"  # Terminal state
+    RETIRED = "retired"
 
 
 # ============================================================================
@@ -49,6 +50,24 @@ def parse_json_if_string(v: Any) -> Any:
         except json.JSONDecodeError:
             pass
     return v
+
+
+# ============================================================================
+# Consumer Principal (typed identity reference)
+# ============================================================================
+
+class ConsumerPrincipal(BaseModel):
+    """Typed principal for ``consumer_principals``.
+
+    Default ``type="group"`` keeps the common case (workspace group display
+    names) terse, but the shape is intentionally extensible to non-group
+    identity methods (service principals, IdP roles, OAuth scopes) without a
+    future breaking migration.
+    """
+    type: str = Field("group", description="Principal type: 'group' (default), 'service_principal', 'role', 'scope', etc.")
+    value: str = Field(..., description="Principal identifier (group display name, SP applicationId, role name, scope, ...)")
+
+    model_config = {"from_attributes": True}
 
 
 # ============================================================================
@@ -188,6 +207,32 @@ class OutputPort(BaseModel):
 
     _parse_server_json = field_validator('server', mode='before')(parse_json_if_string)
 
+    @field_validator('deliveryMethodId', mode='before')
+    @classmethod
+    def _coerce_delivery_method_id_to_str(cls, v):
+        # The DB column `delivery_method_id` is PG `UUID(as_uuid=True)`, so
+        # SQLAlchemy hands back `uuid.UUID` instances when this model is
+        # loaded via `from_attributes=True`. Pydantic v2 refuses to coerce
+        # `UUID(...)` against the declared `Optional[str]` type, returning
+        # 500 on POST and 400 on PUT for `/api/data-products` whenever an
+        # output port carries a delivery method.
+        #
+        # Coerce on input so the validator accepts UUID instances; the
+        # Pydantic field TYPE intentionally stays `Optional[str]` — flipping
+        # it to `Optional[UUID]` would change the wire format and break
+        # clients that depend on a JSON string. See @field_serializer below
+        # for defense in depth on the response side.
+        import uuid as _uuid
+        if isinstance(v, _uuid.UUID):
+            return str(v)
+        return v
+
+    @field_serializer('deliveryMethodId')
+    def _serialize_delivery_method_id(self, v):
+        # Defense in depth: if a UUID somehow reaches the serializer (e.g.,
+        # bypassing validation via `model_construct`), still emit a string.
+        return str(v) if v is not None else None
+
     model_config = {
         "from_attributes": True,
         "populate_by_name": True
@@ -289,7 +334,7 @@ class Team(BaseModel):
 class DataProduct(BaseModel):
     """ODPS v1.0.0 Data Product"""
     # ODPS v1.0.0 required fields
-    apiVersion: str = Field("v1.0.0", description="Version of the ODPS standard")
+    apiVersion: str = Field("v1.0.0", alias="api_version", description="Version of the ODPS standard")
     kind: str = Field("DataProduct", description="Resource type")
     id: str = Field(..., description="Unique identifier")
     status: str = Field(..., description="Status (proposed, draft, active, deprecated, retired)")
@@ -303,9 +348,9 @@ class DataProduct(BaseModel):
     owner_team_name: Optional[str] = Field(None, description="Owner team name (resolved at query time)")
     project_id: Optional[str] = Field(None, description="Project association")
     project_name: Optional[str] = Field(None, description="Project name (resolved at query time)")
-    authoritativeDefinitions: Optional[List[AuthoritativeDefinition]] = Field(None, description="Authoritative definitions")
+    authoritativeDefinitions: Optional[List[AuthoritativeDefinition]] = Field(None, alias="authoritative_definitions", description="Authoritative definitions")
     description: Optional[Description] = Field(None, description="Structured description")
-    customProperties: Optional[List[CustomProperty]] = Field(None, description="Custom properties")
+    customProperties: Optional[List[CustomProperty]] = Field(None, alias="custom_properties", description="Custom properties")
     tags: Optional[List[Union[AssignedTag, AssignedTagCreate]]] = Field(default_factory=list, description="List of assigned tags (full metadata or IDs for creation)")
     inputPorts: Optional[List[InputPort]] = Field(None, alias="input_ports", description="Input ports")
     outputPorts: Optional[List[OutputPort]] = Field(None, alias="output_ports", description="Output ports")
@@ -317,16 +362,100 @@ class DataProduct(BaseModel):
     # Metadata inheritance
     max_level_inheritance: int = Field(99, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
 
+    # Typed list of principals representing the expected consumers of this
+    # product. Default ``type="group"`` covers the common case; the shape is
+    # extensible to service principals, roles, scopes, etc. Surfaced in the
+    # publish form and exposed to webhook bodies via
+    # ``${entity.consumer_principals}``.
+    consumer_principals: Optional[List[ConsumerPrincipal]] = Field(default_factory=list, description="Typed principals (groups by default) representing expected consumers")
+
     # Audit fields (not in ODPS, but useful)
     created_at: Optional[datetime] = Field(None, description="Record creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Record update timestamp")
 
     # Versioning fields
     draft_owner_id: Optional[str] = Field(None, alias="draftOwnerId", description="Personal draft owner - if set, visible only to owner")
-    parent_product_id: Optional[str] = Field(None, alias="parentProductId", description="Parent version ID for version lineage")
-    base_name: Optional[str] = Field(None, alias="baseName", description="Base name without version for grouping versions")
-    change_summary: Optional[str] = Field(None, alias="changeSummary", description="Summary of changes in this version")
-    published: bool = Field(False, description="Whether published to marketplace")
+    # All fields below use ``serialization_alias`` to force camelCase on
+    # the wire (matching the FE TS types) while the snake_case Python
+    # attribute keeps ORM ``from_attributes=True`` reading working
+    # without a separate ``validation_alias``. See PRD #442 follow-up.
+    parent_product_id: Optional[str] = Field(
+        None,
+        alias="parentProductId",
+        serialization_alias="parentProductId",
+        description="Parent version ID for version lineage",
+    )
+    # Canonical family grouping key (PRD #442). One indexed equality lookup
+    # returns every version of the family. Defaults to self.id on initial
+    # create; carried forward unchanged on every clone.
+    version_family_id: Optional[str] = Field(
+        None,
+        alias="versionFamilyId",
+        serialization_alias="versionFamilyId",
+        description="Canonical family grouping key shared across every version of the family",
+    )
+    base_name: Optional[str] = Field(
+        None,
+        alias="baseName",
+        serialization_alias="baseName",
+        description="Legacy base name; superseded by versionFamilyId. Kept for back-compat.",
+    )
+    change_summary: Optional[str] = Field(
+        None,
+        alias="changeSummary",
+        serialization_alias="changeSummary",
+        description="Summary of changes in this version",
+    )
+    # Count of versions in this row's family that are visible to the caller.
+    # Only populated by the collapsed list view; None on detail responses
+    # and on the expanded list view. See PRD #442.
+    version_count: Optional[int] = Field(
+        None,
+        alias="versionCount",
+        serialization_alias="versionCount",
+        description="Number of visible versions in this family (collapsed list view only)",
+    )
+
+    # Publication fields
+    publication_scope: Optional[str] = Field("none", description="Publication scope: none, domain, organization, external")
+    published_at: Optional[datetime] = Field(None, description="When published")
+    published_by: Optional[str] = Field(None, description="Who published")
+
+    # Certification fields
+    certification_level: Optional[int] = Field(None, description="Ordinal of assigned certification level")
+    inherited_certification_level: Optional[int] = Field(None, description="Inherited certification level via relationships")
+    certified_at: Optional[datetime] = Field(None, description="When certification was granted")
+    certified_by: Optional[str] = Field(None, description="Who granted certification")
+    certification_expires_at: Optional[datetime] = Field(None, description="When certification expires")
+    certification_notes: Optional[str] = Field(None, description="Certification notes")
+
+    # consumer_principals is stored as JSON-encoded TEXT in DB. Decode to a
+    # list of dicts at read time so Pydantic can build ConsumerPrincipal
+    # entries. Accepts:
+    #   * already-decoded list of ConsumerPrincipal (passthrough)
+    #   * list of dicts {type, value}
+    #   * legacy list of strings (any local dev DB written before the
+    #     rename) — coerced to {type: "group", value: <str>}
+    #   * raw JSON string from a TEXT column (any of the above shapes)
+    @field_validator('consumer_principals', mode='before')
+    def parse_consumer_principals(cls, value):
+        if value is None or value == '':
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return []
+        if not isinstance(value, list):
+            return []
+        # Coerce legacy strings to {type: "group", value: s}
+        coerced: List[Any] = []
+        for item in value:
+            if isinstance(item, str):
+                coerced.append({"type": "group", "value": item})
+            else:
+                coerced.append(item)
+        return coerced
 
     # Field validators to parse JSON strings from database
     @field_validator('tags', mode='before')
@@ -402,9 +531,27 @@ class DataProductCreate(BaseModel):
     managementPorts: Optional[List[ManagementPort]] = Field(None, alias="management_ports", description="Management ports")
     support: Optional[List[Support]] = Field(None, alias="support_channels", description="Support channels")
     team: Optional[Team] = Field(None, description="Team")
-    
+
+    # Versioning
+    parent_product_id: Optional[str] = Field(None, alias="parentProductId", description="Parent version ID for version lineage")
+    # Optional on create — repo defaults to self.id if omitted. Managers
+    # explicitly pass source.version_family_id when cloning new versions.
+    version_family_id: Optional[str] = Field(None, alias="versionFamilyId", description="Canonical family grouping key; defaults to self.id on initial create")
+    # The following three columns exist on DataProductDb but were missing
+    # from the create schema, so Pydantic v2 silently stripped them from
+    # incoming POSTs (model_config does not set extra="allow"). The
+    # repository's getattr() fallback then returned None on every
+    # create. Declaring them here makes the create round-trip honor
+    # the input. No DB migration needed — columns already exist.
+    draft_owner_id: Optional[str] = Field(None, description="Creator / single-user owner email for personal drafts and non-team-owned products")
+    base_name: Optional[str] = Field(None, description="Stable base name shared across versions of the same product family")
+    change_summary: Optional[str] = Field(None, description="Free-text summary of changes in this version")
+
     # Metadata inheritance
     max_level_inheritance: int = Field(99, ge=0, le=999, description="Maximum metadata level to inherit from contracts")
+
+    # Typed consumer principals (default type="group")
+    consumer_principals: Optional[List[ConsumerPrincipal]] = Field(default_factory=list, description="Typed principals (groups by default) representing expected consumers")
 
     # Field validator to handle string IDs from frontend
     @field_validator('tags', mode='before')
@@ -419,6 +566,25 @@ class DataProductCreate(BaseModel):
         if isinstance(value, list) and value and isinstance(value[0], str):
             return value
         return value
+
+    @field_validator('consumer_principals', mode='before')
+    def parse_consumer_principals(cls, value):
+        if value is None or value == '':
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return []
+        if not isinstance(value, list):
+            return []
+        coerced: List[Any] = []
+        for item in value:
+            if isinstance(item, str):
+                coerced.append({"type": "group", "value": item})
+            else:
+                coerced.append(item)
+        return coerced
 
     model_config = {
         "from_attributes": True,
@@ -445,6 +611,14 @@ class DataProductUpdate(BaseModel):
     support: Optional[List[Support]] = Field(None, alias="support_channels")
     team: Optional[Team] = None
     max_level_inheritance: Optional[int] = Field(None, ge=0, le=999)
+    # Mirror of DataProductCreate — these columns exist on DataProductDb
+    # but were missing from the update schema, so PUTs that included them
+    # were silently stripped. No DB migration needed.
+    draft_owner_id: Optional[str] = Field(None, description="Creator / single-user owner email; clearing this promotes a personal draft")
+    base_name: Optional[str] = Field(None, description="Stable base name shared across versions of the same product family")
+    change_summary: Optional[str] = Field(None, description="Free-text summary of changes in this version")
+    # Typed consumer principals (default type="group")
+    consumer_principals: Optional[List[ConsumerPrincipal]] = Field(None, description="Typed principals (groups by default) representing expected consumers")
 
     # Field validator to handle string IDs from frontend
     @field_validator('tags', mode='before')
@@ -460,6 +634,27 @@ class DataProductUpdate(BaseModel):
             return value
         return value
 
+    @field_validator('consumer_principals', mode='before')
+    def parse_consumer_principals(cls, value):
+        if value is None:
+            return None
+        if value == '':
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return []
+        if not isinstance(value, list):
+            return []
+        coerced: List[Any] = []
+        for item in value:
+            if isinstance(item, str):
+                coerced.append({"type": "group", "value": item})
+            else:
+                coerced.append(item)
+        return coerced
+
     model_config = {
         "from_attributes": True,
         "populate_by_name": True
@@ -470,9 +665,25 @@ class DataProductUpdate(BaseModel):
 # Subscription Models
 # ============================================================================
 
+class OnBehalfOf(BaseModel):
+    """Subscribe-on-behalf-of payload ().
+
+    Allows a user to request a subscription on behalf of a Databricks group
+    or service principal. ``type=user`` accepts any string (covers new hires
+    not yet indexed in SCIM); ``type=group`` and ``type=service_principal``
+    are validated against the workspace SCIM directory before persisting.
+    """
+    type: str = Field(..., description="Principal type: 'user', 'group', or 'service_principal'")
+    value: str = Field(..., description="Principal identifier (email for user, displayName for group, applicationId or displayName for SP)")
+
+
 class SubscriptionCreate(BaseModel):
     """Request model for creating a subscription."""
     reason: Optional[str] = Field(None, description="Optional reason for subscribing")
+    on_behalf_of: Optional[OnBehalfOf] = Field(
+        None,
+        description="Optional: subscribe on behalf of a group or service principal (validated against workspace SCIM)",
+    )
 
 
 class Subscription(BaseModel):
@@ -482,6 +693,9 @@ class Subscription(BaseModel):
     subscriber_email: str = Field(..., description="Email of the subscriber")
     subscribed_at: datetime = Field(..., description="When the subscription was created")
     subscription_reason: Optional[str] = Field(None, description="Optional reason for subscribing")
+    # subscribe-on-behalf-of (approval workflow OBO)
+    on_behalf_of_type: Optional[str] = Field(None, description="Principal type when subscribed on behalf of another principal")
+    on_behalf_of_value: Optional[str] = Field(None, description="Principal identifier when subscribed on behalf of another principal")
 
     model_config = {"from_attributes": True}
 

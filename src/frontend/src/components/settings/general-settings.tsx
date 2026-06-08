@@ -7,13 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { Loader2, Save, Settings } from 'lucide-react';
+import { SettingsFormSkeleton } from '@/components/common/list-view-skeleton';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
 import { useToast } from '@/hooks/use-toast';
 
 interface AppSettings {
-  enableBackgroundJobs: boolean;
-  workspaceDeploymentPath: string;
   databricksCatalog: string;
   databricksSchema: string;
   databricksVolume: string;
@@ -29,11 +28,9 @@ export default function GeneralSettings() {
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
 
-  const hasWriteAccess = hasPermission('settings', FeatureAccessLevel.READ_WRITE);
+  const hasWriteAccess = hasPermission('settings-general', FeatureAccessLevel.READ_WRITE);
 
   const [settings, setSettings] = useState<AppSettings>({
-    enableBackgroundJobs: false,
-    workspaceDeploymentPath: '',
     databricksCatalog: '',
     databricksSchema: '',
     databricksVolume: '',
@@ -54,8 +51,6 @@ export default function GeneralSettings() {
         if (response.ok) {
           const data = await response.json();
           setSettings({
-            enableBackgroundJobs: data.enable_background_jobs || false,
-            workspaceDeploymentPath: data.workspace_deployment_path || '',
             databricksCatalog: data.databricks_catalog || '',
             databricksSchema: data.databricks_schema || '',
             databricksVolume: data.databricks_volume || '',
@@ -82,8 +77,6 @@ export default function GeneralSettings() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          enable_background_jobs: settings.enableBackgroundJobs,
-          workspace_deployment_path: settings.workspaceDeploymentPath,
           databricks_catalog: settings.databricksCatalog,
           databricks_schema: settings.databricksSchema,
           databricks_volume: settings.databricksVolume,
@@ -116,6 +109,21 @@ export default function GeneralSettings() {
     setSettings(prev => ({ ...prev, [name]: value }));
   };
 
+  if (isLoading) {
+    return (
+      <>
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <Settings className="w-8 h-8" />
+            {t('settings:general.title')}
+          </h1>
+          <p className="text-muted-foreground mt-1">{t('settings:general.description')}</p>
+        </div>
+        <SettingsFormSkeleton sections={3} fieldsPerSection={3} showTitle={false} />
+      </>
+    );
+  }
+
   return (
     <>
       <div className="mb-6">
@@ -127,35 +135,6 @@ export default function GeneralSettings() {
       </div>
 
       <div className="space-y-6">
-        {/* Background Jobs */}
-        <div className="flex items-center space-x-2">
-          <Switch
-            id="background-jobs"
-            checked={settings.enableBackgroundJobs}
-            onCheckedChange={(checked) => setSettings(prev => ({ ...prev, enableBackgroundJobs: checked }))}
-          />
-          <Label htmlFor="background-jobs">{t('settings:general.enableBackgroundJobs')}</Label>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="workspaceDeploymentPath">
-            {t('settings:general.workspaceDeploymentPath.label', 'Workspace Deployment Path')}
-          </Label>
-          <Input
-            id="workspaceDeploymentPath"
-            name="workspaceDeploymentPath"
-            value={settings.workspaceDeploymentPath}
-            onChange={handleChange}
-            placeholder={t('settings:general.workspaceDeploymentPath.placeholder', '/Workspace/Users/user@domain.com/ontos-workflows')}
-            disabled={!hasWriteAccess || isLoading}
-          />
-          <p className="text-sm text-muted-foreground">
-            {t('settings:general.workspaceDeploymentPath.help', 'Path in Databricks workspace where workflow files are deployed for background jobs.')}
-          </p>
-        </div>
-
-        <Separator />
-
         {/* Unity Catalog Settings */}
         <div>
           <h3 className="text-lg font-medium mb-3">{t('settings:general.unityCatalog.title', 'Unity Catalog')}</h3>
@@ -296,6 +275,7 @@ export default function GeneralSettings() {
             </div>
           </div>
         </div>
+
         {hasWriteAccess && (
           <div className="pt-4">
             <Button onClick={handleSave} disabled={isSaving}>

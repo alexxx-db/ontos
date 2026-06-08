@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ColumnDef, RowSelectionState, PaginationState } from '@tanstack/react-table';
 import {
-  Box, ChevronDown, MoreHorizontal, PlusCircle, AlertCircle, Loader2, Trash2,
+  Box, ChevronDown, MoreHorizontal, PlusCircle, AlertCircle, Trash2,
   Table2, Eye, Columns2, LayoutDashboard, Globe, FileCode, Brain, Activity,
   Server, Shield, BookOpen, Database, FolderOpen, Shapes, FileSpreadsheet, FileInput,
 } from 'lucide-react';
-import { ListViewSkeleton } from '@/components/common/list-view-skeleton';
+import { SplitPaneSkeleton } from '@/components/common/list-view-skeleton';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +20,7 @@ import { AssetFormDialog } from '@/components/common/asset-form-dialog';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
 import AssetImportExportDialog from '@/components/assets/asset-import-export-dialog';
 import { AssetDeleteDialog } from '@/components/assets/asset-delete-dialog';
+import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { RelativeDate } from '@/components/common/relative-date';
@@ -82,6 +83,7 @@ export default function AssetExplorerView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { get: apiGet, delete: apiDelete, loading: apiIsLoading } = useApi();
   const { toast } = useToast();
+  const { i18n } = useTranslation();
   const { hasPermission, isLoading: permissionsLoading } = usePermissions();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
@@ -157,7 +159,7 @@ export default function AssetExplorerView() {
 
   const fetchOntologyTypes = useCallback(async () => {
     try {
-      const response = await apiGet<EntityTypeDefinition[]>('/api/ontology/entity-types?tier=asset');
+      const response = await apiGet<EntityTypeDefinition[]>(`/api/ontology/entity-types?tier=asset&lang=${encodeURIComponent(i18n.language)}`);
       if (!response.error && Array.isArray(response.data)) {
         setOntologyTypes(response.data);
       }
@@ -412,9 +414,16 @@ export default function AssetExplorerView() {
   }, [canWrite, canAdmin, navigate, selectedTypeId]);
 
   if (apiIsLoading && assetTypes.length === 0) {
+    // Asset Explorer uses a sidebar (asset type nav) + main DataTable layout
     return (
       <div className="py-6">
-        <ListViewSkeleton columns={5} rows={5} toolbarButtons={1} />
+        <SplitPaneSkeleton
+          sidebarVariant="list"
+          sidebarItems={8}
+          main="table"
+          tableColumns={8}
+          tableRows={6}
+        />
       </div>
     );
   }

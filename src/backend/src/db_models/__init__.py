@@ -18,7 +18,6 @@ from . import data_contracts
 from . import data_domains
 from . import data_products
 from . import data_quality_checks
-from . import datasets
 from . import genie_spaces
 from . import llm_sessions
 from . import mcp_tokens
@@ -40,7 +39,9 @@ from . import business_owners
 from . import delivery_methods
 from . import entity_relationships
 from . import entity_subscriptions
+from . import certification_levels
 from . import workflow_configurations
 from . import workflow_installations
 from . import workflow_job_runs
+from . import ontology_generation_runs
 

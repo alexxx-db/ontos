@@ -17,7 +17,7 @@ import { DataProduct, DataProductStatus, DataProductOwner } from '@/types/data-p
 import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { RelativeDate } from '@/components/common/relative-date';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { DataTable } from "@/components/ui/data-table";
 import DataProductCreateDialog from '@/components/data-products/data-product-create-dialog';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
@@ -28,6 +28,12 @@ import DataProductGraphView from '@/components/data-products/data-product-graph-
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { useDomains } from '@/hooks/use-domains';
 import { useProjectContext } from '@/stores/project-store';
+import CertificationBadge from '@/components/common/certification-badge';
+import PublicationBadge from '@/components/common/publication-badge';
+import VersionCountBadge from '@/components/common/version-count-badge';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import type { CertificationLevel } from '@/types/lifecycle';
 
 // --- Helper Function Type Definition --- 
 type CheckApiResponseFn = <T>(
@@ -57,6 +63,10 @@ const checkApiResponse: CheckApiResponseFn = (response, name) => {
 export default function DataProducts() {
   const { t } = useTranslation(['data-products', 'common']);
   const [products, setProducts] = useState<DataProduct[]>([]);
+  // "Show all versions" toggle — flips include_history on the products list
+  // endpoint. Off (default) collapses each family to its newest visible
+  // version and surfaces a "N versions" badge per row. See PRD #442.
+  const [includeHistory, setIncludeHistory] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<DataProduct | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -78,6 +88,7 @@ export default function DataProducts() {
   const [showMySubscriptions, setShowMySubscriptions] = useState(false);
   const [mySubscribedProductIds, setMySubscribedProductIds] = useState<Set<string>>(new Set());
   const [_subscriptionsLoading, _setSubscriptionsLoading] = useState(false);
+  const [certificationLevels, setCertificationLevels] = useState<CertificationLevel[]>([]);
 
   const api = useApi();
   const { get, post, delete: deleteApi } = api;
@@ -85,6 +96,7 @@ export default function DataProducts() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
   const { getDomainIdByName } = useDomains();
   const refreshNotifications = useNotificationsStore((state) => state.refreshNotifications);
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
@@ -112,11 +124,16 @@ export default function DataProducts() {
       setLoading(true);
       setError(null);
       try {
-        // Build URL with project context if available
-        let productsEndpoint = '/api/data-products';
+        // Build URL with project context and include_history flag (PRD #442).
+        const params = new URLSearchParams();
         if (hasProjectContext && currentProject) {
-          productsEndpoint += `?project_id=${currentProject.id}`;
+          params.set('project_id', currentProject.id);
         }
+        if (includeHistory) {
+          params.set('include_history', 'true');
+        }
+        const qs = params.toString();
+        const productsEndpoint = qs ? `/api/data-products?${qs}` : '/api/data-products';
 
         // Fetch products and dropdown values concurrently
         const [productsResp, statusesResp, ownersResp/*, typesResp*/] = await Promise.all([
@@ -166,7 +183,9 @@ export default function DataProducts() {
         setStaticSegments([]);
         setDynamicTitle(null);
     };
-  }, [get, canRead, permissionsLoading, setStaticSegments, setDynamicTitle, hasProjectContext, currentProject]);
+    // includeHistory in deps so toggling re-runs the initial fetch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [get, canRead, permissionsLoading, setStaticSegments, setDynamicTitle, hasProjectContext, currentProject, includeHistory]);
 
   // Fetch user's subscriptions
   useEffect(() => {
@@ -187,26 +206,54 @@ export default function DataProducts() {
     }
   }, [get, canRead, permissionsLoading]);
 
+  useEffect(() => {
+    get<CertificationLevel[]>('/api/certification-levels').then(({ data }) => {
+      if (Array.isArray(data)) setCertificationLevels(data);
+    });
+  }, [get]);
+
   // Toggle subscription filter
   const handleToggleMySubscriptions = () => {
     setShowMySubscriptions(!showMySubscriptions);
   };
 
-  // Filtered products based on subscription filter
+  // Filtered products based on subscription filter and URL parameters
   const displayedProducts = useMemo(() => {
-    if (!showMySubscriptions) return products;
-    return products.filter(p => mySubscribedProductIds.has(p.id));
-  }, [products, showMySubscriptions, mySubscribedProductIds]);
+    let filtered = products;
+
+    // Apply status filter from URL parameter
+    const statusFilter = searchParams.get('status');
+    if (statusFilter) {
+      const filterLower = statusFilter.toLowerCase();
+      filtered = filtered.filter(p => {
+        const productStatus = (p.status || '').toLowerCase();
+        return productStatus === filterLower;
+      });
+    }
+
+    // Apply subscription filter
+    if (showMySubscriptions) {
+      filtered = filtered.filter(p => mySubscribedProductIds.has(p.id));
+    }
+
+    return filtered;
+  }, [products, showMySubscriptions, mySubscribedProductIds, searchParams]);
 
   // Function to refetch products list
   const fetchProducts = async () => {
     if (!canRead) return;
     try {
-      // Build URL with project context if available
-      let endpoint = '/api/data-products';
+      // Mirror loadInitialData so a refetch after a create/delete keeps the
+      // same view mode (collapsed vs expanded) the user already had selected.
+      const params = new URLSearchParams();
       if (hasProjectContext && currentProject) {
-        endpoint += `?project_id=${currentProject.id}`;
+        params.set('project_id', currentProject.id);
       }
+      if (includeHistory) {
+        params.set('include_history', 'true');
+      }
+      const qs = params.toString();
+      const endpoint = qs ? `/api/data-products?${qs}` : '/api/data-products';
 
       const response = await get<DataProduct[]>(endpoint);
       const productsData = checkApiResponse(response, 'Products Refetch');
@@ -530,7 +577,21 @@ export default function DataProducts() {
           {t('table.version')} <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => <Badge variant="secondary">{row.original.version}</Badge>,
+      cell: ({ row }) => {
+        const id = row.original.id
+        return (
+          <div className="flex items-center gap-1.5">
+            <Badge variant="secondary">{row.original.version}</Badge>
+            {/* Family badge — same UX as on contracts. Click routes into
+                the detail view where VersionNavigator handles version
+                navigation. See PRD #442. */}
+            <VersionCountBadge
+              count={row.original.versionCount}
+              onClick={() => id && navigate(`${pathname}/${id}`)}
+            />
+          </div>
+        )
+      },
     },
     {
       accessorKey: "outputPorts",
@@ -555,11 +616,24 @@ export default function DataProducts() {
       ),
       cell: ({ row }) => (
         row.original.status ? (
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant={getStatusColor(row.original.status)}>{row.original.status}</Badge>
             {row.original.draftOwnerId && (
               <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Personal Draft</Badge>
             )}
+            <CertificationBadge
+              certificationLevel={row.original.certification_level}
+              inheritedCertificationLevel={row.original.inherited_certification_level}
+              certifiedAt={row.original.certified_at}
+              certifiedBy={row.original.certified_by}
+              levels={certificationLevels}
+              size="sm"
+            />
+            <PublicationBadge
+              publicationScope={row.original.publication_scope}
+              publishedAt={row.original.published_at}
+              publishedBy={row.original.published_by}
+            />
           </div>
         ) : t('common:states.notAvailable')
       ),
@@ -607,7 +681,7 @@ export default function DataProducts() {
             <Button
                 variant="ghost"
                 size="icon"
-                onClick={(e) => { e.stopPropagation(); setPreviewProductId(product.id ?? null); setPreviewProductTitle(product.title ?? ''); }}
+                onClick={(e) => { e.stopPropagation(); setPreviewProductId(product.id ?? null); setPreviewProductTitle(product.name ?? ''); }}
                 title="Preview Metadata"
             >
               <Eye className="h-4 w-4" />
@@ -640,7 +714,7 @@ export default function DataProducts() {
         );
       },
     },
-  ], [handleOpenCreateDialog, handleDeleteProduct, getStatusColor, canWrite, canAdmin, permissionsLoading, navigate]);
+  ], [handleOpenCreateDialog, handleDeleteProduct, getStatusColor, canWrite, canAdmin, permissionsLoading, navigate, certificationLevels, getDomainIdByName, t]);
 
   // --- Button Variant Logic (Moved outside) ---
   // --- Render Logic ---
@@ -655,7 +729,7 @@ export default function DataProducts() {
 
       {/* 1. Check Permissions Loading */}
       {permissionsLoading ? (
-        <ListViewSkeleton columns={7} rows={5} toolbarButtons={3} />
+        <ListViewSkeleton columns={9} rows={5} toolbarButtons={3} />
       ) : !canRead ? (
         // 2. Check Read Permission (if permissions loaded)
         <Alert variant="destructive" className="mb-4">
@@ -664,7 +738,7 @@ export default function DataProducts() {
         </Alert>
       ) : loading ? (
         // 3. Check Data Loading (if permissions OK)
-        <ListViewSkeleton columns={7} rows={5} toolbarButtons={3} />
+        <ListViewSkeleton columns={9} rows={5} toolbarButtons={3} />
       ) : (
         // 5. Render Content (if permissions OK and data loaded)
         <div className="space-y-4">
@@ -702,6 +776,19 @@ export default function DataProducts() {
               storageKey="data-products-sort"
               toolbarActions={
                 <>
+                  {/* Family-collapse toggle. Mirrors the contracts list view.
+                      See PRD #442. */}
+                  <div className="flex items-center gap-2 h-9 pr-2 border-r border-border">
+                    <Switch
+                      id="products-include-history"
+                      checked={includeHistory}
+                      onCheckedChange={setIncludeHistory}
+                      aria-label={t('versionFamily.showAllVersions', { defaultValue: 'Show all versions' })}
+                    />
+                    <Label htmlFor="products-include-history" className="text-xs text-muted-foreground cursor-pointer">
+                      {t('versionFamily.showAllVersions', { defaultValue: 'Show all versions' })}
+                    </Label>
+                  </div>
                   {/* My Subscriptions Filter Toggle */}
                   <Button
                     onClick={handleToggleMySubscriptions}

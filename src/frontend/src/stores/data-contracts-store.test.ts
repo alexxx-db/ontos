@@ -160,7 +160,7 @@ describe('Data Contracts Store', () => {
           name: 'Full Contract',
           version: '1.0.0',
           status: 'active',
-          published: true,
+          publication_scope: 'organization',
           owner_team_id: 'team-123',
           created: '2024-01-01',
           updated: '2024-01-15',
@@ -171,7 +171,7 @@ describe('Data Contracts Store', () => {
         result.current.setList(contracts);
       });
 
-      expect(result.current.list[0].published).toBe(true);
+      expect(result.current.list[0].publication_scope).toBe('organization');
       expect(result.current.list[0].owner_team_id).toBe('team-123');
     });
   });

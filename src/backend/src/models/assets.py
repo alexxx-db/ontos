@@ -541,10 +541,11 @@ class AssetTypeCategory(str, Enum):
 
 
 class AssetStatus(str, Enum):
+    """Asset lifecycle status. Aligned with EntityStatus."""
     DRAFT = "draft"
     ACTIVE = "active"
     DEPRECATED = "deprecated"
-    ARCHIVED = "archived"
+    RETIRED = "retired"
 
 
 # --- Persisted Asset Type Models ---

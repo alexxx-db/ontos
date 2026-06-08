@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
+import { PrincipalPicker } from '@/components/common/principal-picker'
+import { buildContractTeamMember } from '@/lib/team-members'
 import type { TeamMember } from '@/types/data-contract'
 
 type TeamMemberFormProps = {
@@ -24,7 +26,7 @@ export default function TeamMemberFormDialog({ isOpen, onOpenChange, onSubmit, i
   useEffect(() => {
     if (isOpen && initial) {
       setRole(initial.role || '')
-      // Prefer email, fallback to username (for ODCS v3.0.2 compatibility)
+      // Prefer email, fallback to username (for ODCS compatibility)
       setEmail(initial.email || initial.username || '')
       setName(initial.name || '')
     } else if (isOpen && !initial) {
@@ -53,12 +55,11 @@ export default function TeamMemberFormDialog({ isOpen, onOpenChange, onSubmit, i
 
     setIsSubmitting(true)
     try {
-      const member: TeamMember = {
-        username: email.trim(), // ODCS v3.0.2 uses username
-        role: role.trim(),
-        email: email.trim(), // Keep for backward compatibility
-        name: name.trim() || undefined,
-      }
+      const member: TeamMember = buildContractTeamMember({
+        emailOrUsername: email,
+        role,
+        name,
+      })
 
       await onSubmit(member)
       onOpenChange(false)
@@ -100,11 +101,13 @@ export default function TeamMemberFormDialog({ isOpen, onOpenChange, onSubmit, i
             <Label htmlFor="email">
               Email/Username <span className="text-destructive">*</span>
             </Label>
-            <Input
+            <PrincipalPicker
               id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              accepts={['user']}
+              value={email || null}
+              onChange={(next) => setEmail(next ?? '')}
               placeholder="user@example.com or username"
+              aria-label="Email or username"
             />
           </div>
 

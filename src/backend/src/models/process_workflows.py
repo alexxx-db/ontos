@@ -7,8 +7,12 @@ Defines the API request/response schemas for workflow definitions, steps, and ex
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
+
+from src.common.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class TriggerType(str, Enum):
@@ -37,6 +41,11 @@ class TriggerType(str, Enum):
     ON_SUBSCRIBE = "on_subscribe"  # When a user subscribes to an entity
     ON_UNSUBSCRIBE = "on_unsubscribe"  # When a user unsubscribes from an entity
     
+    # Certification triggers
+    ON_REQUEST_CERTIFY = "on_request_certify"  # When certification is requested
+    ON_CERTIFY = "on_certify"  # When certification is granted
+    ON_DECERTIFY = "on_decertify"  # When certification is removed
+
     # Publication triggers (separate from lifecycle status)
     ON_PUBLISH = "on_publish"  # When an entity is published to marketplace
     ON_UNPUBLISH = "on_unpublish"  # When an entity is unpublished from marketplace
@@ -52,7 +61,13 @@ class TriggerType(str, Enum):
     FOR_REQUEST_REVIEW = "for_request_review"  # Wizard before review request (matches ON_REQUEST_REVIEW)
     FOR_REQUEST_ACCESS = "for_request_access"  # Wizard before access request (matches ON_REQUEST_ACCESS)
     FOR_REQUEST_PUBLISH = "for_request_publish"  # Wizard before publish/deploy request (matches ON_REQUEST_PUBLISH)
+    FOR_REQUEST_CERTIFY = "for_request_certify"  # Wizard before certification request (matches ON_REQUEST_CERTIFY)
     FOR_REQUEST_STATUS_CHANGE = "for_request_status_change"  # Wizard before status change request (matches ON_REQUEST_STATUS_CHANGE)
+
+    # User session triggers — fired by the frontend on app mount, not by an
+    # entity action. Used for terms-of-use / acceptable-use disclaimers that
+    # must be acknowledged before the user proceeds.
+    ON_FIRST_ACCESS = "on_first_access"  # User opens the app and hasn't yet accepted this workflow at its current version
 
 
 class EntityType(str, Enum):
@@ -63,7 +78,6 @@ class EntityType(str, Enum):
     VIEW = "view"
     DATA_CONTRACT = "data_contract"
     DATA_PRODUCT = "data_product"
-    DATASET = "dataset"
     DOMAIN = "domain"
     PROJECT = "project"
     ACCESS_GRANT = "access_grant"  # For access grant request workflows
@@ -71,6 +85,7 @@ class EntityType(str, Enum):
     DATA_ASSET_REVIEW = "data_asset_review"  # For data asset review request workflows
     JOB = "job"  # For background job lifecycle workflows
     SUBSCRIPTION = "subscription"  # For subscription events
+    USER = "user"  # The user themselves — for on_first_access disclaimer/ToU workflows
 
 
 class ScopeType(str, Enum):
@@ -104,6 +119,14 @@ class StepType(str, Enum):
     WEBHOOK = "webhook"  # Calls external HTTP endpoints via UC Connections or direct URL
     USER_ACTION = "user_action"  # Approval workflow: collect user input (reason, acceptances, fields)
     GENERATE_PDF = "generate_pdf"  # Approval workflow: build agreement PDF from step_results + pdf_contribution
+    ENTITY_ACTION = "entity_action"  # Performs an action on the trigger entity (certify, publish, etc.)
+    LEGAL_DOCUMENT = "legal_document"
+    ACKNOWLEDGEMENT_CHECKLIST = "acknowledgement_checklist"
+    CO_SIGNERS = "co_signers"
+    PERSIST_AGREEMENT = "persist_agreement"
+    DELIVER = "deliver"
+    GRANT_PERMISSIONS = "grant_permissions"  # Process workflow: grant UC permissions via SP workspace client
+    ON_BEHALF_OF = "on_behalf_of"  # Approval workflow: capture self/group/SP principal at wizard start ()
 
 
 class ExecutionStatus(str, Enum):
@@ -218,6 +241,128 @@ class UserActionStepConfig(BaseModel):
         }
 
 
+class LegalDocumentStepConfig(BaseModel):
+    """Config for legal_document step: display legal text for review."""
+    title: Optional[str] = Field(None, description="Step title shown in wizard")
+    description: Optional[str] = Field(None, description="Step description (markdown)")
+    body_markdown: Optional[str] = Field(None, description="Legal document body (markdown)")
+    require_scroll_to_end: bool = Field(False, description="Require user to scroll to bottom")
+    require_acknowledgement_checkbox: bool = Field(False, description="Require acknowledgement checkbox")
+    acknowledgement_label: Optional[str] = Field("I have read and understood the above", description="Label for acknowledgement checkbox")
+
+
+class AcknowledgementChecklistStepConfig(BaseModel):
+    """Config for acknowledgement_checklist step: checkbox list for explicit consents."""
+    title: Optional[str] = Field(None, description="Step title shown in wizard")
+    description: Optional[str] = Field(None, description="Step description (markdown)")
+    items: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of { id, label, required } checkbox items (max 10)",
+    )
+
+    @field_validator('items')
+    @classmethod
+    def cap_at_ten(cls, v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if len(v) > 10:
+            raise ValueError("acknowledgement_checklist.items has a hard cap of 10 entries; split into multiple steps")
+        return v
+
+
+class OnBehalfOfStepConfig(BaseModel):
+    """Config for on_behalf_of step: captures whether the requester is acting
+    for themselves, a group they belong to, or another principal (group / SP).
+
+    Customer-controllable replacement for the pre-wizard ``SubscribeDialog``
+    on-behalf-of picker — placing the choice inside the wizard means it lands
+    in ``step_results`` (which the workflow snapshot + agreement PDF already
+    immortalize) and the session columns ``on_behalf_of_type`` /
+    ``on_behalf_of_value`` () get written exactly the same way
+    a direct ``/subscribe`` call writes them.
+    """
+    title: Optional[str] = Field("Who are you requesting access for?", description="Step title shown in wizard")
+    description: Optional[str] = Field(
+        "Pick whether you're requesting for yourself or on behalf of a group/service principal.",
+        description="Step description (markdown)",
+    )
+    allow_self: bool = Field(True, description="Show 'For myself' option")
+    allow_user_groups: bool = Field(True, description="Show dropdown of user's own groups")
+    allow_free_text: bool = Field(True, description="Show free-text input for any group/SP name")
+    require_justification: bool = Field(False, description="Require a free-text justification field")
+
+
+class CoSignersStepConfig(BaseModel):
+    """Config for co_signers step: collect co-signer principals."""
+    title: Optional[str] = Field(None, description="Step title shown in wizard")
+    description: Optional[str] = Field(None, description="Step description (markdown)")
+    min_count: int = Field(0, description="Minimum number of co-signers")
+    max_count: int = Field(5, description="Maximum number of co-signers")
+    principal_type: Optional[str] = Field("either", description="'user' | 'group' | 'either'")
+    label: Optional[str] = Field("Add co-signer", description="Input label")
+
+
+class PersistAgreementStepConfig(BaseModel):
+    """Config for persist_agreement step: materialize the agreement record."""
+    # No user-configurable fields — placement in workflow determines when agreement is persisted.
+    pass
+
+
+class GeneratePdfStepConfig(BaseModel):
+    """Config for generate_pdf step: build agreement PDF and persist to storage."""
+    storage: Optional[str] = Field(
+        "volume",
+        description="Storage backend: 'volume' (UC Volume via SDK Files API) or 'none' (regenerate on download).",
+    )
+    volume_path: Optional[str] = Field(
+        None,
+        description=(
+            "Directory where PDFs are written. If the path doesn't already end in '/agreements', "
+            "that segment is appended automatically. Final file: <resolved_dir>/<agreement_id>.pdf. "
+            "Example: '/Volumes/cat/sch/vol' → files at '/Volumes/cat/sch/vol/agreements/<id>.pdf'."
+        ),
+    )
+    include_step_results: Optional[bool] = Field(
+        True,
+        description="Include rendered step_results (acknowledgements, co-signers, etc.) in the PDF body.",
+    )
+
+
+class DeliverStepConfig(BaseModel):
+    """Config for deliver step: send agreement via notification channels."""
+    channels: List[str] = Field(
+        default_factory=lambda: ["in_app"],
+        description="Delivery channels: 'in_app' or 'webhook'. Use 'webhook' to integrate with your own email provider.",
+    )
+    recipients: List[str] = Field(
+        default_factory=lambda: ["signer"],
+        description="Recipients: 'signer', 'co_signers', 'entity_owner', or literal email/group",
+    )
+    subject_template: Optional[str] = Field(None, description="Subject line template with ${variable} substitution")
+    body_template: Optional[str] = Field(None, description="Body template with ${variable} substitution")
+
+    @field_validator('channels')
+    @classmethod
+    def _strip_unsupported_channels(cls, v: List[str]) -> List[str]:
+        # Non-blocking: 'email' is out of scope in v1 (non-portable across customer
+        # environments — no Databricks-managed SMTP). Strip it with a warning so
+        # legacy workflow configs still load and execute.
+        if v and 'email' in v:
+            logger.warning(
+                "'email' channel is not supported in v1 (non-portable across customer environments). "
+                "Stripping from channels — use 'webhook' to your own email provider instead."
+            )
+            return [c for c in v if c != 'email']
+        return v
+
+
+class GrantPermissionsStepConfig(BaseModel):
+    """Config for grant_permissions step: grant UC permissions via SP workspace client."""
+    permission_type: str = Field("SELECT", description="Permission to grant: SELECT, USE_SCHEMA, USE_CATALOG, ALL_PRIVILEGES")
+    target_source: str = Field("from_entity", description="'from_entity' (use trigger entity) or 'from_variable' (use step_results variable)")
+    target_variable: Optional[str] = Field(None, description="step_results variable path for target (when target_source=from_variable)")
+    principal_source: str = Field("requester", description="'requester', 'from_variable', or literal email/group")
+    principal_variable: Optional[str] = Field(None, description="step_results variable path for principal (when principal_source=from_variable)")
+
+
 class NotificationStepConfig(BaseModel):
     """Configuration for notification steps."""
     recipients: str = Field(..., description="Recipients: 'requester', 'owner', user email, or group name")
@@ -316,7 +461,33 @@ class WebhookStepConfig(BaseModel):
     timeout_seconds: int = Field(default=30, description="Request timeout in seconds")
     success_codes: Optional[List[int]] = Field(default=None, description="HTTP codes considered success (default: 200-299)")
     retry_count: int = Field(default=0, description="Number of retries on failure")
-    
+
+    # Caller-supplied extra parameters forwarded into the UC HTTPConnection call.
+    # All three support ${entity.*} / ${trigger.*} / ${context.*} substitution,
+    # the same syntax as `body_template`. Absent/empty fields are no-ops, so
+    # existing webhook configs continue to work unchanged.
+    additional_headers: Optional[Dict[str, str]] = Field(
+        default_factory=dict,
+        description=(
+            "Additional headers merged into the request (template substitution supported). "
+            "Take precedence over `headers` if a key collides."
+        ),
+    )
+    additional_query_params: Optional[Dict[str, str]] = Field(
+        default_factory=dict,
+        description=(
+            "Additional query string parameters appended to the request "
+            "(template substitution supported). Values are URL-encoded."
+        ),
+    )
+    path_suffix: Optional[str] = Field(
+        None,
+        description=(
+            "Optional suffix appended to `path` before the query string "
+            "(template substitution supported). Useful for context-derived path segments."
+        ),
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -324,7 +495,10 @@ class WebhookStepConfig(BaseModel):
                 "method": "POST",
                 "path": "/api/now/table/incident",
                 "body_template": '{"short_description": "Alert: ${entity_name}"}',
-                "timeout_seconds": 30
+                "additional_headers": {"X-Trace-Id": "${execution_id}"},
+                "additional_query_params": {"caller": "ontos"},
+                "path_suffix": "/${entity_id}",
+                "timeout_seconds": 30,
             }
         }
 

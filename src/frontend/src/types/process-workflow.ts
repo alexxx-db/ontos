@@ -21,6 +21,9 @@ export type TriggerType =
   | 'on_request_access'
   | 'on_request_publish'
   | 'on_request_status_change'
+  | 'on_request_certify'
+  | 'on_certify'
+  | 'on_decertify'
   // Job lifecycle triggers
   | 'on_job_success'
   | 'on_job_failure'
@@ -33,13 +36,22 @@ export type TriggerType =
   // Access lifecycle triggers
   | 'on_expiring'
   | 'on_revoke'
+  // User session triggers — fired by the frontend on app mount (e.g. terms-of-use disclaimers)
+  | 'on_first_access'
   // App-known UI actions (approval workflows looked up by trigger type, 1:1 match with ON_*)
   | 'for_approval_response'
   | 'for_subscribe'
   | 'for_request_review'
   | 'for_request_access'
   | 'for_request_publish'
+  | 'for_request_certify'
   | 'for_request_status_change';
+
+/** Trigger literals for certification / publication lifecycle (use in configs and tests) */
+export const ON_REQUEST_CERTIFY = 'on_request_certify' as const satisfies TriggerType;
+export const FOR_REQUEST_CERTIFY = 'for_request_certify' as const satisfies TriggerType;
+export const ON_CERTIFY = 'on_certify' as const satisfies TriggerType;
+export const ON_DECERTIFY = 'on_decertify' as const satisfies TriggerType;
 
 export type EntityType =
   | 'catalog'
@@ -48,14 +60,14 @@ export type EntityType =
   | 'view'
   | 'data_contract'
   | 'data_product'
-  | 'dataset'
   | 'domain'
   | 'project'
   | 'access_grant'
   | 'role'
   | 'data_asset_review'
   | 'job'
-  | 'subscription';
+  | 'subscription'
+  | 'user';
 
 export type ScopeType = 'all' | 'project' | 'catalog' | 'domain';
 
@@ -73,7 +85,19 @@ export type StepType =
   | 'delivery'           // Triggers DeliveryService to apply changes
   | 'create_asset_review' // Creates a DataAssetReview for formal review tracking
   | 'webhook'            // Calls external HTTP endpoints via UC Connections or direct URL
-  | 'user_action';       // Approval workflow: collect user input (reason, acceptances, fields)
+  | 'user_action'        // Approval workflow: collect user input (reason, acceptances, fields)
+  | 'entity_action'      // Lifecycle action on trigger entity (certify, publish, etc.)
+  | 'legal_document'             // Approval: display legal document for review
+  | 'acknowledgement_checklist'  // Approval: checkbox list for explicit consents
+  | 'co_signers'                 // Approval: collect co-signer principals
+  | 'persist_agreement'          // Approval: materialize agreement record (non-visual)
+  | 'generate_pdf'               // Approval: generate PDF artifact
+  | 'deliver'                    // Approval: send agreement via channels (non-visual)
+  | 'grant_permissions'          // Process: grant UC permissions via SP workspace client
+  | 'on_behalf_of';              // Approval: capture self/group/SP principal in wizard ()
+
+/** Canonical step type value for lifecycle actions on the trigger entity */
+export const ENTITY_ACTION = 'entity_action' as const satisfies StepType;
 
 export type ExecutionStatus =
   | 'pending'
@@ -172,6 +196,72 @@ export interface WebhookStepConfig {
   retry_count?: number;        // Number of retries on failure (default: 0)
 }
 
+export type EntityActionKind = 'certify' | 'decertify' | 'publish' | 'unpublish';
+
+export type EntityActionLevelSource = 'from_request' | 'fixed' | 'from_approval';
+
+export type EntityActionScopeSource = 'from_request' | 'fixed' | 'from_approval';
+
+export type EntityActionFixedScope = 'domain' | 'organization' | 'external';
+
+export interface EntityActionStepConfig {
+  action: EntityActionKind;
+  /** Certification level source (certify only) */
+  level_source?: EntityActionLevelSource;
+  fixed_level?: number;
+  /** Publication scope source (publish only) */
+  scope_source?: EntityActionScopeSource;
+  fixed_scope?: EntityActionFixedScope;
+}
+
+export interface LegalDocumentStepConfig {
+  title?: string;
+  description?: string;
+  body_markdown?: string;
+  require_scroll_to_end?: boolean;
+  require_acknowledgement_checkbox?: boolean;
+  acknowledgement_label?: string;
+}
+
+export interface AcknowledgementChecklistStepConfig {
+  title?: string;
+  description?: string;
+  items?: Array<{ id: string; label: string; required?: boolean }>;
+}
+
+export interface CoSignersStepConfig {
+  title?: string;
+  description?: string;
+  min_count?: number;
+  max_count?: number;
+  principal_type?: 'user' | 'group' | 'either';
+  label?: string;
+}
+
+export interface PersistAgreementStepConfig {
+  // No user-configurable fields
+}
+
+export interface GeneratePdfStepConfig {
+  storage?: 'volume' | 'none';
+  volume_path?: string;
+}
+
+export interface DeliverStepConfig {
+  channels?: Array<'in_app' | 'email' | 'webhook'>;
+  recipients?: string[];
+  subject_template?: string;
+  body_template?: string;
+}
+
+export interface GrantPermissionsStepConfig {
+  permission_type?: 'SELECT' | 'USE_SCHEMA' | 'USE_CATALOG' | 'ALL_PRIVILEGES';
+  target_source?: 'from_entity' | 'from_variable';
+  target_variable?: string;
+  principal_source?: 'requester' | 'from_variable';
+  principal_variable?: string;
+}
+
 // Reference to a UC HTTP Connection (for UI selection)
 export interface HttpConnectionRef {
   name: string;
@@ -201,6 +291,14 @@ export type StepConfig =
   | FailStepConfig
   | PolicyCheckStepConfig
   | WebhookStepConfig
+  | EntityActionStepConfig
+  | LegalDocumentStepConfig
+  | AcknowledgementChecklistStepConfig
+  | CoSignersStepConfig
+  | PersistAgreementStepConfig
+  | GeneratePdfStepConfig
+  | DeliverStepConfig
+  | GrantPermissionsStepConfig
   | Record<string, unknown>;
 
 // Workflow step
@@ -231,12 +329,15 @@ export interface WorkflowStepCreate {
 }
 
 // Process workflow
+export type WorkflowTypeValue = 'process' | 'approval';
+
 export interface ProcessWorkflow {
   id: string;
   name: string;
   description?: string;
   trigger: WorkflowTrigger;
   scope?: WorkflowScope;
+  workflow_type?: WorkflowTypeValue;
   is_active: boolean;
   is_default: boolean;
   version: number;
@@ -252,6 +353,7 @@ export interface ProcessWorkflowCreate {
   description?: string;
   trigger: WorkflowTrigger;
   scope?: WorkflowScope;
+  workflow_type?: WorkflowTypeValue;
   is_active?: boolean;
   steps: WorkflowStepCreate[];
 }
@@ -261,6 +363,7 @@ export interface ProcessWorkflowUpdate {
   description?: string;
   trigger?: WorkflowTrigger;
   scope?: WorkflowScope;
+  workflow_type?: WorkflowTypeValue;
   is_active?: boolean;
   steps?: WorkflowStepCreate[];
 }

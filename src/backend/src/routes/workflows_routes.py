@@ -11,14 +11,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
 
 from src.common.database import get_db
-from src.common.dependencies import DBSessionDep, AuditManagerDep, AuditCurrentUserDep
-from src.common.authorization import PermissionChecker
+from src.common.dependencies import DBSessionDep, AuditManagerDep, AuditCurrentUserDep, get_notifications_manager
+from src.common.authorization import (
+    PermissionChecker,
+    enforce_feature_permission,
+    get_user_details_from_sdk,
+)
 from src.common.features import FeatureAccessLevel
+from src.models.users import UserInfo
+from src.models.notifications import Notification
 from src.common.logging import get_logger
 from src.controller.workflows_manager import WorkflowsManager
+from src.controller.notifications_manager import NotificationsManager
 from src.common.workflow_executor import WorkflowExecutor
 from src.repositories.process_workflows_repository import process_workflow_repo, workflow_execution_repo
 from src.db_models.compliance import CompliancePolicyDb
+from src.db_models.notifications import NotificationDb
 from src.db_models.process_workflows import WorkflowStepDb
 from src.models.process_workflows import (
     ProcessWorkflow,
@@ -57,9 +65,22 @@ async def list_workflows(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     workflow_type: Optional[str] = Query(None, description="Filter by workflow_type: process | approval"),
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> WorkflowListResponse:
-    """List all process workflows (or approval workflows when workflow_type=approval)."""
+    """List all process workflows (or approval workflows when workflow_type=approval).
+
+    Admin-only enumeration (``settings:READ_ONLY``). End users MUST NOT
+    use this endpoint — the full payload includes every step's ``config``
+    which can carry webhook URLs, script content, internal recipient
+    lists, and other implementation detail that shouldn't leak.
+
+    For end-user wizard flows use:
+      - ``GET /api/workflows/for-trigger/{trigger_type}`` — per-trigger
+        dispatch via ``WIZARD_PERMISSION_DISPATCH`` (PR A).
+      - ``GET /api/workflows/{workflow_id}`` — when the workflow is an
+        approval workflow, dispatched on its trigger; otherwise still
+        ``settings:READ_ONLY``.
+    """
     wf_type = WorkflowType(workflow_type) if workflow_type in ('process', 'approval') else None
     workflows = manager.list_workflows(is_active=is_active, workflow_type=wf_type)
     return WorkflowListResponse(workflows=workflows, total=len(workflows))
@@ -69,10 +90,180 @@ async def list_workflows(
 async def get_step_types(
     request: Request,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> List[StepTypeSchema]:
     """Get schemas for all available step types."""
     return manager.get_step_type_schemas()
+
+
+# ---------------------------------------------------------------------------
+# Trigger-type catalog
+# ---------------------------------------------------------------------------
+#
+# Returns a UI-friendly catalog of every TriggerType enum member so the
+# workflow-authoring form can:
+#   1. Render human-readable labels (no more raw enum values in the picker).
+#   2. Group triggers (lifecycle / request_flow / validation_gates /
+#      system_scheduled).
+#   3. Show approval (for_*) vs process (on_* / before_* / scheduled / manual)
+#      based on the workflow being authored.
+#   4. Pre-populate the entity_types multiselect with the entity types each
+#      trigger is wired for in the backend.
+#
+# Wire-format contract: every TriggerType member appears exactly once.
+# `value` is the raw enum string (used as the FK in stored trigger configs).
+# Labels here are the canonical source of truth; the FE getTriggerLabel()
+# helper mirrors them so existing labels keep working if the endpoint is
+# unavailable.
+#
+# entity_types mapping mirrors SUPPORTED_TRIGGER_ENTITY_MAP in the FE
+# (src/frontend/src/lib/workflow-labels.ts) — keep them in sync. An empty
+# list means "any entity type" (manual, scheduled, on_first_access).
+
+_TRIGGER_LABELS: Dict[str, str] = {
+    "for_subscribe": "When a user subscribes",
+    "on_subscribe": "After a subscription is created",
+    "for_request_access": "When a user requests access",
+    "on_request_access": "After an access request is submitted",
+    "for_request_review": "When a user requests review",
+    "on_request_review": "After a review request is submitted",
+    "for_request_publish": "When a user requests publish",
+    "on_request_publish": "After a publish request is submitted",
+    "for_request_certify": "When a user requests certification",
+    "on_request_certify": "After a certification request is submitted",
+    "for_request_status_change": "When a user requests status change",
+    "on_request_status_change": "After a status change request is submitted",
+    "for_approval_response": "Approval response dialog",
+    "before_create": "Before entity is created (validation)",
+    "before_update": "Before entity is updated (validation)",
+    "before_status_change": "Before status changes (validation)",
+    "on_create": "After entity is created",
+    "on_update": "After entity is updated",
+    "on_delete": "After entity is deleted",
+    "on_status_change": "After status changes",
+    "on_publish": "After entity is published",
+    "on_unpublish": "After entity is unpublished",
+    "on_revoke": "After access is revoked",
+    "on_expiring": "When access is about to expire",
+    "on_first_access": "First time a user accesses (consent)",
+    "on_unsubscribe": "After a user unsubscribes",
+    "on_job_success": "After a background job succeeds",
+    "on_job_failure": "After a background job fails",
+    "scheduled": "On a schedule (cron)",
+    # Fallbacks for enum members that are not part of the user-approved table.
+    # These keep the catalog 1:1 with the enum without expanding the table.
+    "manual": "Manually triggered",
+    "on_certify": "After entity is certified",
+    "on_decertify": "After entity is decertified",
+}
+
+# Group assignment per the design brief. Anything not listed falls back to
+# "lifecycle" for process workflows.
+_TRIGGER_GROUPS_REQUEST_FLOW = {
+    "for_subscribe", "for_request_access", "for_request_review",
+    "for_request_publish", "for_request_certify",
+    "for_request_status_change", "for_approval_response",
+    "on_subscribe", "on_unsubscribe",
+    "on_request_access", "on_request_review", "on_request_publish",
+    "on_request_certify", "on_request_status_change",
+    "on_revoke", "on_expiring", "on_first_access",
+}
+_TRIGGER_GROUPS_LIFECYCLE = {
+    "on_create", "on_update", "on_delete", "on_status_change",
+    "on_publish", "on_unpublish",
+    # on_certify / on_decertify are lifecycle in spirit — they describe an
+    # entity transitioning state, not a request flow.
+    "on_certify", "on_decertify",
+}
+_TRIGGER_GROUPS_VALIDATION = {
+    "before_create", "before_update", "before_status_change",
+}
+_TRIGGER_GROUPS_SYSTEM_SCHEDULED = {
+    "on_job_success", "on_job_failure", "scheduled", "manual",
+}
+
+# Entity types each trigger CAN fire for, derived from the dispatch sites in
+# src/backend/src/common/workflow_triggers.py and the existing FE map
+# (SUPPORTED_TRIGGER_ENTITY_MAP). Empty list = "any entity" (no constraint).
+_TRIGGER_ENTITY_TYPES: Dict[str, List[str]] = {
+    # CRUD / lifecycle
+    "on_create": ["catalog", "schema", "table", "data_contract", "data_product", "domain"],
+    "on_update": ["data_contract", "data_product", "domain"],
+    "on_delete": ["data_contract", "data_product", "domain"],
+    "on_status_change": ["data_contract", "data_product", "data_asset_review"],
+    "on_publish": ["data_contract", "data_product"],
+    "on_unpublish": ["data_contract", "data_product"],
+    "on_certify": ["data_contract", "data_product"],
+    "on_decertify": ["data_contract", "data_product"],
+    # Validation gates
+    "before_create": ["catalog", "schema", "table"],
+    "before_update": ["data_contract"],
+    "before_status_change": ["data_contract", "data_product"],
+    # Request flow — process side
+    "on_request_review": ["data_contract", "data_product", "data_asset_review"],
+    "on_request_access": ["access_grant", "project", "role"],
+    "on_request_publish": ["data_contract", "data_product"],
+    "on_request_certify": ["data_contract", "data_product"],
+    "on_request_status_change": ["data_product"],
+    "on_subscribe": ["subscription", "data_product", "data_contract"],
+    "on_unsubscribe": ["subscription", "data_product", "data_contract"],
+    "on_revoke": ["access_grant"],
+    "on_expiring": ["access_grant"],
+    "on_first_access": ["user"],
+    # Request flow — approval (for_*) side. These mirror the matching on_*
+    # trigger's entity scope so the wizard targets the same kinds of objects.
+    "for_subscribe": ["data_product", "data_contract"],
+    "for_request_access": ["access_grant", "project", "role"],
+    "for_request_review": ["data_contract", "data_product", "data_asset_review"],
+    "for_request_publish": ["data_contract", "data_product"],
+    "for_request_certify": ["data_contract", "data_product"],
+    "for_request_status_change": ["data_product"],
+    "for_approval_response": [],  # system trigger — any entity
+    # Background jobs
+    "on_job_success": ["job"],
+    "on_job_failure": ["job"],
+    # Scheduled / manual — no entity binding
+    "scheduled": [],
+    "manual": [],
+}
+
+
+def _trigger_group(value: str) -> str:
+    if value in _TRIGGER_GROUPS_REQUEST_FLOW:
+        return "request_flow"
+    if value in _TRIGGER_GROUPS_VALIDATION:
+        return "validation_gates"
+    if value in _TRIGGER_GROUPS_SYSTEM_SCHEDULED:
+        return "system_scheduled"
+    if value in _TRIGGER_GROUPS_LIFECYCLE:
+        return "lifecycle"
+    # Safe fallback — should never hit if mappings stay in sync with the enum.
+    return "lifecycle"
+
+
+@router.get("/trigger-types", response_model=List[Dict[str, Any]])
+async def get_trigger_types(
+    request: Request,
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
+) -> List[Dict[str, Any]]:
+    """Get the UI catalog of all trigger types.
+
+    Returns one entry per TriggerType enum member with the metadata the
+    workflow-authoring picker needs (label, group, workflow_type,
+    entity_types). See module-level comments for the contract.
+    """
+    out: List[Dict[str, Any]] = []
+    for tt in TriggerType:
+        value = tt.value
+        workflow_type = "approval" if value.startswith("for_") else "process"
+        out.append({
+            "value": value,
+            "label": _TRIGGER_LABELS.get(value, value.replace("_", " ").title()),
+            "workflow_type": workflow_type,
+            "entity_types": list(_TRIGGER_ENTITY_TYPES.get(value, [])),
+            "group": _trigger_group(value),
+        })
+    return out
 
 
 @router.get("/template-vars", response_model=TemplateVarsResponse)
@@ -103,7 +294,7 @@ async def list_executions(
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> WorkflowExecutionListResponse:
     """List workflow executions."""
     if workflow_id:
@@ -197,85 +388,101 @@ async def list_compliance_policies_for_workflows(
 @router.get("/roles")
 async def list_roles_for_workflows(
     db: DBSessionDep,
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> List[Dict[str, Any]]:
-    """List app roles for workflow designer selection.
-    
-    Returns roles with their UUIDs for use in approval/notification step configuration.
-    Using UUIDs ensures referential integrity if roles are renamed.
+    """List roles available for workflow approver/recipient selection.
+
+    Returns both app roles (RBAC) and business roles (governance) that are
+    marked as approvers. Each role includes a 'source' field to distinguish
+    between app and business roles.
     """
     from src.db_models.settings import AppRoleDb
-    
-    roles = db.query(AppRoleDb).order_by(AppRoleDb.name).all()
-    
-    return [
-        {
-            "id": r.id,
+    from src.db_models.business_roles import BusinessRoleDb
+
+    # App roles (RBAC)
+    app_roles = db.query(AppRoleDb).order_by(AppRoleDb.name).all()
+
+    # Business roles marked as approvers
+    business_roles = (
+        db.query(BusinessRoleDb)
+        .filter(BusinessRoleDb.is_approver.is_(True), BusinessRoleDb.status == "active")
+        .order_by(BusinessRoleDb.name)
+        .all()
+    )
+
+    result = []
+
+    for r in app_roles:
+        result.append({
+            "id": str(r.id),
             "name": r.name,
             "description": r.description,
-            "has_groups": bool(r.assigned_groups),  # Indicate if role is configured
-        }
-        for r in roles
-    ]
+            "source": "app",
+            "has_groups": bool(r.assigned_groups),
+        })
+
+    for r in business_roles:
+        result.append({
+            "id": f"business:{r.id}",
+            "name": r.name,
+            "description": r.description,
+            "source": "business",
+            "category": r.category,
+        })
+
+    return result
 
 
 @router.get("/roles/{role_id}")
 async def get_role_by_id(
     role_id: str,
     db: DBSessionDep,
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> Dict[str, Any]:
     """Get a single role by UUID for display purposes."""
     from src.db_models.settings import AppRoleDb
-    
+    from src.db_models.business_roles import BusinessRoleDb
+
+    # Check if it's a business role (prefixed with "business:")
+    if role_id.startswith("business:"):
+        br_id = role_id[len("business:"):]
+        role = db.query(BusinessRoleDb).filter(BusinessRoleDb.id == br_id).first()
+        if not role:
+            raise HTTPException(status_code=404, detail="Business role not found")
+        return {
+            "id": f"business:{role.id}",
+            "name": role.name,
+            "description": role.description,
+            "source": "business",
+        }
+
     role = db.query(AppRoleDb).filter(AppRoleDb.id == role_id).first()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
-    
+
     return {
-        "id": role.id,
+        "id": str(role.id),
         "name": role.name,
         "description": role.description,
+        "source": "app",
     }
 
 
 @router.get("/http-connections")
 async def list_http_connections_for_workflows(
     request: Request,
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> List[Dict[str, Any]]:
     """List Unity Catalog HTTP connections for webhook step configuration.
-    
+
     Returns HTTP-type connections that can be used with the webhook step type.
     These connections are pre-configured in Unity Catalog with credentials.
     """
     from src.common.workspace_client import get_obo_workspace_client
-    
-    try:
-        ws = get_obo_workspace_client(request)
-        connections = []
-        
-        # List all connections and filter for HTTP type
-        for conn in ws.connections.list():
-            # Check if connection is HTTP type
-            # ConnectionType.HTTP may not be available in all SDK versions
-            conn_type = str(conn.connection_type) if conn.connection_type else ''
-            if 'HTTP' in conn_type.upper():
-                connections.append({
-                    "name": conn.name,
-                    "connection_type": conn_type,
-                    "comment": conn.comment,
-                    "owner": conn.owner,
-                    "created_at": conn.created_at,
-                    "updated_at": conn.updated_at,
-                })
-        
-        return connections
-        
-    except Exception as e:
-        logger.warning(f"Failed to list HTTP connections: {e}")
-        # Return empty list on error - connections may not be available
-        return []
+    from src.common.uc_connections import list_http_connections
+
+    ws = get_obo_workspace_client(request)
+    return list_http_connections(ws)
 
 
 @router.get("/policy-usage/{policy_id}")
@@ -330,8 +537,86 @@ APP_ACTION_TRIGGER_TYPES = frozenset({
     TriggerType.FOR_REQUEST_REVIEW.value,
     TriggerType.FOR_REQUEST_ACCESS.value,
     TriggerType.FOR_REQUEST_PUBLISH.value,
+    TriggerType.FOR_REQUEST_CERTIFY.value,
     TriggerType.FOR_REQUEST_STATUS_CHANGE.value,
 })
+
+
+# Per-trigger permission gate for wizard endpoints. Maps each app-action
+# trigger to the FEATURE permission a user needs to interact with that
+# wizard (look it up, start a session, advance steps).
+#
+# None = authenticated only (no feature permission required). Used for
+# first-login onboarding screens that must work for users with zero
+# feature permissions.
+#
+# Customers control who can run each wizard by adjusting role-feature
+# permissions in the Settings UI — the same lever they already use for
+# every other feature in Ontos. The mapping below describes the SEMANTIC
+# IDENTITY of each wizard (which feature it belongs to), not customer
+# policy.
+#
+# Background: previously every wizard endpoint required
+# `settings:READ_ONLY` (or `data-contracts:READ_WRITE` on session POSTs),
+# which gated wizards behind admin-style permissions even when the
+# wizard's actual feature was something a Data Consumer could already
+# touch (e.g. requesting access to a data product). Two customer incidents
+# in May 2026 hit this: Data Consumers couldn't open the access-request
+# wizard because they didn't have `settings` read.
+WIZARD_PERMISSION_DISPATCH: Dict[str, Optional[tuple]] = {
+    TriggerType.FOR_REQUEST_ACCESS.value:        ("access-grants",  FeatureAccessLevel.READ_ONLY),
+    TriggerType.FOR_SUBSCRIBE.value:             ("data-products",  FeatureAccessLevel.READ_ONLY),
+    TriggerType.FOR_REQUEST_REVIEW.value:        ("data-contracts", FeatureAccessLevel.READ_ONLY),
+    TriggerType.FOR_REQUEST_PUBLISH.value:       ("data-products",  FeatureAccessLevel.READ_WRITE),
+    TriggerType.FOR_REQUEST_CERTIFY.value:       ("data-contracts", FeatureAccessLevel.READ_WRITE),
+    TriggerType.FOR_REQUEST_STATUS_CHANGE.value: ("data-products",  FeatureAccessLevel.READ_WRITE),
+    TriggerType.ON_FIRST_ACCESS.value:           None,  # authenticated only — first-login welcome screen
+    # `for_approval_response` — relaxed from `notifications:READ_WRITE`
+    # (PR K) down to `notifications:READ_ONLY` (PR L). The outer gate
+    # only needs to confirm the user is part of the notification system
+    # at all; the real authorization is the per-execution check inside
+    # `POST /api/workflows/handle-approval`
+    # (`_assert_caller_authorized_for_execution`), which verifies the
+    # caller is the recipient (or role-member) of the actual approval
+    # notification — preventing horizontal privilege escalation.
+    # READ_WRITE is too tight: typical Business Owners hold a business
+    # role on the entity but only have notifications:Read-only at the
+    # app-role level (they read + respond to notifications routed to
+    # them; they don't author or modify notifications).
+    TriggerType.FOR_APPROVAL_RESPONSE.value:     ("notifications",  FeatureAccessLevel.READ_ONLY),
+}
+
+
+async def enforce_wizard_permission(
+    trigger_type: str,
+    user_details: UserInfo,
+    request: Request,
+    *,
+    raise_on_unknown: bool = True,
+) -> None:
+    """Enforce the per-trigger permission gate from ``WIZARD_PERMISSION_DISPATCH``.
+
+    Raises ``HTTPException(403)`` if the user lacks the required feature
+    permission. No-op when the dispatch entry is ``None`` (authenticated-only
+    triggers like ``on_first_access``).
+
+    If ``trigger_type`` isn't in the dispatch and ``raise_on_unknown`` is True
+    (default), raises 400. Set to False for callers that have already
+    validated the trigger (e.g. session handlers reading a stored workflow).
+    """
+    if trigger_type not in WIZARD_PERMISSION_DISPATCH:
+        if raise_on_unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown wizard trigger type: {trigger_type}",
+            )
+        return
+    gate = WIZARD_PERMISSION_DISPATCH[trigger_type]
+    if gate is None:
+        # Authenticated-only trigger; no feature permission required.
+        return
+    feature_id, required_level = gate
+    await enforce_feature_permission(feature_id, required_level, user_details, request)
 
 
 @router.get("/for-trigger/{trigger_type}", response_model=ProcessWorkflow)
@@ -340,19 +625,26 @@ async def get_workflow_for_trigger(
     trigger_type: str,
     entity_type: Optional[str] = Query(None, description="Optional entity type to match against workflow trigger entity_types"),
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    user_details: UserInfo = Depends(get_user_details_from_sdk),
 ) -> ProcessWorkflow:
     """Get the first active workflow that declares this trigger type.
 
     Trigger type is the stable contract; workflow names are for display only.
     Optionally pass ?entity_type= to narrow the match to workflows whose
     trigger.entity_types includes the value (or is empty, meaning "all").
+
+    Permission gate is dispatched per trigger type via
+    ``WIZARD_PERMISSION_DISPATCH`` — see the comment on that table for the
+    rationale. Previously hard-coded to ``settings:READ_ONLY`` which gated
+    e.g. the access-request wizard behind admin-style permissions.
     """
     if trigger_type not in APP_ACTION_TRIGGER_TYPES:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid trigger_type. Allowed: {sorted(APP_ACTION_TRIGGER_TYPES)}",
         )
+    # Per-trigger permission check — replaces the blanket settings:READ_ONLY gate.
+    await enforce_wizard_permission(trigger_type, user_details, request)
     workflow = manager.get_workflow_by_trigger_type(trigger_type, entity_type=entity_type)
     if not workflow:
         raise HTTPException(
@@ -367,12 +659,41 @@ async def get_workflow(
     request: Request,
     workflow_id: str,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    user_details: UserInfo = Depends(get_user_details_from_sdk),
 ) -> ProcessWorkflow:
-    """Get a specific workflow by ID."""
+    """Get a specific workflow by ID.
+
+    Permission model is dispatched on the workflow's shape:
+
+      * **Approval workflows** (``workflow_type == 'approval'``) — gated
+        via ``WIZARD_PERMISSION_DISPATCH[trigger.type]``. Mirrors
+        ``/for-trigger/{type}`` so the approval-wizard-dialog can fetch
+        a single workflow by id without the caller needing
+        ``settings:READ_ONLY``. The wizard already obtained the id from
+        ``/for-trigger/{type}`` (same dispatch), so this is symmetric.
+      * **Process workflows** — gated by ``settings:READ_ONLY`` (admin
+        configuration), unchanged.
+
+    A workflow whose trigger isn't in the dispatch table falls back to
+    ``settings:READ_ONLY`` (fail-closed).
+    """
     workflow = manager.get_workflow(workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Dispatch the permission check on the workflow's actual trigger.
+    trigger_type = workflow.trigger.type.value if workflow.trigger and workflow.trigger.type else None
+    is_approval = getattr(workflow, "workflow_type", None) == WorkflowType.APPROVAL
+    if is_approval and trigger_type and trigger_type in WIZARD_PERMISSION_DISPATCH:
+        # Reuse PR A's dispatch — None entries (e.g. on_first_access)
+        # short-circuit to authenticated-only.
+        await enforce_wizard_permission(trigger_type, user_details, request, raise_on_unknown=False)
+    else:
+        # Process workflows, or approval workflows whose trigger isn't in
+        # the dispatch table — keep the original admin-config gate.
+        await enforce_feature_permission(
+            'settings', FeatureAccessLevel.READ_ONLY, user_details, request,
+        )
     return workflow
 
 
@@ -384,7 +705,7 @@ async def create_workflow(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_WRITE)),
 ) -> ProcessWorkflow:
     """Create a new workflow."""
     user_email = current_user.email if current_user else None
@@ -418,7 +739,7 @@ async def update_workflow(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_WRITE)),
 ) -> ProcessWorkflow:
     """Update an existing workflow."""
     user_email = current_user.email if current_user else None
@@ -467,7 +788,7 @@ async def delete_workflow(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.ADMIN)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.ADMIN)),
 ) -> dict:
     """Delete a workflow (non-default only)."""
     # Check if it's a default workflow
@@ -508,7 +829,7 @@ async def toggle_workflow_active(
     current_user: AuditCurrentUserDep,
     is_active: bool = Query(..., description="New active status"),
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_WRITE)),
 ) -> ProcessWorkflow:
     """Toggle workflow active status."""
     user_email = current_user.email if current_user else None
@@ -539,7 +860,7 @@ async def duplicate_workflow(
     current_user: AuditCurrentUserDep,
     new_name: str = Query(..., description="Name for the duplicated workflow"),
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_WRITE)),
 ) -> ProcessWorkflow:
     """Duplicate an existing workflow."""
     user_email = current_user.email if current_user else None
@@ -573,7 +894,7 @@ async def execute_workflow(
     entity_name: Optional[str] = Query(None, description="Entity name"),
     manager: WorkflowsManager = Depends(get_workflows_manager),
     executor: WorkflowExecutor = Depends(get_workflow_executor),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_WRITE)),
 ) -> WorkflowExecution:
     """Manually execute a workflow."""
     workflow = manager.get_workflow(workflow_id)
@@ -619,7 +940,7 @@ async def validate_workflow(
     request: Request,
     workflow: ProcessWorkflowCreate,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> WorkflowValidationResult:
     """Validate a workflow definition."""
     return manager.validate_workflow(workflow)
@@ -633,7 +954,7 @@ async def load_default_workflows(
     current_user: AuditCurrentUserDep,
     update_existing: bool = False,
     manager: WorkflowsManager = Depends(get_workflows_manager),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.ADMIN)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.ADMIN)),
 ) -> dict:
     """Load default workflows from YAML (admin only).
     
@@ -725,7 +1046,7 @@ async def resume_workflow_execution(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     executor: WorkflowExecutor = Depends(get_workflow_executor),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_WRITE)),
 ) -> Dict[str, Any]:
     """Resume a paused workflow execution after approval decision.
     
@@ -799,7 +1120,7 @@ async def get_paused_executions_for_entity(
     db: DBSessionDep,
     entity_type: str = Query(..., description="Entity type (e.g., 'data_contract', 'dataset')"),
     entity_id: str = Query(..., description="Entity ID"),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_ONLY)),
+    _: bool = Depends(PermissionChecker('settings-workflows', FeatureAccessLevel.READ_ONLY)),
 ) -> Dict[str, Any]:
     """Find paused workflow executions for a specific entity.
     
@@ -835,6 +1156,81 @@ async def get_paused_executions_for_entity(
     }
 
 
+def _find_approval_notifications_for_execution(
+    db: Session, execution_id: str
+) -> List[Notification]:
+    """Return all `workflow_approval` notifications whose payload targets
+    ``execution_id``.
+
+    Returned objects are pydantic ``Notification`` models (validated from
+    the DB rows) so they can be fed directly to
+    ``NotificationsManager.can_user_access_notification``.
+
+    We intentionally do NOT filter on ``read == False`` here — a previously
+    auto-marked-read notification still encodes "this user/role was an
+    authorized approver for this execution", which is exactly what we
+    want when authorizing a fresh approval POST.
+    """
+    rows = db.query(NotificationDb).filter(
+        NotificationDb.action_type == 'workflow_approval'
+    ).all()
+    matches: List[Notification] = []
+    for row in rows:
+        try:
+            payload = row.action_payload
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if payload and payload.get('execution_id') == execution_id:
+                matches.append(Notification.model_validate(row))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return matches
+
+
+def _assert_caller_authorized_for_execution(
+    db: Session,
+    notifications_manager: NotificationsManager,
+    execution_id: str,
+    user_info: UserInfo,
+) -> List[Notification]:
+    """Authorize ``user_info`` to act on the paused workflow execution.
+
+    A caller is authorized iff there exists at least one
+    ``workflow_approval`` notification for ``execution_id`` that the caller
+    can access under
+    ``NotificationsManager.can_user_access_notification`` (direct
+    recipient, role membership via ``recipient_role_id``, or admin
+    fallback for role-with-no-groups).
+
+    This is the per-execution check that backs the relaxed outer gate on
+    ``POST /handle-approval`` (notifications:READ_WRITE instead of
+    settings:READ_WRITE). It prevents horizontal privilege escalation —
+    a Business Owner with notifications RW cannot approve an execution
+    they were never notified about.
+
+    Raises 403 with a descriptive detail on failure. Returns the matching
+    notifications on success so callers can avoid re-fetching them.
+
+    NOTE: name kept generic (``_assert_caller_authorized_for_execution``)
+    so PR L can lift this for ``resume_workflow`` / similar.
+    """
+    candidates = _find_approval_notifications_for_execution(db, execution_id)
+    if not candidates:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not an authorized approver for this execution",
+        )
+    for notification in candidates:
+        if notifications_manager.can_user_access_notification(
+            db=db, notification=notification, user_info=user_info
+        ):
+            return candidates
+    raise HTTPException(
+        status_code=403,
+        detail="You are not an authorized approver for this execution",
+    )
+
+
 @router.post("/handle-approval")
 async def handle_workflow_approval(
     request: Request,
@@ -842,14 +1238,37 @@ async def handle_workflow_approval(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     executor: WorkflowExecutor = Depends(get_workflow_executor),
-    _: bool = Depends(PermissionChecker('settings', FeatureAccessLevel.READ_WRITE)),
+    notifications_manager: NotificationsManager = Depends(get_notifications_manager),
+    # Outer gate is `notifications:READ_ONLY` (PR L). The real
+    # authorization is the per-execution check below
+    # (`_assert_caller_authorized_for_execution`), which confirms the
+    # caller was an actual recipient/role-member of the approval
+    # notification. The outer gate exists for defense-in-depth — it
+    # ensures the caller is part of the notification system at all
+    # (rejects users with `notifications:None`), but doesn't require
+    # write-level notification permissions which most non-admin
+    # Business Owners legitimately don't have. Approving a notification
+    # routed to you is *reading* + responding; not a separate "write"
+    # action on the notification feature itself.
+    #
+    # Two-layer defense satisfied (per OWASP API1+API5):
+    #   * Function-level (outer): you can see notifications → can be a
+    #     workflow recipient. Excludes users with no notification access.
+    #   * Object-level (inner): you must be the specific recipient of
+    #     this execution's approval notification (or have admin bypass).
+    #
+    # History: was `settings:READ_WRITE` (pre-PR-K, semantically wrong),
+    # then `notifications:READ_WRITE` (PR K, too tight for non-admin
+    # BOs), now `notifications:READ_ONLY` (PR L, the minimum that
+    # preserves defense-in-depth without blocking legitimate approvers).
+    _: bool = Depends(PermissionChecker('notifications', FeatureAccessLevel.READ_ONLY)),
 ) -> Dict[str, Any]:
     """Handle a workflow approval from a notification action.
-    
+
     This is the endpoint called when a user responds to an approval notification
     with action_type='workflow_approval'. It finds the execution from the
     action_payload and resumes it.
-    
+
     Request body:
         - execution_id: str - ID of the paused execution
         - approved: bool - Whether the request was approved
@@ -861,12 +1280,22 @@ async def handle_workflow_approval(
         execution_id = body.get('execution_id')
         approved = body.get('approved', False)
         message = body.get('message') or body.get('reason')
-        
+
         if not execution_id:
             raise HTTPException(status_code=400, detail="execution_id is required")
-        
+
+        # Per-execution authorization (PR K). Raises 403 if the caller
+        # isn't a recipient/role-member of any approval notification for
+        # this execution. Must run BEFORE resume_workflow side effects.
+        _assert_caller_authorized_for_execution(
+            db=db,
+            notifications_manager=notifications_manager,
+            execution_id=execution_id,
+            user_info=current_user,
+        )
+
         user_email = current_user.email if current_user else None
-        
+
         # Resume the workflow
         result = executor.resume_workflow(
             execution_id=execution_id,

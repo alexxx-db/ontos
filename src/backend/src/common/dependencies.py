@@ -20,12 +20,12 @@ from src.controller.search_manager import SearchManager
 from src.controller.tags_manager import TagsManager # Import TagsManager
 from src.controller.workspace_manager import WorkspaceManager # Import WorkspaceManager
 from src.controller.change_log_manager import ChangeLogManager # Import ChangeLogManager
-from src.controller.datasets_manager import DatasetsManager # Import DatasetsManager
 from src.controller.assets_manager import AssetsManager
 from src.controller.business_roles_manager import BusinessRolesManager
 from src.controller.business_owners_manager import BusinessOwnersManager
 from src.controller.delivery_methods_manager import DeliveryMethodsManager
 from src.controller.ontology_generator_manager import OntologyGeneratorManager
+from src.controller.directory_manager import DirectoryManager
 
 # Import base dependencies
 from src.common.database import get_session_factory # Import the factory function
@@ -51,12 +51,12 @@ from src.common.manager_dependencies import (
     get_search_manager,
     get_workspace_manager,
     get_change_log_manager,
-    get_datasets_manager,
     get_assets_manager,
     get_business_roles_manager,
     get_business_owners_manager,
     get_delivery_methods_manager,
     get_ontology_generator_manager,
+    get_directory_manager,
 )
 # Import workspace client getter separately as it might be structured differently
 from src.common.workspace_client import get_workspace_client_dependency  # Fixed to use proper wrapper
@@ -129,12 +129,12 @@ SemanticModelsManagerDep = Annotated[SemanticModelsManager, Depends(get_semantic
 SearchManagerDep = Annotated[SearchManager, Depends(get_search_manager)]
 WorkspaceManagerDep = Annotated[WorkspaceManager, Depends(get_workspace_manager)]
 ChangeLogManagerDep = Annotated[ChangeLogManager, Depends(get_change_log_manager)]
-DatasetsManagerDep = Annotated[DatasetsManager, Depends(get_datasets_manager)]
 AssetsManagerDep = Annotated[AssetsManager, Depends(get_assets_manager)]
 BusinessRolesManagerDep = Annotated[BusinessRolesManager, Depends(get_business_roles_manager)]
 BusinessOwnersManagerDep = Annotated[BusinessOwnersManager, Depends(get_business_owners_manager)]
 DeliveryMethodsManagerDep = Annotated[DeliveryMethodsManager, Depends(get_delivery_methods_manager)]
 OntologyGeneratorManagerDep = Annotated[OntologyGeneratorManager, Depends(get_ontology_generator_manager)]
+DirectoryManagerDep = Annotated[DirectoryManager, Depends(get_directory_manager)]
 
 # Permission Checker Dependency
 PermissionCheckerDep = AuthorizationManagerDep 

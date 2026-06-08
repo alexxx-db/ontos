@@ -37,47 +37,38 @@ from src.common.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _render_template_value(value: Any) -> str:
+    """Render a substitution value. Lists/dicts are JSON-serialized so webhook
+    body templates can interpolate `${entity.consumer_principals}` and receive
+    a valid JSON array of `{type, value}` objects (piping consumer_principals
+    + on_behalf_of into the external runbook webhook body)."""
+    if value is None:
+        return ''
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(value, default=str)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
 def substitute_template(template: str, context: 'StepContext') -> str:
     """Replace ${variable} and {{variable}} placeholders with context values.
 
     Supports:
       ${entity_name}, ${entity_type}, ${entity_id}, ${user_email},
       ${workflow_name}, ${workflow_id}, ${execution_id},
-      ${entity.field}, ${entity.field.subfield} (nested dot-path on dicts),
-      ${step_results.step_id.field}
-
-    Primitive entity/step-result values render as their stringified form.
-    List or dict values render as compact JSON so webhook templates can
-    splice arrays/objects (e.g. ``${entity.catalogs}``) directly into a
-    JSON body. Use a nested path (``${entity.foo.bar}``) to reach into a
-    dict member as a primitive.
+      ${entity.field}              - flat scalars + JSON-serialized lists/dicts
+      ${entity.field.subfield}     - nested dict path
+      ${step_results.step_id.field[.sub...]}
+      ${context.<key>[.<sub>...]}  - nested path into StepContext attributes
+                                     (e.g. ${context.on_behalf_of.value}).
+                                     Top-level scalar attrs like
+                                     ${context.entity_type} also work.
     """
     import re
 
-    def _render(value: Any) -> str:
-        """Render a value for template substitution.
-
-        Primitives → str(value). Lists/dicts → compact JSON so they slot
-        into JSON body_templates without manual quoting. None → empty
-        string.
-        """
-        if value is None:
-            return ''
-        if isinstance(value, bool):
-            # ``bool`` is an ``int`` subclass in Python — keep JSON-style
-            # ``true``/``false`` rather than Python's ``True``/``False``
-            # so webhook bodies stay valid JSON.
-            return 'true' if value else 'false'
-        if isinstance(value, (str, int, float)):
-            return str(value)
-        if isinstance(value, (list, dict)):
-            try:
-                return json.dumps(value, default=str)
-            except (TypeError, ValueError):
-                return str(value)
-        return str(value)
-
-    substitutions = {
+    flat_subs = {
         'entity_type': context.entity_type,
         'entity_id': context.entity_id,
         'entity_name': context.entity_name or '',
@@ -87,26 +78,60 @@ def substitute_template(template: str, context: 'StepContext') -> str:
         'execution_id': context.execution_id,
     }
 
-    for key, value in context.entity.items():
-        substitutions[f'entity.{key}'] = _render(value)
-        # Surface one level of dict nesting as primitive paths so
-        # workflow authors can write ``${entity.on_behalf_of.value}``
-        # without manually JSON-parsing the parent.
-        if isinstance(value, dict):
-            for sub_key, sub_value in value.items():
-                substitutions[f'entity.{key}.{sub_key}'] = _render(sub_value)
+    def _walk_dict(obj: Any, parts: List[str]) -> Optional[str]:
+        for part in parts:
+            if isinstance(obj, dict):
+                obj = obj.get(part)
+            else:
+                return None
+            if obj is None:
+                return None
+        return _render_template_value(obj)
 
-    for step_id, step_data in context.step_results.items():
-        if isinstance(step_data, dict):
-            for key, value in step_data.items():
-                substitutions[f'step_results.{step_id}.{key}'] = _render(value)
-                if isinstance(value, dict):
-                    for k, v in value.items():
-                        substitutions[f'step_results.{step_id}.{key}.{k}'] = _render(v)
+    def _lookup_context(parts: List[str]) -> Optional[str]:
+        """Resolve ${context.<attr>[.<sub>...]} by walking StepContext attrs."""
+        if not parts:
+            return None
+        head, rest = parts[0], parts[1:]
+        if not hasattr(context, head):
+            return None
+        obj: Any = getattr(context, head)
+        if obj is None:
+            return None
+        for part in rest:
+            if isinstance(obj, dict):
+                obj = obj.get(part)
+            elif obj is None:
+                return None
+            else:
+                obj = getattr(obj, part, None)
+            if obj is None:
+                return None
+        return _render_template_value(obj)
 
     def _replace(match):
         var_name = match.group(1)
-        return substitutions.get(var_name, match.group(0))
+        # 1) flat top-level scalars
+        if var_name in flat_subs:
+            return _render_template_value(flat_subs[var_name])
+        # 2) namespaced paths
+        if '.' in var_name:
+            head, _, tail = var_name.partition('.')
+            parts = tail.split('.') if tail else []
+            if head == 'entity':
+                resolved = _walk_dict(context.entity, parts)
+                if resolved is not None:
+                    return resolved
+            elif head == 'step_results':
+                resolved = _walk_dict(context.step_results, parts)
+                if resolved is not None:
+                    return resolved
+            elif head == 'context':
+                resolved = _lookup_context(parts)
+                if resolved is not None:
+                    return resolved
+        # leave placeholder intact when unresolved
+        return match.group(0)
 
     # Support both ${var} and {{var}} syntax
     result = re.sub(r'\$\{([^}]+)\}', _replace, template)
@@ -127,6 +152,10 @@ class StepContext:
     workflow_id: str
     workflow_name: str
     step_results: Dict[str, Any]  # Results from previous steps
+    # subscribe-on-behalf-of-group/SP. Resolved via
+    # ${context.on_behalf_of.value|.type|.display} in webhook bodies +
+    # grant_permissions principal_variable. None when subscribing for self.
+    on_behalf_of: Optional[Dict[str, str]] = None
 
 
 @dataclass
@@ -184,6 +213,325 @@ class ValidationStepHandler(StepHandler):
             )
 
 
+def _resolve_role_to_users(
+    db: Session,
+    role_spec: str,
+    context: 'StepContext',
+) -> List[tuple]:
+    """Resolve a role specification to a list of (identifier, role_id_or_None) tuples.
+
+    Handles:
+    - 'requester' → original user email
+    - 'owner' → entity owner
+    - 'business:<uuid>' → business role → look up entity owners from business_owners table
+    - '<uuid>' → app role UUID
+    - 'user@email.com' → direct email
+    - Legacy aliases like 'domain_owners', 'admins', etc.
+    - **Comma-separated list of any of the above** → recurse on each
+      segment, flatten results. This is what the Workflow Designer's
+      "Custom principals" toggle emits: a role/literal token from the
+      Select plus any users / groups picked from the PrincipalPicker.
+    """
+    from src.db_models.settings import AppRoleDb
+    from src.db_models.business_roles import BusinessRoleDb
+    from src.db_models.business_owners import BusinessOwnerDb
+
+    # Recursion gate for the mixed-shape list. We check for ``,`` first
+    # so each segment hits the rest of this function in isolation and
+    # role tokens / aliases / business: prefixes still resolve.
+    if ',' in role_spec:
+        out: List[tuple] = []
+        seen: set = set()
+        for segment in role_spec.split(','):
+            seg = segment.strip()
+            if not seg:
+                continue
+            for identifier, role_uuid in _resolve_role_to_users(db, seg, context):
+                if not identifier:
+                    continue
+                key = (identifier, role_uuid)
+                if key not in seen:
+                    seen.add(key)
+                    out.append((identifier, role_uuid))
+        return out
+
+    # Map shorthand names to role names (legacy support)
+    role_aliases = {
+        'domain_owners': 'DomainOwner',
+        'project_owners': 'ProjectOwner',
+        'data_stewards': 'DataSteward',
+        'admins': 'Admin',
+    }
+
+    if role_spec == 'requester':
+        return [(context.user_email, None)] if context.user_email else []
+
+    if role_spec == 'owner':
+        owner = context.entity.get('owner') if context.entity else None
+        return [(owner, None)] if owner else []
+
+    if role_spec in role_aliases:
+        role_name = role_aliases[role_spec]
+        role = db.query(AppRoleDb).filter(AppRoleDb.name == role_name).first()
+        if not role:
+            # Try normalized match
+            normalized = role_name.lower().replace(' ', '')
+            for r in db.query(AppRoleDb).all():
+                if r.name.lower().replace(' ', '') == normalized:
+                    return [(r.name, r.id)]
+        return [(role_name, role.id if role else None)]
+
+    if '@' in role_spec:
+        # Pre-comma-split single email -- treat as a direct recipient.
+        return [(role_spec, None)]
+
+    # Business role: prefixed with "business:"
+    if role_spec.startswith('business:'):
+        br_id = role_spec[len('business:'):]
+        br = db.query(BusinessRoleDb).filter(BusinessRoleDb.id == br_id).first()
+        if not br:
+            logger.warning(f"Business role {br_id} not found")
+            return []
+
+        # Some trigger contexts carry a "proxy" entity that stands in for the
+        # real entity that Business Owners are assigned to. For example:
+        #   - on_request_access fires on entity_type=access_grant, where
+        #     context.entity_id is the access-grant request's UUID, NOT the
+        #     underlying data product. Business Owners are assigned to data
+        #     products, so a naive lookup by context.entity_id returns [].
+        # For these proxy entity types, the trigger firer puts the underlying
+        # entity's id under context.entity['entity_id']. We traverse to that
+        # so the BusinessOwnerDb lookup hits the right object.
+        # NOTE: on_subscribe already fires with entity_type=data_product +
+        # entity_id=<product_id> directly (see data_products_manager
+        # ._fire_on_subscribe_trigger), so subscription proxying is not needed
+        # here. The traversal list is intentionally narrow.
+        PROXY_ENTITY_TYPES = {'access_grant'}
+        lookup_object_id = context.entity_id
+        if context.entity_type in PROXY_ENTITY_TYPES and context.entity:
+            underlying_id = context.entity.get('entity_id')
+            if underlying_id:
+                logger.info(
+                    f"Business role resolver: traversing proxy "
+                    f"entity_type={context.entity_type} entity_id={context.entity_id} "
+                    f"-> underlying {context.entity.get('entity_type', '?')}={underlying_id} "
+                    f"for Business Owner lookup"
+                )
+                lookup_object_id = underlying_id
+            else:
+                logger.warning(
+                    f"Business role resolver: proxy entity_type={context.entity_type} "
+                    f"has no entity.entity_id to traverse to; falling back to "
+                    f"context.entity_id={context.entity_id} (lookup will likely return [])"
+                )
+
+        # Runtime resolution: look up who holds this business role for this entity
+        owners = (
+            db.query(BusinessOwnerDb)
+            .filter(
+                BusinessOwnerDb.role_id == br.id,
+                BusinessOwnerDb.object_id == lookup_object_id,
+                BusinessOwnerDb.is_active.is_(True),
+            )
+            .all()
+        )
+
+        if not owners:
+            # No one assigned this role for this entity
+            logger.warning(
+                f"No active {br.name} assigned to object_id={lookup_object_id} "
+                f"(triggered on {context.entity_type} {context.entity_id} / "
+                f"{context.entity_name})"
+            )
+            return []
+
+        return [(o.user_email, str(br.id)) for o in owners]
+
+    # App role UUID (preferred new format)
+    role_by_id = db.query(AppRoleDb).filter(AppRoleDb.id == role_spec).first()
+    if role_by_id:
+        return [(role_by_id.name, role_by_id.id)]
+
+    # Fallback: role name (legacy)
+    normalized = role_spec.lower().replace(' ', '')
+    for r in db.query(AppRoleDb).all():
+        if r.name.lower().replace(' ', '') == normalized:
+            return [(r.name, r.id)]
+
+    return [(role_spec, None)]
+
+
+# Map raw entity_type strings to human-friendly labels used in approval
+# notification subtitles/descriptions. Anything not listed falls back to a
+# title-cased version of the raw string.
+_ENTITY_TYPE_LABELS: Dict[str, str] = {
+    "data_product": "Data Product",
+    "data_contract": "Data Contract",
+    "data_domain": "Data Domain",
+    "data_asset_review": "Data Asset Review",
+    "access_grant": "Access Grant",
+    "asset": "Asset",
+}
+
+
+def _humanize_entity_type(entity_type: Optional[str]) -> str:
+    if not entity_type:
+        return "Entity"
+    label = _ENTITY_TYPE_LABELS.get(entity_type.lower())
+    if label:
+        return label
+    return entity_type.replace("_", " ").title()
+
+
+def _extract_approval_facets(context: "StepContext") -> Dict[str, Any]:
+    """Pull readable request facets out of the trigger entity_data.
+
+    The approval step is generic, but the most common payload — access
+    grant requests — carries the underlying resource + permission/duration/
+    reason inside ``context.entity`` (which is the splatted ``entity_data``
+    from ``AccessGrantsManager.create_request``). We surface these so the
+    notification subtitle/description and the Approve/Reject dialog can
+    show meaningful context instead of bare UUIDs.
+
+    Returns a dict of optional keys. Callers should ``dict.get`` defensively
+    because non-access-grant triggers won't populate any of these.
+    """
+    facets: Dict[str, Any] = {}
+    entity = context.entity if isinstance(context.entity, dict) else {}
+
+    # For ``access_grant`` triggers the proxy ``entity_type`` is
+    # ``access_grant``; the underlying object (data product, contract, …)
+    # is carried inside ``entity_data`` and is what an approver actually
+    # wants to inspect / link to.
+    if context.entity_type and context.entity_type.lower() == "access_grant":
+        underlying_type = entity.get("entity_type")
+        underlying_id = entity.get("entity_id")
+        underlying_name = (
+            entity.get("entity_name")
+            or entity.get("data_product_name")
+        )
+        if underlying_type:
+            facets["underlying_entity_type"] = str(underlying_type)
+        if underlying_id:
+            facets["underlying_entity_id"] = str(underlying_id)
+        if underlying_name:
+            facets["underlying_entity_name"] = str(underlying_name)
+
+        permission = entity.get("permission_level")
+        if permission:
+            facets["permission_level"] = str(permission)
+
+        duration = entity.get("requested_duration_days")
+        if isinstance(duration, (int, float)):
+            facets["requested_duration_days"] = int(duration)
+        elif isinstance(duration, str) and duration.strip().isdigit():
+            facets["requested_duration_days"] = int(duration.strip())
+
+        reason = entity.get("reason")
+        if reason:
+            facets["reason"] = str(reason)
+
+        request_id = entity.get("request_id") or context.entity_id
+        if request_id:
+            facets["request_id"] = str(request_id)
+
+    return facets
+
+
+def _build_approval_subtitle(
+    context: "StepContext",
+    facets: Dict[str, Any],
+    entity_display: str,
+) -> str:
+    """Readable subtitle for the approval notification card.
+
+    Examples:
+        - "Read access to Data Product: Sales Pipeline"
+        - "Data Contract: orders-v1"
+    """
+    if context.entity_type and context.entity_type.lower() == "access_grant":
+        permission = facets.get("permission_level")
+        underlying_type_label = _humanize_entity_type(
+            facets.get("underlying_entity_type")
+        )
+        if permission and facets.get("underlying_entity_name"):
+            return (
+                f"{permission.title()} access to {underlying_type_label}: "
+                f"{facets['underlying_entity_name']}"
+            )
+        if facets.get("underlying_entity_name"):
+            return (
+                f"Access to {underlying_type_label}: "
+                f"{facets['underlying_entity_name']}"
+            )
+        # Fallback: no underlying entity resolved — at least avoid showing
+        # the raw access_grant UUID.
+        return f"Access request from {context.user_email or 'unknown user'}"
+
+    return f"{_humanize_entity_type(context.entity_type)}: {entity_display}"
+
+
+def _build_approval_description(
+    *,
+    context: "StepContext",
+    facets: Dict[str, Any],
+    approval_message: Optional[str],
+) -> str:
+    """Multi-line, label/value description for the approval notification.
+
+    Mirrors what the dialog renders but as plain text so the bell card and
+    email recipients see the same information.
+    """
+    lines: List[str] = []
+
+    requester = context.user_email or "Unknown"
+    lines.append(f"Requester: {requester}")
+
+    underlying_type = facets.get("underlying_entity_type")
+    if underlying_type:
+        resource_label = _humanize_entity_type(underlying_type)
+        resource_name = (
+            facets.get("underlying_entity_name")
+            or facets.get("underlying_entity_id")
+            or ""
+        )
+        if resource_name:
+            lines.append(f"Resource: {resource_label} · {resource_name}")
+        else:
+            lines.append(f"Resource: {resource_label}")
+    elif context.entity_name or context.entity_id:
+        resource_label = _humanize_entity_type(context.entity_type)
+        resource_name = context.entity_name or context.entity_id
+        lines.append(f"Resource: {resource_label} · {resource_name}")
+
+    permission = facets.get("permission_level")
+    if permission:
+        lines.append(f"Permission: {permission}")
+
+    duration = facets.get("requested_duration_days")
+    if isinstance(duration, int):
+        lines.append(f"Duration: {duration} day{'s' if duration != 1 else ''}")
+
+    reason = facets.get("reason")
+    if reason:
+        lines.append(f"Reason: {reason}")
+
+    if approval_message:
+        lines.append(f"Workflow message: {approval_message}")
+
+    # Optional free-form fields carried on the entity. Mirrors the legacy
+    # behaviour for non-access-grant approval payloads.
+    entity = context.entity if isinstance(context.entity, dict) else {}
+    msg = entity.get("message")
+    if msg and msg != approval_message:
+        lines.append(f"Message: {msg}")
+    justification = entity.get("justification")
+    if justification and justification != reason:
+        lines.append(f"Justification: {justification}")
+
+    return "\n".join(lines)
+
+
 class ApprovalStepHandler(StepHandler):
     """Handler for approval steps - creates actionable notifications and pauses workflow."""
 
@@ -207,30 +555,38 @@ class ApprovalStepHandler(StepHandler):
             if not resolved_approvers:
                 return StepResult(passed=False, error="Could not resolve any approvers")
             
-            entity_display = context.entity_name or context.entity_id
-            
+            # Extract human-readable facets from the trigger's entity_data so
+            # the notification + approval dialog can show the underlying
+            # request (requester, resource, permission, duration, reason)
+            # instead of just the proxy ``access_grant`` UUID. Best-effort —
+            # the approval step is generic and only access-grant triggers
+            # populate these fields today.
+            facets = _extract_approval_facets(context)
+
+            entity_display = (
+                facets.get("underlying_entity_name")
+                or context.entity_name
+                or facets.get("underlying_entity_id")
+                or context.entity_id
+            )
+
             # Create actionable notification for each approver
             created_count = 0
             for approver_id, role_uuid in resolved_approvers:
                 try:
-                    # Build description with request details
-                    description = (
-                        f"Approval requested for {context.entity_type} '{entity_display}'.\n\n"
-                        f"Requested by: {context.user_email or 'Unknown'}\n"
+                    subtitle = _build_approval_subtitle(context, facets, entity_display)
+                    description = _build_approval_description(
+                        context=context,
+                        facets=facets,
+                        approval_message=approval_message,
                     )
-                    if approval_message:
-                        description += f"\nMessage: {approval_message}"
-                    if context.entity.get('message'):
-                        description += f"\nMessage: {context.entity.get('message')}"
-                    if context.entity.get('justification'):
-                        description += f"\nJustification: {context.entity.get('justification')}"
-                    
+
                     notification = Notification(
                         id=str(uuid4()),
                         created_at=datetime.utcnow(),
                         type=NotificationType.ACTION_REQUIRED,
                         title="Approval Required",
-                        subtitle=f"{context.entity_type}: {entity_display}",
+                        subtitle=subtitle,
                         description=description,
                         recipient=approver_id,  # Keep for backwards compat / email recipients
                         recipient_role_id=role_uuid,  # Store role UUID if this is a role
@@ -244,6 +600,12 @@ class ApprovalStepHandler(StepHandler):
                             "entity_name": context.entity_name,
                             "requester_email": context.user_email,
                             "timeout_days": timeout_days,
+                            # Structured request context for the approval
+                            # dialog. All optional; only access-grant
+                            # triggers populate the underlying_* / request_*
+                            # fields today.
+                            **facets,
+                            "workflow_message": approval_message or None,
                         },
                         can_delete=False,  # Must respond to this notification
                         read=False,
@@ -278,62 +640,9 @@ class ApprovalStepHandler(StepHandler):
             logger.exception(f"Approval step failed: {e}")
             return StepResult(passed=False, error=str(e))
 
-    def _lookup_role_id(self, role_name: str) -> Optional[str]:
-        """Look up a role by name (flexible matching) and return its UUID."""
-        from src.db_models.settings import AppRoleDb
-        
-        # Try exact match first
-        role = self._db.query(AppRoleDb).filter(AppRoleDb.name == role_name).first()
-        if role:
-            return role.id
-        
-        # Try normalized match (case-insensitive, no spaces)
-        normalized = role_name.lower().replace(' ', '')
-        all_roles = self._db.query(AppRoleDb).all()
-        for r in all_roles:
-            if r.name.lower().replace(' ', '') == normalized:
-                return r.id
-        
-        return None
-
     def _resolve_approvers(self, approvers: str, context: StepContext) -> List[tuple]:
-        """Resolve approver specification to list of (identifier, role_uuid) tuples.
-        
-        Returns:
-            List of (identifier, role_uuid) where:
-            - identifier: email, username, or role name for display
-            - role_uuid: UUID if this is a role-based approver, None for direct users
-        """
-        from src.db_models.settings import AppRoleDb
-        
-        # Map shorthand names to role names (legacy support)
-        role_aliases = {
-            'domain_owners': 'DomainOwner',
-            'project_owners': 'ProjectOwner',
-            'data_stewards': 'DataSteward',
-            'admins': 'Admin',
-        }
-        
-        if approvers == 'requester':
-            return [(context.user_email, None)] if context.user_email else []
-        elif approvers in role_aliases:
-            # Legacy: shorthand alias
-            role_name = role_aliases[approvers]
-            role_id = self._lookup_role_id(role_name)
-            return [(role_name, role_id)]
-        elif '@' in approvers:
-            # Assume it's an email or comma-separated emails
-            return [(e.strip(), None) for e in approvers.split(',')]
-        else:
-            # Check if it's a role UUID (preferred - new format)
-            role_by_id = self._db.query(AppRoleDb).filter(AppRoleDb.id == approvers).first()
-            if role_by_id:
-                # It's a UUID - use role name for display, UUID for matching
-                return [(role_by_id.name, role_by_id.id)]
-            
-            # Fallback: Assume it's a role name (legacy support)
-            role_id = self._lookup_role_id(approvers)
-            return [(approvers, role_id)]
+        """Resolve approver specification to list of (identifier, role_uuid) tuples."""
+        return _resolve_role_to_users(self._db, approvers, context)
 
 
 class NotificationStepHandler(StepHandler):
@@ -376,6 +685,15 @@ class NotificationStepHandler(StepHandler):
             
             # Resolve channels: step config overrides global defaults
             channels = self._config.get('channels') or self._get_default_channels()
+
+            # Non-blocking: strip 'email' if present in legacy/saved configs.
+            # Email is out of scope in v1 (non-portable across customer environments).
+            if channels and 'email' in channels:
+                logger.warning(
+                    "'email' channel is not supported in v1 (non-portable across customer environments). "
+                    "Stripping from channels — use 'webhook' to your own email provider instead."
+                )
+                channels = [c for c in channels if c != 'email']
             
             created_count = 0
             email_count = 0
@@ -477,7 +795,7 @@ class NotificationStepHandler(StepHandler):
         """Read global default notification channels from settings."""
         try:
             import json as _json
-            from src.db_models.settings import SettingDb
+            from src.db_models.app_settings import AppSettingDb as SettingDb
             row = self._db.query(SettingDb).filter(SettingDb.key == "notification_channel_defaults").first()
             if row:
                 cfg = _json.loads(row.value) if isinstance(row.value, str) else row.value
@@ -486,55 +804,9 @@ class NotificationStepHandler(StepHandler):
             pass
         return ["in_app"]
 
-    def _lookup_role_id(self, role_name: str) -> Optional[str]:
-        """Look up a role by name (flexible matching) and return its UUID."""
-        from src.db_models.settings import AppRoleDb
-        
-        # Try exact match first
-        role = self._db.query(AppRoleDb).filter(AppRoleDb.name == role_name).first()
-        if role:
-            return role.id
-        
-        # Try normalized match (case-insensitive, no spaces)
-        normalized = role_name.lower().replace(' ', '')
-        all_roles = self._db.query(AppRoleDb).all()
-        for r in all_roles:
-            if r.name.lower().replace(' ', '') == normalized:
-                return r.id
-        
-        return None
-
     def _resolve_recipients(self, recipients: str, context: StepContext) -> List[tuple]:
         """Resolve recipient specification to list of (identifier, role_uuid) tuples."""
-        from src.db_models.settings import AppRoleDb
-        
-        role_aliases = {
-            'domain_owners': 'DomainOwner',
-            'data_stewards': 'DataSteward',
-        }
-        
-        if recipients == 'requester':
-            return [(context.user_email, None)] if context.user_email else []
-        elif recipients == 'owner':
-            owner = context.entity.get('owner')
-            return [(owner, None)] if owner else []
-        elif recipients in role_aliases:
-            # Legacy: shorthand alias
-            role_name = role_aliases[recipients]
-            role_id = self._lookup_role_id(role_name)
-            return [(role_name, role_id)]
-        elif '@' in recipients:
-            return [(e.strip(), None) for e in recipients.split(',')]
-        else:
-            # Check if it's a role UUID (preferred - new format)
-            role_by_id = self._db.query(AppRoleDb).filter(AppRoleDb.id == recipients).first()
-            if role_by_id:
-                # It's a UUID - use role name for display, UUID for matching
-                return [(role_by_id.name, role_by_id.id)]
-            
-            # Fallback: Assume it's a role name (legacy support)
-            role_id = self._lookup_role_id(recipients)
-            return [(recipients, role_id)]
+        return _resolve_role_to_users(self._db, recipients, context)
 
     def _get_template_title(self, template: str, context: StepContext) -> str:
         """Get notification title from template."""
@@ -610,7 +882,7 @@ class AssignTagStepHandler(StepHandler):
             persisted = False
             try:
                 from src.controller.tags_manager import TagsManager
-                tags_mgr = TagsManager(self._db)
+                tags_mgr = TagsManager()
                 tag = tags_mgr.get_tag_by_fqn(db=self._db, fqn=key)
                 if tag:
                     tags_mgr.add_tag_to_entity(
@@ -670,7 +942,7 @@ class RemoveTagStepHandler(StepHandler):
             persisted = False
             try:
                 from src.controller.tags_manager import TagsManager
-                tags_mgr = TagsManager(self._db)
+                tags_mgr = TagsManager()
                 tag = tags_mgr.get_tag_by_fqn(db=self._db, fqn=key)
                 if tag:
                     ok = tags_mgr.remove_tag_from_entity(
@@ -692,7 +964,7 @@ class RemoveTagStepHandler(StepHandler):
             return StepResult(
                 passed=True,
                 message=f"Removed tag {key}" + (" (persisted)" if persisted else " (context only)"),
-                data={'key': key}
+                data={'key': key, 'persisted': persisted}
             )
         except Exception as e:
             logger.exception(f"Remove tag step failed: {e}")
@@ -814,7 +1086,7 @@ class ScriptStepHandler(StepHandler):
             ws = get_workspace_client()
 
             # Resolve SQL warehouse ID from settings
-            from src.db_models.settings import SettingDb
+            from src.db_models.app_settings import AppSettingDb as SettingDb
             import json as _json
             wh_row = self._db.query(SettingDb).filter(SettingDb.key == "sql_warehouse_id").first()
             if not wh_row or not wh_row.value:
@@ -1075,8 +1347,8 @@ class CreateAssetReviewStepHandler(StepHandler):
                 # Build FQN based on entity - check both context.entity and trigger context entity_data
                 entity_data = tc.entity_data if tc and tc.entity_data else {}
                 
-                if entity_type in ['dataset', 'table', 'view']:
-                    # For datasets, try to get fqn from entity data
+                if entity_type in ['asset', 'table', 'view']:
+                    # For assets/tables/views, try to get fqn from entity data
                     fqn = (context.entity.get('fqn') or context.entity.get('table_fqn') or 
                            entity_data.get('fqn') or entity_data.get('table_fqn') or 
                            entity_name or entity_id)
@@ -1260,31 +1532,58 @@ class WebhookStepHandler(StepHandler):
         timeout_seconds = self._config.get('timeout_seconds', 30)
         success_codes = self._config.get('success_codes')
         retry_count = self._config.get('retry_count', 0)
-        
+
+        # Caller-supplied extras forwarded into the UC HTTPConnection call
+        # (issue #401). All support the same template substitution as
+        # body_template / headers; absent or empty fields are no-ops, so
+        # legacy configs are unaffected.
+        additional_headers = self._config.get('additional_headers', {}) or {}
+        additional_query_params = self._config.get('additional_query_params', {}) or {}
+        path_suffix = self._config.get('path_suffix')
+
         # Validate configuration
         if not connection_name and not url:
             return StepResult(
                 passed=False,
                 error="Webhook requires either 'connection_name' (UC Connection) or 'url' (inline mode)"
             )
-        
+
         # Substitute template variables in body
         body = None
         if body_template:
             body = self._substitute_template(body_template, context)
-        
+
         # Substitute template variables in headers
         resolved_headers = {}
         for key, value in headers.items():
             resolved_headers[key] = self._substitute_template(value, context)
-        
+
+        # Merge additional_headers (caller-supplied extras win on key collision).
+        for key, value in additional_headers.items():
+            resolved_headers[key] = self._substitute_template(value, context)
+
+        # Resolve additional_query_params (values, not keys, are templated).
+        resolved_query_params: Dict[str, str] = {}
+        for key, value in additional_query_params.items():
+            resolved_query_params[key] = self._substitute_template(value, context)
+
+        # Resolve path_suffix and merge with the configured path.
+        resolved_path_suffix = (
+            self._substitute_template(path_suffix, context) if path_suffix else ''
+        )
+        effective_path = self._compose_path(
+            base_path=path or '',
+            suffix=resolved_path_suffix,
+            query_params=resolved_query_params,
+        )
+
         try:
             if connection_name:
                 # UC Connection mode
                 result = self._execute_via_uc_connection(
                     connection_name=connection_name,
                     method=method,
-                    path=path,
+                    path=effective_path,
                     headers=resolved_headers,
                     body=body,
                     timeout_seconds=timeout_seconds,
@@ -1292,9 +1591,14 @@ class WebhookStepHandler(StepHandler):
                     retry_count=retry_count,
                 )
             else:
-                # Inline mode
+                # Inline mode — append path_suffix and query params to the URL.
+                effective_url = self._compose_url(
+                    base_url=url,
+                    suffix=resolved_path_suffix,
+                    query_params=resolved_query_params,
+                )
                 result = self._execute_direct(
-                    url=url,
+                    url=effective_url,
                     method=method,
                     headers=resolved_headers,
                     body=body,
@@ -1302,12 +1606,77 @@ class WebhookStepHandler(StepHandler):
                     success_codes=success_codes,
                     retry_count=retry_count,
                 )
-            
+
             return result
-            
+
         except Exception as e:
             logger.exception(f"Webhook step failed: {e}")
             return StepResult(passed=False, error=str(e))
+
+    @staticmethod
+    def _compose_path(base_path: str, suffix: str, query_params: Dict[str, str]) -> str:
+        """Combine `base_path`, optional `suffix`, and optional `query_params` into
+        a single path string for the UC HTTPConnection call.
+
+        - If both `base_path` and `suffix` are empty, returns '/' (existing behavior).
+        - Avoids duplicated slashes at the join.
+        - Query string is appended last, URL-encoded.
+        """
+        from urllib.parse import urlencode
+
+        # Strip surrounding whitespace to forgive UI input.
+        base = (base_path or '').strip()
+        suf = (suffix or '').strip()
+
+        if base and suf:
+            # Ensure exactly one slash between base and suffix.
+            if base.endswith('/') and suf.startswith('/'):
+                combined = base + suf[1:]
+            elif not base.endswith('/') and not suf.startswith('/'):
+                combined = base + '/' + suf
+            else:
+                combined = base + suf
+        else:
+            combined = base or suf
+
+        if not combined:
+            combined = '/'
+
+        if query_params:
+            sep = '&' if '?' in combined else '?'
+            combined = f"{combined}{sep}{urlencode(query_params, doseq=True)}"
+
+        return combined
+
+    @staticmethod
+    def _compose_url(base_url: str, suffix: str, query_params: Dict[str, str]) -> str:
+        """Combine `base_url` with optional path `suffix` and `query_params`.
+
+        Inline-mode counterpart to ``_compose_path``. The suffix is inserted into
+        the URL's path component (before any existing query string) with single
+        normalizing slashes, then ``query_params`` are appended last.
+        """
+        from urllib.parse import urlencode, urlsplit, urlunsplit
+
+        url = base_url
+        suf = (suffix or '').strip()
+        if suf:
+            parts = urlsplit(url)
+            base_path = parts.path or ''
+            if base_path and suf:
+                if base_path.endswith('/') and suf.startswith('/'):
+                    combined = base_path + suf[1:]
+                elif not base_path.endswith('/') and not suf.startswith('/'):
+                    combined = base_path + '/' + suf
+                else:
+                    combined = base_path + suf
+            else:
+                combined = base_path or suf
+            url = urlunsplit((parts.scheme, parts.netloc, combined, parts.query, parts.fragment))
+        if query_params:
+            sep = '&' if '?' in url else '?'
+            url = f"{url}{sep}{urlencode(query_params, doseq=True)}"
+        return url
 
     def _substitute_template(self, template: str, context: StepContext) -> str:
         """Delegate to module-level substitute_template."""
@@ -1540,6 +1909,365 @@ class WebhookStepHandler(StepHandler):
         return 200 <= status_code < 300
 
 
+class EntityActionStepHandler(StepHandler):
+    """Performs lifecycle actions (certify, publish, etc.) on the trigger entity.
+
+    Config:
+        action: certify | decertify | publish | unpublish | set_publication_scope
+        level_source: from_request | fixed | from_approval  (certify only)
+        fixed_level: int  (when level_source == fixed)
+        scope_source: from_request | fixed | from_approval  (publish only)
+        fixed_scope: str  (when scope_source == fixed)
+    """
+
+    def execute(self, context: StepContext) -> StepResult:
+        from datetime import datetime, timezone
+
+        action = self._config.get('action')
+        if not action:
+            return StepResult(passed=False, error="No action configured for entity_action step")
+
+        entity_type = context.entity_type
+        entity_id = context.entity_id
+
+        try:
+            if action in ('certify', 'decertify'):
+                return self._handle_certification(action, entity_type, entity_id, context)
+            elif action in ('publish', 'set_publication_scope'):
+                return self._handle_publication(entity_type, entity_id, context)
+            elif action == 'unpublish':
+                return self._handle_unpublish(entity_type, entity_id, context)
+            else:
+                return StepResult(passed=False, error=f"Unknown entity_action: {action}")
+        except Exception as e:
+            logger.exception(f"entity_action step failed: {e}")
+            return StepResult(passed=False, error=str(e))
+
+    def _resolve_level(self, context: StepContext) -> Optional[int]:
+        source = self._config.get('level_source', 'from_request')
+        if source == 'fixed':
+            return self._config.get('fixed_level')
+        elif source == 'from_approval':
+            for step_data in reversed(list(context.step_results.values())):
+                if isinstance(step_data, dict) and 'certification_level' in step_data:
+                    return step_data['certification_level']
+            return None
+        else:  # from_request
+            entity = context.entity or {}
+            return entity.get('requested_certification_level') or entity.get('certification_level')
+
+    def _resolve_scope(self, context: StepContext) -> str:
+        source = self._config.get('scope_source', 'from_request')
+        if source == 'fixed':
+            return self._config.get('fixed_scope', 'organization')
+        elif source == 'from_approval':
+            for step_data in reversed(list(context.step_results.values())):
+                if isinstance(step_data, dict) and 'publication_scope' in step_data:
+                    return step_data['publication_scope']
+            return 'organization'
+        else:  # from_request
+            entity = context.entity or {}
+            return entity.get('requested_scope') or entity.get('publication_scope') or 'organization'
+
+    def _get_db_entity(self, entity_type: str, entity_id: str):
+        if entity_type in ('data_product', 'DataProduct'):
+            from src.repositories.data_products_repository import data_product_repo
+            return data_product_repo.get(db=self._db, id=entity_id), 'data_product'
+        elif entity_type in ('data_contract', 'DataContract'):
+            from src.repositories.data_contracts_repository import data_contract_repo
+            return data_contract_repo.get(db=self._db, id=entity_id), 'data_contract'
+        elif entity_type in ('asset', 'Asset', 'dataset', 'Dataset'):
+            from src.repositories.assets_repository import asset_repo
+            return asset_repo.get(db=self._db, id=entity_id), 'asset'
+        return None, entity_type
+
+    def _handle_certification(self, action: str, entity_type: str, entity_id: str, context: StepContext) -> StepResult:
+        from datetime import datetime, timezone
+        db_entity, resolved_type = self._get_db_entity(entity_type, entity_id)
+        if not db_entity:
+            return StepResult(passed=False, error=f"{entity_type} {entity_id} not found")
+
+        if action == 'certify':
+            level = self._resolve_level(context)
+            if level is None:
+                return StepResult(passed=False, error="Could not resolve certification level")
+            db_entity.certification_level = level
+            db_entity.certified_at = datetime.now(timezone.utc)
+            db_entity.certified_by = context.user_email
+            db_entity.certification_notes = (context.entity or {}).get('certification_notes') or \
+                                            (context.entity or {}).get('message')
+            self._db.add(db_entity)
+            self._db.commit()
+            logger.info(f"entity_action: certified {entity_type} {entity_id} at level {level}")
+            return StepResult(passed=True, message=f"Certified at level {level}",
+                              data={'certification_level': level})
+        else:  # decertify
+            db_entity.certification_level = None
+            db_entity.inherited_certification_level = None
+            db_entity.certified_at = None
+            db_entity.certified_by = None
+            db_entity.certification_notes = None
+            if hasattr(db_entity, 'certification_expires_at'):
+                db_entity.certification_expires_at = None
+            self._db.add(db_entity)
+            self._db.commit()
+            logger.info(f"entity_action: decertified {entity_type} {entity_id}")
+            return StepResult(passed=True, message="Certification removed")
+
+    def _handle_publication(self, entity_type: str, entity_id: str, context: StepContext) -> StepResult:
+        from datetime import datetime, timezone
+        db_entity, resolved_type = self._get_db_entity(entity_type, entity_id)
+        if not db_entity:
+            return StepResult(passed=False, error=f"{entity_type} {entity_id} not found")
+
+        scope = self._resolve_scope(context)
+        db_entity.publication_scope = scope
+        db_entity.published_at = datetime.now(timezone.utc)
+        db_entity.published_by = context.user_email
+        self._db.add(db_entity)
+        self._db.commit()
+        logger.info(f"entity_action: published {entity_type} {entity_id} with scope={scope}")
+        return StepResult(passed=True, message=f"Published with scope {scope}",
+                          data={'publication_scope': scope})
+
+    def _handle_unpublish(self, entity_type: str, entity_id: str, context: StepContext) -> StepResult:
+        db_entity, resolved_type = self._get_db_entity(entity_type, entity_id)
+        if not db_entity:
+            return StepResult(passed=False, error=f"{entity_type} {entity_id} not found")
+
+        db_entity.publication_scope = 'none'
+        db_entity.published_at = None
+        db_entity.published_by = None
+        self._db.add(db_entity)
+        self._db.commit()
+        logger.info(f"entity_action: unpublished {entity_type} {entity_id}")
+        return StepResult(passed=True, message="Unpublished")
+
+
+class GrantPermissionsStepHandler(StepHandler):
+    """Handler for grant_permissions steps — grants UC permissions via the SP workspace client."""
+
+    # Map Ontos entity types to Databricks SecurableType values
+    _ENTITY_TYPE_TO_SECURABLE = {
+        'table': 'TABLE',
+        'view': 'TABLE',       # Views use TABLE securable type in UC
+        'schema': 'SCHEMA',
+        'catalog': 'CATALOG',
+    }
+
+    def execute(self, context: StepContext) -> StepResult:
+        from src.models.process_workflows import GrantPermissionsStepConfig
+
+        try:
+            config = GrantPermissionsStepConfig(**self._config)
+        except Exception as e:
+            return StepResult(passed=False, error=f"Invalid grant_permissions config: {e}")
+
+        permission_type = config.permission_type
+
+        # --- Resolve target (securable object) ---
+        target_full_name: Optional[str] = None
+        securable_type_str: Optional[str] = None
+
+        if config.target_source == 'from_entity':
+            # Build full name from entity context.
+            # For UC objects the fully-qualified name (catalog.schema.table) is
+            # required.  entity_id typically carries the full name while
+            # entity.name / entity_name may only hold the short leaf name, so
+            # prefer entity_id and full_name over the short name fields.
+            target_full_name = (
+                context.entity.get('full_name')
+                or context.entity_id
+                or context.entity.get('name')
+                or context.entity_name
+            )
+            # Determine securable type from entity_type
+            et = context.entity_type.lower().replace(' ', '_')
+            securable_type_str = self._ENTITY_TYPE_TO_SECURABLE.get(et)
+        elif config.target_source == 'from_variable':
+            if not config.target_variable:
+                return StepResult(passed=False, error="target_variable is required when target_source=from_variable")
+            target_full_name = self._resolve_variable(config.target_variable, context)
+        else:
+            return StepResult(passed=False, error=f"Unknown target_source: {config.target_source}")
+
+        if not target_full_name:
+            return StepResult(passed=False, error="Could not resolve target securable object")
+
+        # Infer securable type from dot-segment count if not already determined
+        if not securable_type_str:
+            securable_type_str = self._infer_securable_type(target_full_name)
+
+        if not securable_type_str:
+            return StepResult(
+                passed=False,
+                error=(
+                    f"Cannot determine SecurableType for entity_type='{context.entity_type}' "
+                    f"and target='{target_full_name}'. grant_permissions is only supported for "
+                    "UC objects (catalog, schema, table, view)."
+                ),
+            )
+
+        # --- Resolve principal (who to grant to) ---
+        principal: Optional[str] = None
+
+        if config.principal_source == 'requester':
+            principal = context.user_email
+        elif config.principal_source == 'from_variable':
+            if not config.principal_variable:
+                return StepResult(passed=False, error="principal_variable is required when principal_source=from_variable")
+            principal = self._resolve_variable(config.principal_variable, context)
+        elif '@' in config.principal_source:
+            # Literal email / group name
+            principal = config.principal_source
+        else:
+            return StepResult(passed=False, error=f"Unknown principal_source: {config.principal_source}")
+
+        if not principal:
+            return StepResult(passed=False, error="Could not resolve principal for permission grant")
+
+        # --- Call Databricks grants API via SP workspace client ---
+        try:
+            from src.common.workspace_client import get_workspace_client
+            ws = get_workspace_client()
+        except Exception as e:
+            logger.warning(f"grant_permissions: workspace client unavailable, skipping grant: {e}")
+            return StepResult(
+                passed=True,
+                message=f"Workspace client unavailable — grant skipped ({e})",
+                data={
+                    'skipped': True,
+                    'target': target_full_name,
+                    'principal': principal,
+                    'permission': permission_type,
+                    'securable_type': securable_type_str,
+                },
+            )
+
+        try:
+            # Use the UC REST API directly instead of ws.grants.update() because
+            # newer SDK versions (>=0.95) route through a managed-catalog RPC
+            # that rejects TABLE as a securable type.  The REST endpoint
+            # PATCH /api/2.1/unity-catalog/permissions/{type}/{full_name} works
+            # reliably across all SDK versions.
+            import urllib.parse
+
+            securable_lower = securable_type_str.lower()  # e.g. "table", "schema"
+            encoded_name = urllib.parse.quote(target_full_name, safe='')
+            path = f"/api/2.1/unity-catalog/permissions/{securable_lower}/{encoded_name}"
+
+            body = {
+                "changes": [
+                    {
+                        "add": [permission_type],
+                        "principal": principal,
+                    }
+                ]
+            }
+
+            # CachingWorkspaceClient delegates unknown attrs to the inner SDK
+            # client; api_client.do() issues a raw HTTP request.
+            ws.api_client.do("PATCH", path, body=body)
+
+            msg = f"Granted {permission_type} on {securable_type_str} '{target_full_name}' to {principal}"
+            logger.info(f"grant_permissions: {msg}")
+            return StepResult(
+                passed=True,
+                message=msg,
+                data={
+                    'target': target_full_name,
+                    'principal': principal,
+                    'permission': permission_type,
+                    'securable_type': securable_type_str,
+                },
+            )
+        except Exception as e:
+            logger.exception(f"grant_permissions: failed to grant {permission_type} on '{target_full_name}' to {principal}: {e}")
+            return StepResult(
+                passed=False,
+                error=f"Grant failed: {e}",
+                data={
+                    'target': target_full_name,
+                    'principal': principal,
+                    'permission': permission_type,
+                    'securable_type': securable_type_str,
+                },
+            )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_variable(path: str, context: 'StepContext') -> Optional[str]:
+        """Walk a dot-separated path into the step context.
+
+        Supported namespaces:
+          step_results.<step_id>.<field>[.<sub>...]
+          context.<attr>[.<sub>...]   e.g. context.on_behalf_of.value
+                                            
+          entity.<field>[.<sub>...]
+        Bare paths default to step_results for backward compatibility with
+        existing GrantPermissions configs.
+        """
+        if not path:
+            return None
+        parts = path.split('.')
+        head = parts[0]
+
+        if head == 'context':
+            obj: Any = context
+            for part in parts[1:]:
+                if obj is None:
+                    return None
+                if isinstance(obj, dict):
+                    obj = obj.get(part)
+                else:
+                    obj = getattr(obj, part, None)
+            return str(obj) if obj is not None else None
+
+        if head == 'entity':
+            obj = context.entity
+            for part in parts[1:]:
+                if isinstance(obj, dict):
+                    obj = obj.get(part)
+                else:
+                    return None
+                if obj is None:
+                    return None
+            return str(obj) if obj is not None else None
+
+        # default: step_results. Strip leading 'step_results' prefix if present.
+        if head == 'step_results':
+            parts = parts[1:]
+        obj = context.step_results
+        for part in parts:
+            if isinstance(obj, dict):
+                obj = obj.get(part)
+            else:
+                return None
+            if obj is None:
+                return None
+        return str(obj) if obj is not None else None
+
+    @staticmethod
+    def _infer_securable_type(full_name: str) -> Optional[str]:
+        """Infer SecurableType from the number of dot-separated segments.
+
+        catalog              → CATALOG
+        catalog.schema       → SCHEMA
+        catalog.schema.table → TABLE
+        """
+        segments = full_name.split('.')
+        if len(segments) == 1:
+            return 'CATALOG'
+        elif len(segments) == 2:
+            return 'SCHEMA'
+        elif len(segments) >= 3:
+            return 'TABLE'
+        return None
+
+
 class WorkflowExecutor:
     """Executes process workflows."""
 
@@ -1558,6 +2286,8 @@ class WorkflowExecutor:
         'delivery': DeliveryStepHandler,
         'create_asset_review': CreateAssetReviewStepHandler,
         'webhook': WebhookStepHandler,
+        'entity_action': EntityActionStepHandler,
+        'grant_permissions': GrantPermissionsStepHandler,
     }
 
     def __init__(self, db: Session):
@@ -1613,6 +2343,15 @@ class WorkflowExecutor:
             )
             db_execution = workflow_execution_repo.create(self._db, execution_create)
         
+        # : pull on_behalf_of off the trigger entity_data if the caller
+        # supplied it (e.g. subscribe-on-behalf-of-group). Falls back to None
+        # for self-subscribe / non-subscribe triggers.
+        on_behalf_of = None
+        if isinstance(entity, dict):
+            obo = entity.get('on_behalf_of')
+            if isinstance(obo, dict):
+                on_behalf_of = obo
+
         # Build step context
         context = StepContext(
             entity=entity.copy(),
@@ -1625,8 +2364,9 @@ class WorkflowExecutor:
             workflow_id=workflow.id,
             workflow_name=workflow.name,
             step_results={},
+            on_behalf_of=on_behalf_of,
         )
-        
+
         # Build step lookup
         steps_by_id = {s.step_id: s for s in workflow.steps}
         
@@ -1711,7 +2451,7 @@ class WorkflowExecutor:
                 success_count=success_count,
                 failure_count=failure_count,
                 error_message=error_message,
-                finished_at=datetime.utcnow().isoformat(),
+                finished_at=datetime.utcnow(),
             )
         
         # Return execution with results
@@ -1808,6 +2548,13 @@ class WorkflowExecutor:
         if trigger_context and trigger_context.entity_data:
             entity_data = trigger_context.entity_data
         
+        # Restore on_behalf_of from persisted entity_data (subscribe).
+        on_behalf_of = None
+        if isinstance(entity_data, dict):
+            obo = entity_data.get('on_behalf_of')
+            if isinstance(obo, dict):
+                on_behalf_of = obo
+
         context = StepContext(
             entity=entity_data.copy(),
             entity_type=trigger_context.entity_type if trigger_context else 'unknown',
@@ -1820,11 +2567,61 @@ class WorkflowExecutor:
             workflow_name=workflow.name,
             step_results={current_step_id: {
                 'passed': step_result,
-                'message': 'approved' if step_result else 'rejected',
-                'data': result_data,
+                'decision': 'approved' if step_result else 'rejected',
+                # Flatten result_data so ${step_results.approve.reason} works directly
+                **(result_data or {}),
             }},
+            on_behalf_of=on_behalf_of,
         )
-        
+
+        # Cross-workflow variable propagation (#291):
+        # When the approval step was backed by a wizard session (approval flow),
+        # the user may have entered data (e.g. workspaceId, reason).  Merge those
+        # wizard step_results into context.step_results under the approval step's
+        # step_id so subsequent process-workflow steps can reference them via
+        # ${step_results.<approval_step_id>.<field>}.
+        # Per PR #315 review: the executor goes through AgreementWizardManager
+        # rather than the wizard-sessions repo directly. The manager method
+        # encapsulates the lookup + step_results extraction.
+        if trigger_context and step_result:
+            try:
+                from src.controller.agreement_wizard_manager import AgreementWizardManager
+
+                wizard_mgr = AgreementWizardManager(self._db)
+                wizard_results = wizard_mgr.get_completed_session_step_results(
+                    entity_type=trigger_context.entity_type,
+                    entity_id=trigger_context.entity_id,
+                )
+                if wizard_results:
+                    # Flatten all wizard-collected fields under the
+                    # approval step's ID.  Keys from later wizard steps
+                    # override earlier ones if they collide (last-write
+                    # wins), which matches user expectation that the most
+                    # recent input is authoritative.
+                    merged: Dict[str, str] = {}
+                    for wr in wizard_results:
+                        wizard_payload = wr.get("payload", {})
+                        for key, value in wizard_payload.items():
+                            if isinstance(value, (str, int, float, bool)):
+                                merged[key] = str(value)
+                    if merged:
+                        approval_entry = context.step_results.setdefault(
+                            current_step_id, {}
+                        )
+                        approval_entry.update(merged)
+                        logger.info(
+                            "Merged %d wizard field(s) into step_results.%s",
+                            len(merged),
+                            current_step_id,
+                        )
+            except Exception as e:
+                # Non-fatal: workflow continues even if propagation fails
+                logger.warning(
+                    "Failed to propagate wizard results for execution %s: %s",
+                    execution_id,
+                    e,
+                )
+
         # Continue execution from next step
         success_count = db_execution.success_count
         failure_count = db_execution.failure_count
@@ -1913,7 +2710,7 @@ class WorkflowExecutor:
                 success_count=success_count,
                 failure_count=failure_count,
                 error_message=error_message,
-                finished_at=datetime.utcnow().isoformat(),
+                finished_at=datetime.utcnow(),
             )
             
             # Handle entity status updates based on workflow outcome
@@ -1936,7 +2733,7 @@ class WorkflowExecutor:
         """Handle entity status updates when a workflow completes.
         
         Based on the trigger type and entity type, update the entity's status
-        to reflect the workflow outcome (e.g., dataset -> "active" on approval).
+        to reflect the workflow outcome (e.g., asset -> "active" on approval).
         """
         if not trigger_context:
             return
@@ -1949,18 +2746,17 @@ class WorkflowExecutor:
             return
         
         try:
-            # Handle dataset review completion
-            if entity_type == 'dataset' and trigger_type in ('on_request_review', 'ON_REQUEST_REVIEW'):
-                from src.repositories.datasets_repository import dataset_repo
-                db_dataset = dataset_repo.get(db=self._db, id=entity_id)
-                if db_dataset:
+            # Handle asset review completion (covers former dataset reviews)
+            if entity_type in ('asset', 'dataset') and trigger_type in ('on_request_review', 'ON_REQUEST_REVIEW'):
+                from src.repositories.assets_repository import asset_repo
+                db_asset = asset_repo.get(db=self._db, id=entity_id)
+                if db_asset:
                     if succeeded:
-                        db_dataset.status = 'active'
-                        logger.info(f"Dataset {entity_id} status updated to 'active' after review approval")
+                        db_asset.status = 'active'
+                        logger.info(f"Asset {entity_id} status updated to 'active' after review approval")
                     else:
-                        # Revert to draft on rejection
-                        db_dataset.status = 'draft'
-                        logger.info(f"Dataset {entity_id} status reverted to 'draft' after review rejection")
+                        db_asset.status = 'draft'
+                        logger.info(f"Asset {entity_id} status reverted to 'draft' after review rejection")
                     self._db.commit()
                     
             # Handle data contract deploy completion

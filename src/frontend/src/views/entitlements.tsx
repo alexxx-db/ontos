@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { User, Settings, Plus, Edit2, Trash2, Shield, Loader2 } from 'lucide-react';
+import { User, Settings, Plus, Edit2, Trash2, Shield } from 'lucide-react';
+import { ListItemSkeleton } from '@/components/common/list-view-skeleton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
+import { PrincipalPicker } from '@/components/common/principal-picker';
 
 interface Privilege {
   securable_id: string;
@@ -48,23 +50,6 @@ const Entitlements: React.FC = () => {
 
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
-
-  const availableGroups = [
-    'data_science_team',
-    'ml_engineers',
-    'data_engineering',
-    'etl_team',
-    'business_analysts',
-    'reporting_team',
-    'data_governance',
-    'data_stewards',
-    'compliance_team',
-    'business_users',
-    'report_viewers',
-    'model_developers',
-    'pipeline_operators',
-    'analytics_users'
-  ];
 
   useEffect(() => {
     fetchPersonas();
@@ -362,9 +347,7 @@ const Entitlements: React.FC = () => {
           <CardContent>
             <ScrollArea className="h-[70vh]">
               {isLoading ? (
-                <div className="flex justify-center items-center py-10">
-                  <Loader2 className="animate-spin h-8 w-8 text-primary" />
-                </div>
+                <ListItemSkeleton count={5} height="h-16" className="space-y-2" />
               ) : personas.length === 0 ? (
                 <div className="p-4 text-center text-muted-foreground">
                   {t('entitlements:personas.noPersonas')}
@@ -473,35 +456,16 @@ const Entitlements: React.FC = () => {
                 <TabsContent value="groups">
                   <div className="space-y-4">
                     <h3 className="text-lg font-medium">{t('entitlements:personas.groupAssignments')}</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedPersona.groups.map((group) => (
-                        <Badge key={group} variant="outline">
-                          {group}
-                        </Badge>
-                      ))}
-                    </div>
                     <div className="space-y-2">
                       <Label>{t('entitlements:personas.addGroups')}</Label>
-                      <Select
-                        onValueChange={(value) => {
-                          if (!selectedPersona.groups.includes(value)) {
-                            handleUpdateGroups(selectedPersona.id, [...selectedPersona.groups, value]);
-                          }
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t('common:placeholders.selectGroup')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {availableGroups
-                            .filter(group => !selectedPersona.groups.includes(group))
-                            .map(group => (
-                              <SelectItem key={group} value={group}>
-                                {group}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
+                      <PrincipalPicker
+                        multiple
+                        accepts={['group']}
+                        value={selectedPersona.groups}
+                        onChange={(next) => handleUpdateGroups(selectedPersona.id, next)}
+                        placeholder={t('common:placeholders.selectGroup')}
+                        aria-label={t('entitlements:personas.groupAssignments')}
+                      />
                     </div>
                   </div>
                 </TabsContent>

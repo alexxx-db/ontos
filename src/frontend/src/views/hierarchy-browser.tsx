@@ -1,18 +1,21 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Network, Loader2, AlertCircle, Search, ChevronRight,
+  Network, AlertCircle, Search,
   Box, Table2, Eye, Columns2, LayoutDashboard, Globe, FileCode, Brain,
   Activity, Server, Shield, BookOpen, Database, FolderOpen, Shapes,
   ExternalLink, RefreshCw, ListTree, GitFork, Layers,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
+import {
+  HierarchyTreeSkeleton,
+  HierarchyDetailSkeleton,
+} from '@/components/common/list-view-skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -28,6 +31,7 @@ import { HierarchyTreeNode } from '@/components/hierarchy/hierarchy-tree-node';
 import { HierarchyGraphView } from '@/components/hierarchy/hierarchy-graph-view';
 import type { InstanceHierarchyNode, HierarchyRootGroup } from '@/types/ontology-schema';
 import { cn } from '@/lib/utils';
+import { useFormatLabel } from '@/lib/format-label';
 
 type DetailViewMode = 'tree' | 'graph';
 
@@ -70,39 +74,6 @@ function getEntityRoute(entityType: string, entityId: string): string {
   return `/assets/${entityId}`;
 }
 
-function TreeSkeleton() {
-  return (
-    <div className="space-y-2 p-4">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="space-y-1.5">
-          <Skeleton className="h-5 w-32" />
-          <div className="pl-6 space-y-1">
-            <Skeleton className="h-4 w-40" />
-            <Skeleton className="h-4 w-36" />
-            <Skeleton className="h-4 w-44" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DetailSkeleton() {
-  return (
-    <div className="space-y-4 p-6">
-      <Skeleton className="h-8 w-64" />
-      <Skeleton className="h-4 w-96" />
-      <div className="space-y-2 mt-6">
-        <Skeleton className="h-6 w-48" />
-        <div className="pl-4 space-y-1.5">
-          <Skeleton className="h-5 w-56" />
-          <Skeleton className="h-5 w-52" />
-          <Skeleton className="h-5 w-60" />
-        </div>
-      </div>
-    </div>
-  );
-}
 
 interface DetailPanelProps {
   node: InstanceHierarchyNode | null;
@@ -167,7 +138,7 @@ function DetailPanel({
     onVisibleTypesChange(base);
   }, [visibleTypes, allTypes, onVisibleTypesChange]);
 
-  if (loading) return <DetailSkeleton />;
+  if (loading) return <HierarchyDetailSkeleton showControls treeRows={6} />;
 
   if (!node || !displayNode) {
     return (
@@ -364,6 +335,7 @@ export default function HierarchyBrowserView() {
 
   const { get: apiGet } = useApi();
   const { hasPermission, isLoading: permissionsLoading } = usePermissions();
+  const formatLabel = useFormatLabel();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
 
@@ -540,7 +512,7 @@ export default function HierarchyBrowserView() {
               <ScrollArea className="h-full">
                 <div className="px-2 pb-2" role="tree">
                   {rootsLoading ? (
-                    <TreeSkeleton />
+                    <HierarchyTreeSkeleton groups={3} itemsPerGroup={3} />
                   ) : filteredGroups.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <Network className="h-8 w-8 mx-auto mb-2 opacity-30" />
@@ -555,7 +527,7 @@ export default function HierarchyBrowserView() {
                         <div key={group.entity_type} className="mb-3">
                           <div className="flex items-center gap-2 px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                             <GroupIcon className="h-3.5 w-3.5" />
-                            {group.label}
+                            {formatLabel(group.label)}
                             <span className="ml-auto text-xs font-normal">{group.roots.length}</span>
                           </div>
                           {group.roots.map((root) => (

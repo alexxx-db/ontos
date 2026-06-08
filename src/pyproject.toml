@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ontos"
-version = "0.6.0"
+version = "0.6.1"
 description = "A Business Catalog for the Databricks Platform"
 readme = "../README.md"
 authors = [
@@ -30,8 +30,10 @@ python = "3.11"
 dependencies = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-asyncio>=0.23",
     "ruff>=0.8.0",
     "pre-commit>=3.0.0",
+    "fpdf2>=2.8.0",
 ]
 
 [tool.hatch.metadata]
@@ -65,7 +67,7 @@ format-check = "ruff format backend --check"
 pre-commit-run = "pre-commit run --all-files"
 pre-commit-setup = "pre-commit install"
 
-[tool.hatch.envs.dev.env]
+[tool.hatch.envs.dev.env-vars]
 PYTHONPATH = "./backend"
 
 [tool.pytest.ini_options]
@@ -74,14 +76,19 @@ pythonpath = [
   "backend",
   "backend/src"
 ]
-testpaths = ["backend/tests"]
+# NOTE: backend/src/tests/unit/ holds the bulk of the unit tests. The legacy
+# backend/tests/ dir is kept for the few suites that haven't migrated yet.
+# importlib mode lets us collect both trees without test-module name collisions.
+testpaths = ["backend/src/tests/unit", "backend/tests"]
 addopts = [
     "--cov=backend/src",
     "--cov-report=html",
     "--cov-report=term-missing",
     "--cov-report=xml",
-    "-v"
+    "--import-mode=importlib",
+    "-v",
 ]
+asyncio_mode = "strict"
 
 [tool.coverage.run]
 source = ["backend/src"]
@@ -112,7 +119,7 @@ exclude_lines = [
 directory = "backend/htmlcov"
 
 [tool.ruff]
-target-version = "0.6.0"
+target-version = "0.6.1"
 line-length = 100
 src = ["backend/src"]
 

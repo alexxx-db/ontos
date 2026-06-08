@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
+import { SettingsFormSkeleton } from '@/components/common/list-view-skeleton';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
 import {
@@ -52,7 +53,7 @@ export default function GitSettings() {
   const { t } = useTranslation(['settings', 'common']);
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
-  const hasWriteAccess = hasPermission('settings', FeatureAccessLevel.READ_WRITE);
+  const hasWriteAccess = hasPermission('settings-git', FeatureAccessLevel.READ_WRITE);
 
   const [settings, setSettings] = useState<GitSettings>({
     gitRepoUrl: '',
@@ -268,11 +269,7 @@ export default function GitSettings() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <SettingsFormSkeleton sections={2} fieldsPerSection={3} showTitle={false} />;
   }
 
   return (

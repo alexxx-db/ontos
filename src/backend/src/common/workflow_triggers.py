@@ -442,6 +442,80 @@ class TriggerRegistry:
         return self.fire_trigger(event, blocking=blocking)
 
     # =========================================================================
+    # Certification Triggers
+    # =========================================================================
+
+    def on_request_certify(
+        self,
+        entity_type: EntityType,
+        entity_id: str,
+        entity_name: Optional[str] = None,
+        entity_data: Optional[Dict[str, Any]] = None,
+        user_email: Optional[str] = None,
+        scope_type: Optional[str] = None,
+        scope_id: Optional[str] = None,
+        *,
+        blocking: bool = True,
+    ) -> List[WorkflowExecution]:
+        """Fire when certification is requested for an entity."""
+        event = TriggerEvent(
+            trigger_type=TriggerType.ON_REQUEST_CERTIFY,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_name=entity_name,
+            entity_data=entity_data,
+            user_email=user_email,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        logger.info(f"on_request_certify fired for {entity_type.value} '{entity_id}' by {user_email}")
+        return self.fire_trigger(event, blocking=blocking)
+
+    def on_certify(
+        self,
+        entity_type: EntityType,
+        entity_id: str,
+        entity_name: Optional[str] = None,
+        entity_data: Optional[Dict[str, Any]] = None,
+        user_email: Optional[str] = None,
+        *,
+        blocking: bool = False,
+    ) -> List[WorkflowExecution]:
+        """Fire after certification is granted."""
+        event = TriggerEvent(
+            trigger_type=TriggerType.ON_CERTIFY,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_name=entity_name,
+            entity_data=entity_data,
+            user_email=user_email,
+        )
+        logger.info(f"on_certify fired for {entity_type.value} '{entity_id}' by {user_email}")
+        return self.fire_trigger(event, blocking=blocking)
+
+    def on_decertify(
+        self,
+        entity_type: EntityType,
+        entity_id: str,
+        entity_name: Optional[str] = None,
+        entity_data: Optional[Dict[str, Any]] = None,
+        user_email: Optional[str] = None,
+        *,
+        blocking: bool = False,
+    ) -> List[WorkflowExecution]:
+        """Fire after certification is removed."""
+        event = TriggerEvent(
+            trigger_type=TriggerType.ON_DECERTIFY,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_name=entity_name,
+            entity_data=entity_data,
+            user_email=user_email,
+        )
+        logger.info(f"on_decertify fired for {entity_type.value} '{entity_id}' by {user_email}")
+        return self.fire_trigger(event, blocking=blocking)
+
+    # =========================================================================
     # Request Triggers
     # =========================================================================
 
@@ -859,6 +933,55 @@ def get_trigger_registry(db: Session) -> TriggerRegistry:
         TriggerRegistry instance
     """
     return TriggerRegistry(db)
+
+
+def fire_trigger_safe(
+    db: Session,
+    method: str,
+    *,
+    entity_type: EntityType,
+    entity_id: str,
+    entity_name: Optional[str] = None,
+    entity_data: Optional[Dict[str, Any]] = None,
+    user_email: Optional[str] = None,
+    from_status: Optional[str] = None,
+    to_status: Optional[str] = None,
+    blocking: bool = False,
+) -> None:
+    """Fire a trigger method on the registry, logging and swallowing errors.
+
+    Convenience wrapper that eliminates repetitive try/except blocks in routes.
+
+    Args:
+        db: Database session
+        method: Name of the TriggerRegistry method (e.g. "on_create", "on_delete")
+        entity_type: Entity type enum value
+        entity_id: ID of the entity
+        entity_name: Display name of the entity
+        entity_data: Additional entity data dict
+        user_email: User performing the action
+        from_status: Previous status (for status-change triggers)
+        to_status: New status (for status-change triggers)
+        blocking: Whether to execute synchronously
+    """
+    try:
+        registry = get_trigger_registry(db)
+        kwargs: Dict[str, Any] = {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "entity_name": entity_name,
+            "entity_data": entity_data,
+            "user_email": user_email,
+        }
+        if from_status is not None:
+            kwargs["from_status"] = from_status
+        if to_status is not None:
+            kwargs["to_status"] = to_status
+        if method not in ("before_create", "before_update", "before_status_change"):
+            kwargs["blocking"] = blocking
+        getattr(registry, method)(**kwargs)
+    except Exception as e:
+        logger.warning(f"{method} trigger failed for {entity_type.value} {entity_id}: {e}")
 
 
 # ============================================================================

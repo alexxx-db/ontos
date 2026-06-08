@@ -1,7 +1,6 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Bell, Info, AlertCircle, CheckCircle2, X, CheckSquare, Loader2 } from 'lucide-react';
-import { useApi } from '@/hooks/use-api';
-import { useToast } from '@/hooks/use-toast';
 import { Button } from './button';
 import { Progress } from './progress';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './dropdown-menu';
@@ -13,9 +12,32 @@ import HandleAccessGrantDialog from '@/components/access/handle-access-grant-dia
 import HandleStewardReviewDialog from '@/components/data-contracts/handle-steward-review-dialog';
 import HandlePublishRequestDialog from '@/components/data-contracts/handle-publish-request-dialog';
 import HandleDeployRequestDialog from '@/components/data-contracts/handle-deploy-request-dialog';
-import WorkflowApprovalResponseDialog from '@/components/workflows/workflow-approval-response-dialog';
+import WorkflowApprovalResponseDialog, {
+  type WorkflowApprovalResponseDialogPayload,
+} from '@/components/workflows/workflow-approval-response-dialog';
 import { useNotificationsStore } from '@/stores/notifications-store';
-import { NotificationType } from '@/types/notification';
+import { Notification, NotificationType } from '@/types/notification';
+import { getEntityDetailPathFromPayload } from '@/lib/entity-detail-path';
+
+/** Only actionable rows should keep the dropdown open on select (Radix default). */
+function shouldPreventMenuCloseOnSelect(notification: Notification): boolean {
+  const at = notification.action_type;
+  if (!at) return false;
+  if (at === 'workflow_approval') {
+    const p = notification.action_payload;
+    return Boolean(p?.execution_id && !p?.handled);
+  }
+  if (at === 'job_progress') return true;
+  return (
+    at === 'handle_role_request' ||
+    at === 'handle_access_grant_request' ||
+    at === 'handle_steward_review' ||
+    at === 'handle_publish_request' ||
+    at === 'handle_deploy_request' ||
+    at === 'certification_requested' ||
+    at === 'publication_requested'
+  );
+}
 
 export default function NotificationBell() {
   // Use selective subscriptions to avoid unnecessary re-renders
@@ -38,15 +60,10 @@ export default function NotificationBell() {
   const [isAccessGrantDialogOpen, setIsAccessGrantDialogOpen] = useState(false);
   const [selectedAccessGrantPayload, setSelectedAccessGrantPayload] = useState<Record<string, any> | null>(null);
   const [isWorkflowApprovalDialogOpen, setIsWorkflowApprovalDialogOpen] = useState(false);
-  const [selectedWorkflowApprovalPayload, setSelectedWorkflowApprovalPayload] = useState<{
-    execution_id: string;
-    entity_name?: string;
-  } | null>(null);
+  const [selectedWorkflowApprovalPayload, setSelectedWorkflowApprovalPayload] =
+    useState<WorkflowApprovalResponseDialogPayload | null>(null);
   const [workflowApprovalNotificationId, setWorkflowApprovalNotificationId] = useState<string | null>(null);
   
-  const api = useApi();
-  const { toast } = useToast();
-
   // Removed useEffect that was causing duplicate fetches - notifications are fetched when dropdown opens
 
   const handleDelete = async (id: string) => {
@@ -57,10 +74,24 @@ export default function NotificationBell() {
     await markAsRead(id);
   };
 
+  // Defer opening a dialog to the next animation frame so the surrounding
+  // Radix DropdownMenu has time to unmount and release its body
+  // `pointer-events: none` lock. Without this, opening a Dialog from inside
+  // a DropdownMenu and then closing the Dialog can leave the body stuck with
+  // pointer-events disabled, making the whole page unresponsive
+  // (radix-ui/primitives#1241).
+  const openDialogNextFrame = (open: (next: boolean) => void) => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => open(true));
+    } else {
+      open(true);
+    }
+  };
+
   const handleOpenConfirmDialog = (payload: Record<string, any> | undefined | null) => {
     if (payload) {
       setSelectedNotificationPayload(payload);
-      setIsConfirmDialogOpen(true);
+      openDialogNextFrame(setIsConfirmDialogOpen);
     } else {
       console.error("Cannot open confirmation dialog: payload is missing.");
     }
@@ -69,7 +100,7 @@ export default function NotificationBell() {
   const handleOpenReviewDialog = (payload: Record<string, any> | undefined | null) => {
     if (payload) {
       setSelectedReviewPayload(payload);
-      setIsReviewDialogOpen(true);
+      openDialogNextFrame(setIsReviewDialogOpen);
     } else {
       console.error("Cannot open review dialog: payload is missing.");
     }
@@ -78,7 +109,7 @@ export default function NotificationBell() {
   const handleOpenPublishDialog = (payload: Record<string, any> | undefined | null) => {
     if (payload) {
       setSelectedPublishPayload(payload);
-      setIsPublishDialogOpen(true);
+      openDialogNextFrame(setIsPublishDialogOpen);
     } else {
       console.error("Cannot open publish dialog: payload is missing.");
     }
@@ -87,7 +118,7 @@ export default function NotificationBell() {
   const handleOpenDeployDialog = (payload: Record<string, any> | undefined | null) => {
     if (payload) {
       setSelectedDeployPayload(payload);
-      setIsDeployDialogOpen(true);
+      openDialogNextFrame(setIsDeployDialogOpen);
     } else {
       console.error("Cannot open deploy dialog: payload is missing.");
     }
@@ -96,17 +127,23 @@ export default function NotificationBell() {
   const handleOpenAccessGrantDialog = (payload: Record<string, any> | undefined | null) => {
     if (payload) {
       setSelectedAccessGrantPayload(payload);
-      setIsAccessGrantDialogOpen(true);
+      openDialogNextFrame(setIsAccessGrantDialogOpen);
     } else {
       console.error("Cannot open access grant dialog: payload is missing.");
     }
   };
 
-  const handleOpenWorkflowApprovalDialog = (payload: { execution_id: string; entity_name?: string } | undefined, notificationId: string) => {
-    if (payload?.execution_id) {
-      setSelectedWorkflowApprovalPayload({ execution_id: payload.execution_id, entity_name: payload.entity_name });
+  const handleOpenWorkflowApprovalDialog = (
+    payload: Record<string, any> | undefined | null,
+    notificationId: string,
+  ) => {
+    if (payload && typeof payload.execution_id === 'string' && payload.execution_id.length > 0) {
+      // Forward the entire action_payload so the dialog can render the
+      // structured request context (requester, underlying resource,
+      // permission, duration, reason, …) — see ApprovalStepHandler.
+      setSelectedWorkflowApprovalPayload(payload as WorkflowApprovalResponseDialogPayload);
       setWorkflowApprovalNotificationId(notificationId);
-      setIsWorkflowApprovalDialogOpen(true);
+      openDialogNextFrame(setIsWorkflowApprovalDialogOpen);
     }
   };
 
@@ -193,13 +230,19 @@ export default function NotificationBell() {
               No notifications
             </div>
           ) : (
-            notifications.map((notification) => (
+            notifications.map((notification) => {
+              const certifyOrPublishDetailPath =
+                notification.action_type === 'certification_requested' ||
+                notification.action_type === 'publication_requested'
+                  ? getEntityDetailPathFromPayload(notification.action_payload ?? undefined)
+                  : null;
+              return (
               <DropdownMenuItem
                 key={notification.id}
                 className="flex items-start gap-2 p-2 cursor-pointer"
                 onClick={() => !notification.read && handleMarkRead(notification.id)}
                 onSelect={(e) => {
-                  if (notification.action_type) {
+                  if (shouldPreventMenuCloseOnSelect(notification)) {
                     e.preventDefault();
                   }
                 }}
@@ -319,7 +362,7 @@ export default function NotificationBell() {
                         className="mt-2 h-7 px-2 text-xs gap-1"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleOpenWorkflowApprovalDialog(notification.action_payload, notification.id);
+                          handleOpenWorkflowApprovalDialog(notification.action_payload ?? undefined, notification.id);
                         }}
                       >
                         <CheckSquare className="h-3.5 w-3.5" />
@@ -327,6 +370,38 @@ export default function NotificationBell() {
                       </Button>
                     )
                   )}
+                  {notification.action_type === 'certification_requested' && certifyOrPublishDetailPath && (
+                      <Button
+                        asChild
+                        variant={notification.read ? 'outline' : 'default'}
+                        size="sm"
+                        className="mt-2 h-7 px-2 text-xs gap-1"
+                      >
+                        <Link
+                          to={certifyOrPublishDetailPath}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <CheckSquare className="h-3.5 w-3.5" />
+                          Review certification request
+                        </Link>
+                      </Button>
+                    )}
+                  {notification.action_type === 'publication_requested' && certifyOrPublishDetailPath && (
+                      <Button
+                        asChild
+                        variant={notification.read ? 'outline' : 'default'}
+                        size="sm"
+                        className="mt-2 h-7 px-2 text-xs gap-1"
+                      >
+                        <Link
+                          to={certifyOrPublishDetailPath}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <CheckSquare className="h-3.5 w-3.5" />
+                          Review publication request
+                        </Link>
+                      </Button>
+                    )}
                   {(notification.type === 'job_progress' || notification.action_type === 'job_progress') && (notification.data || notification.action_payload) && (
                     <div className="mt-2">
                       <Progress value={Number((notification.data || notification.action_payload)?.progress ?? 0)} />
@@ -365,7 +440,8 @@ export default function NotificationBell() {
                   )}
                 </div>
               </DropdownMenuItem>
-            ))
+              );
+            })
           )}
         </ScrollArea>
       </DropdownMenuContent>

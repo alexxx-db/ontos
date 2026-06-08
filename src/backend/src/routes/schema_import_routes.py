@@ -20,6 +20,8 @@ from src.common.dependencies import (
 from src.common.config import get_settings
 from src.common.workspace_client import get_obo_workspace_client
 from src.common.logging import get_logger
+from src.common.authorization import PermissionChecker
+from src.common.features import FeatureAccessLevel
 from src.controller.connections_manager import ConnectionsManager
 from src.controller.schema_import_manager import SchemaImportManager
 from src.models.schema_import import (
@@ -73,6 +75,7 @@ async def browse(
     path: Optional[str] = None,
     db: DBSessionDep = None,
     manager: SchemaImportManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
 ):
     """Browse the remote system for a given connection, optionally drilling into a path."""
     try:
@@ -98,6 +101,7 @@ async def get_asset_metadata(
     path: str,
     db: DBSessionDep = None,
     manager: SchemaImportManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
 ):
     """Fetch detailed metadata (including schema/columns) for an asset via its connector."""
     try:
@@ -128,6 +132,7 @@ async def preview_import(
     payload: ImportRequest,
     db: DBSessionDep = None,
     manager: SchemaImportManager = Depends(_get_manager),
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
 ):
     """Return a list of items that would be created or skipped without persisting anything."""
     try:
@@ -156,6 +161,7 @@ async def execute_import(
     manager: SchemaImportManager = Depends(_get_manager),
     audit_manager: AuditManagerDep = None,
     current_user: AuditCurrentUserDep = None,
+    _: bool = Depends(PermissionChecker(FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
 ):
     """Import selected remote resources (and nested children) as persisted Ontos assets."""
     try:

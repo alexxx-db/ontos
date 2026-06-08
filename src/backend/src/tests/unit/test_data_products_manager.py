@@ -202,8 +202,9 @@ class TestDataProductsManager:
 
     def test_list_products_empty(self, manager):
         """Test listing products when none exist."""
-        # Act
-        result = manager.list_products()
+        # Act — use is_admin=True to exercise listing mechanics rather than
+        # the (separately-tested) ownership scope filter.
+        result = manager.list_products(is_admin=True)
 
         # Assert
         assert isinstance(result, list)
@@ -221,7 +222,7 @@ class TestDataProductsManager:
             manager.create_product(product_data, db=db_session)
 
         # Act
-        result = manager.list_products()
+        result = manager.list_products(is_admin=True)
 
         # Assert
         assert len(result) == 3
@@ -239,7 +240,7 @@ class TestDataProductsManager:
             manager.create_product(product_data, db=db_session)
 
         # Act - Get second page
-        result = manager.list_products(skip=5, limit=3)
+        result = manager.list_products(skip=5, limit=3, is_admin=True)
 
         # Assert
         assert len(result) == 3
@@ -508,23 +509,49 @@ class TestDataProductsManager:
         assert "owner2@test.com" in result
 
     def test_get_published_products(self, manager, db_session):
-        """Test retrieving only published (active) products."""
-        # Arrange - Create mix of products
-        for i, status in enumerate(["draft", "active", "active", "deprecated"]):
+        """Marketplace lists products with publication_scope other than none."""
+        configs = [
+            ("draft", None),
+            ("active", "domain"),
+            ("active", "organization"),
+            ("deprecated", None),
+        ]
+        for i, (status, pub_scope) in enumerate(configs):
             product_data = {
                 "name": f"Product {i}",
                 "version": "1.0.0",
                 "productType": "sourceAligned",
                 "status": status,
             }
-            manager.create_product(product_data, db=db_session)
+            created = manager.create_product(product_data, db=db_session)
+            if pub_scope:
+                row = db_session.get(DataProductDb, created.id)
+                assert row is not None
+                row.publication_scope = pub_scope
+                db_session.commit()
 
-        # Act
         result = manager.get_published_products()
 
-        # Assert
         assert len(result) == 2
-        assert all(p.status == "active" for p in result)
+        assert {(p.publication_scope or "").lower() for p in result} == {"domain", "organization"}
+
+    def test_get_published_products_scope_filter(self, manager, db_session):
+        """Optional scope narrows marketplace products."""
+        for name, scope in [("A", "domain"), ("B", "organization")]:
+            product_data = {
+                "name": name,
+                "version": "1.0.0",
+                "productType": "sourceAligned",
+                "status": "active",
+            }
+            created = manager.create_product(product_data, db=db_session)
+            row = db_session.get(DataProductDb, created.id)
+            row.publication_scope = scope
+            db_session.commit()
+
+        domain_only = manager.get_published_products(scope="domain")
+        assert len(domain_only) == 1
+        assert domain_only[0].name == "A"
 
     # =====================================================================
     # Search Interface Tests

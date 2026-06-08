@@ -13,7 +13,6 @@ export const DataContractStatus = {
   UNDER_REVIEW: 'under_review',
   APPROVED: 'approved',
   ACTIVE: 'active',
-  CERTIFIED: 'certified',
   DEPRECATED: 'deprecated',
   RETIRED: 'retired',
 } as const;
@@ -24,7 +23,7 @@ export type DataContractStatusType = typeof DataContractStatus[keyof typeof Data
  * Defines allowed status transitions for ODCS lifecycle.
  *
  * Lifecycle flow:
- * draft → proposed → under_review → approved → active → certified → deprecated → retired
+ * draft → proposed → under_review → approved → active → deprecated → retired
  *
  * Additional rules:
  * - Can go back from proposed/under_review to draft (refinement)
@@ -53,12 +52,7 @@ export const ALLOWED_TRANSITIONS: Record<string, string[]> = {
     DataContractStatus.DEPRECATED, // Emergency deprecation
   ],
   [DataContractStatus.ACTIVE]: [
-    DataContractStatus.CERTIFIED,
     DataContractStatus.DEPRECATED,
-  ],
-  [DataContractStatus.CERTIFIED]: [
-    DataContractStatus.DEPRECATED,
-    DataContractStatus.ACTIVE, // Decertify if needed
   ],
   [DataContractStatus.DEPRECATED]: [
     DataContractStatus.RETIRED,
@@ -107,12 +101,6 @@ export const STATUS_CONFIG: Record<string, StatusConfig> = {
     description: 'In production use, governing data assets',
     variant: 'default',
     icon: '✅',
-  },
-  [DataContractStatus.CERTIFIED]: {
-    label: 'Certified',
-    description: 'Verified and certified for high-value use cases',
-    variant: 'default',
-    icon: '🏆',
   },
   [DataContractStatus.DEPRECATED]: {
     label: 'Deprecated',
@@ -224,9 +212,7 @@ export function getRecommendedAction(currentStatus: string): string | null {
     case DataContractStatus.APPROVED:
       return 'Activate when ready to govern production data';
     case DataContractStatus.ACTIVE:
-      return 'Certify for high-value use cases or deprecate when planning retirement';
-    case DataContractStatus.CERTIFIED:
-      return 'Deprecate when planning retirement';
+      return 'Deprecate when planning retirement; use the certification panel for certification';
     case DataContractStatus.DEPRECATED:
       return 'Retire when no longer in use';
     case DataContractStatus.RETIRED:

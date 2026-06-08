@@ -29,12 +29,12 @@ import LLMConsentDialog, { hasLLMConsent } from '@/components/common/llm-consent
 import type { LLMConfig } from '@/types/llm';
 import type {
   ChatMessage,
-  ChatResponse,
   DebugInfo,
   LLMSearchStatus,
   SessionSummary,
 } from '@/types/llm-search';
 import { fetchLLMStatus, fetchSessions, sendMessage, deleteSession } from './llm-search-api';
+import { useUICustomizationStore } from '@/stores/ui-customization-store';
 
 
 // ============================================================================
@@ -242,7 +242,7 @@ function DebugPanel({ debug }: DebugPanelProps) {
                 <div className="font-semibold text-muted-foreground mb-2">Tool Executions</div>
                 <div className="space-y-2">
                   {debug.tool_executions.map((exec, idx) => (
-                    <ToolExecutionDetail key={idx} exec={exec} index={idx} />
+                    <ToolExecutionDetail key={idx} exec={exec} />
                   ))}
                 </div>
               </div>
@@ -272,7 +272,7 @@ function DebugPanel({ debug }: DebugPanelProps) {
   );
 }
 
-function ToolExecutionDetail({ exec, index }: { exec: DebugInfo['tool_executions'][0]; index: number }) {
+function ToolExecutionDetail({ exec }: { exec: DebugInfo['tool_executions'][0] }) {
   const [showResult, setShowResult] = useState(false);
 
   return (
@@ -429,6 +429,7 @@ function ExampleQuestions({ onSelectQuestion }: ExampleQuestionsProps) {
 
 export default function LLMSearch() {
   const { t } = useTranslation(['search', 'common']);
+  const shortName = useUICustomizationStore((s) => s.getShortName());
   const [status, setStatus] = useState<LLMSearchStatus | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | undefined>();
@@ -722,7 +723,7 @@ export default function LLMSearch() {
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              {t('search:llm.title')}
+              {t('search:llm.title', { shortName })}
             </CardTitle>
             <CardDescription className="mt-1">
               {t('search:llm.subtitle')}

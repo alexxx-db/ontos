@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import yaml
-from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Depends, Request, BackgroundTasks, Query
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 import json
 import uuid
@@ -35,8 +36,11 @@ from src.common.dependencies import (
     CurrentUserDep,
     DBSessionDep,
     AuditManagerDep,
-    AuditCurrentUserDep
+    AuditCurrentUserDep,
+    ChangeLogManagerDep,
 )
+from src.common.workflow_triggers import get_trigger_registry, fire_trigger_safe
+from src.models.process_workflows import EntityType
 from src.models.notifications import NotificationType
 from src.common.dependencies import NotificationsManagerDep, CurrentUserDep, DBSessionDep
 
@@ -97,8 +101,9 @@ async def move_product_to_sandbox(
         raise HTTPException(status_code=500, detail="Failed to move product to sandbox")
 
 
+@router.post('/data-products/{product_id}/submit-review')
 @router.post('/data-products/{product_id}/submit-certification')
-async def submit_product_certification(
+async def submit_product_for_review(
     product_id: str,
     request: Request,
     db: DBSessionDep,
@@ -109,7 +114,7 @@ async def submit_product_certification(
 ):
     """Submit a draft/sandbox product for review (draft/sandbox → proposed)."""
     try:
-        updated_product = manager.submit_for_certification(product_id, current_user.username if current_user else None)
+        updated_product = manager.submit_for_review(product_id, current_user.username if current_user else None)
         
         audit_manager.log_action(
             db=db,
@@ -243,8 +248,574 @@ async def publish_product(
         raise HTTPException(status_code=500, detail="Failed to publish product")
 
 
+@router.post('/data-products/{product_id}/set-publication-scope')
+async def set_publication_scope(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_WRITE))
+):
+    """
+    Set publication scope for a data product.
+    Body: { "scope": "none" | "domain" | "organization" | "external" }
+    Product must be active to publish.
+    """
+    from datetime import datetime, timezone
+    scope = body.get("scope", "none")
+    valid_scopes = ["none", "domain", "organization", "external"]
+    if scope not in valid_scopes:
+        raise HTTPException(status_code=422, detail=f"Invalid scope. Must be one of: {valid_scopes}")
+
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        if scope != "none" and product_db.status != "active":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Product must be active to publish. Current status: {product_db.status}"
+            )
+
+        product_db.publication_scope = scope
+        if scope != "none":
+            product_db.published_at = datetime.now(timezone.utc)
+            product_db.published_by = current_user.username if current_user else None
+        else:
+            product_db.published_at = None
+            product_db.published_by = None
+        db.add(product_db)
+        db.commit()
+        db.refresh(product_db)
+
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='SET_PUBLICATION_SCOPE',
+            success=True,
+            details={'product_id': product_id, 'scope': scope}
+        )
+
+        return {
+            'publication_scope': product_db.publication_scope,
+            'published_at': str(product_db.published_at) if product_db.published_at else None,
+            'published_by': product_db.published_by,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Set publication scope failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to set publication scope")
+
+
+@router.post('/data-products/{product_id}/unpublish')
+async def unpublish_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_WRITE))
+):
+    """Remove a data product from the marketplace (set publication_scope to none)."""
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        product_db.publication_scope = "none"
+        product_db.published_at = None
+        product_db.published_by = None
+        db.add(product_db)
+        db.commit()
+
+        get_trigger_registry(db).on_unpublish(
+            EntityType.DATA_PRODUCT,
+            product_id,
+            entity_name=product_db.name,
+            user_email=current_user.username,
+        )
+
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='UNPUBLISH',
+            success=True,
+            details={'product_id': product_id}
+        )
+
+        return {'publication_scope': 'none'}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Unpublish product failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to unpublish product")
+
+
+@router.post('/data-products/{product_id}/request-certify')
+async def request_certify_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    change_log_manager: ChangeLogManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Request certification for a data product (workflow); approvers use handle-certify."""
+    certification_level = body.get("certification_level")
+    if certification_level is None:
+        raise HTTPException(status_code=422, detail="certification_level is required")
+    message = body.get("message")
+
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        username = current_user.username if current_user else None
+        change_log_manager.log_change_with_details(
+            db,
+            entity_type="data_product",
+            entity_id=product_id,
+            action="certification_requested",
+            username=username,
+            details={"certification_level": certification_level, "message": message},
+        )
+
+        get_trigger_registry(db).on_request_certify(
+            EntityType.DATA_PRODUCT,
+            product_id,
+            entity_name=product_db.name,
+            entity_data={
+                "requested_certification_level": certification_level,
+                "message": message,
+                "requester": username,
+            },
+            user_email=username,
+            blocking=True,
+        )
+
+        audit_manager.log_action(
+            db=db,
+            username=username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action="REQUEST_CERTIFY",
+            success=True,
+            details={"product_id": product_id, "certification_level": certification_level},
+        )
+
+        return JSONResponse(
+            status_code=202,
+            content={"status": "requested", "message": "Certification request submitted"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Request certify failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to submit certification request")
+
+
+@router.post('/data-products/{product_id}/handle-certify')
+async def handle_certify_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    change_log_manager: ChangeLogManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(ApprovalChecker('PRODUCTS')),
+):
+    """Approve or deny a certification request for a data product."""
+    from datetime import datetime, timezone
+
+    if body.get("approved") is None:
+        raise HTTPException(status_code=422, detail="approved is required")
+
+    approved = bool(body.get("approved"))
+    notes = body.get("notes")
+    username = current_user.username if current_user else None
+
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        if not approved:
+            change_log_manager.log_change_with_details(
+                db,
+                entity_type="data_product",
+                entity_id=product_id,
+                action="certification_denied",
+                username=username,
+                details={"notes": notes},
+            )
+            audit_manager.log_action(
+                db=db,
+                username=username,
+                ip_address=request.client.host if request.client else None,
+                feature=DATA_PRODUCTS_FEATURE_ID,
+                action="HANDLE_CERTIFY",
+                success=True,
+                details={"product_id": product_id, "approved": False},
+            )
+            return {"status": "denied"}
+
+        certification_level = body.get("certification_level")
+        if certification_level is None:
+            raise HTTPException(status_code=422, detail="certification_level is required when approved is true")
+
+        if product_db.status not in ("active",):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Product must be active to certify. Current status: {product_db.status}",
+            )
+
+        from src.repositories.certification_levels_repository import certification_levels_repo
+
+        level = certification_levels_repo.get_by_order(db, certification_level)
+        if not level:
+            raise HTTPException(status_code=404, detail=f"Certification level {certification_level} not found")
+
+        product_db.certification_level = certification_level
+        product_db.certified_at = datetime.now(timezone.utc)
+        product_db.certified_by = username
+        product_db.certification_notes = notes
+        db.add(product_db)
+        db.commit()
+        db.refresh(product_db)
+
+        audit_manager.log_action(
+            db=db,
+            username=username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='CERTIFY',
+            success=True,
+            details={'product_id': product_id, 'certification_level': certification_level},
+        )
+
+        from src.controller.certification_propagator import propagate_certification
+
+        propagate_certification(db, "DataProduct", product_id)
+        db.commit()
+
+        try:
+            get_trigger_registry(db).on_certify(
+                EntityType.DATA_PRODUCT,
+                product_id,
+                entity_name=product_db.name,
+                entity_data={
+                    "certification_level": certification_level,
+                    "notes": notes,
+                    "certified_by": username,
+                },
+                user_email=username,
+                blocking=False,
+            )
+        except Exception as trigger_err:
+            logger.warning("on_certify trigger error (non-fatal): %s", trigger_err)
+
+        return {
+            'certification_level': product_db.certification_level,
+            'certified_at': str(product_db.certified_at),
+            'certified_by': product_db.certified_by,
+            'certification_notes': product_db.certification_notes,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Handle certify failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to handle certification request")
+
+
+@router.post('/data-products/{product_id}/handle-publish')
+async def handle_publish_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    change_log_manager: ChangeLogManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(ApprovalChecker('PRODUCTS')),
+):
+    """Approve or deny a publication request for a data product."""
+    from datetime import datetime, timezone
+
+    if body.get("approved") is None:
+        raise HTTPException(status_code=422, detail="approved is required")
+
+    approved = bool(body.get("approved"))
+    username = current_user.username if current_user else None
+
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        if not approved:
+            change_log_manager.log_change_with_details(
+                db,
+                entity_type="data_product",
+                entity_id=product_id,
+                action="publication_denied",
+                username=username,
+                details={"notes": body.get("notes")},
+            )
+            audit_manager.log_action(
+                db=db,
+                username=username,
+                ip_address=request.client.host if request.client else None,
+                feature=DATA_PRODUCTS_FEATURE_ID,
+                action="HANDLE_PUBLISH",
+                success=True,
+                details={"product_id": product_id, "approved": False},
+            )
+            return {"status": "denied"}
+
+        scope = body.get("scope")
+        if scope is None:
+            raise HTTPException(status_code=422, detail="scope is required when approved is true")
+
+        valid_scopes = ["none", "domain", "organization", "external"]
+        if scope not in valid_scopes:
+            raise HTTPException(status_code=422, detail=f"Invalid scope. Must be one of: {valid_scopes}")
+
+        if scope != "none" and product_db.status != "active":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Product must be active to publish. Current status: {product_db.status}",
+            )
+
+        product_db.publication_scope = scope
+        if scope != "none":
+            product_db.published_at = datetime.now(timezone.utc)
+            product_db.published_by = username
+        else:
+            product_db.published_at = None
+            product_db.published_by = None
+
+        db.add(product_db)
+        db.commit()
+        db.refresh(product_db)
+
+        audit_manager.log_action(
+            db=db,
+            username=username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='SET_PUBLICATION_SCOPE',
+            success=True,
+            details={'product_id': product_id, 'scope': scope},
+        )
+
+        try:
+            if scope != "none":
+                get_trigger_registry(db).on_publish(
+                    EntityType.DATA_PRODUCT,
+                    product_id,
+                    entity_name=product_db.name,
+                    entity_data={
+                        "publication_scope": scope,
+                        "published_by": username,
+                        "name": product_db.name,
+                    },
+                    user_email=username,
+                    blocking=False,
+                )
+        except Exception as trigger_err:
+            logger.warning("on_publish trigger error (non-fatal): %s", trigger_err)
+
+        return {
+            'publication_scope': product_db.publication_scope,
+            'published_at': str(product_db.published_at) if product_db.published_at else None,
+            'published_by': product_db.published_by,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Handle publish failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to handle publication request")
+
+
+@router.post('/data-products/{product_id}/request-publish')
+async def request_publish_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    change_log_manager: ChangeLogManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_WRITE)),
+):
+    """Request publication for a data product (workflow); approvers use handle-publish."""
+    scope = body.get("scope")
+    if scope is None:
+        raise HTTPException(status_code=422, detail="scope is required")
+
+    valid_scopes = ["none", "domain", "organization", "external"]
+    if scope not in valid_scopes:
+        raise HTTPException(status_code=422, detail=f"Invalid scope. Must be one of: {valid_scopes}")
+
+    justification = body.get("justification")
+    username = current_user.username if current_user else None
+
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        change_log_manager.log_change_with_details(
+            db,
+            entity_type="data_product",
+            entity_id=product_id,
+            action="publication_requested",
+            username=username,
+            details={"scope": scope, "justification": justification},
+        )
+
+        get_trigger_registry(db).on_request_publish(
+            EntityType.DATA_PRODUCT,
+            product_id,
+            entity_name=product_db.name,
+            entity_data={
+                "requested_scope": scope,
+                "justification": justification,
+                "requester": username,
+            },
+            user_email=username,
+            blocking=True,
+        )
+
+        audit_manager.log_action(
+            db=db,
+            username=username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action="REQUEST_PUBLISH",
+            success=True,
+            details={"product_id": product_id, "scope": scope},
+        )
+
+        return JSONResponse(
+            status_code=202,
+            content={"status": "requested", "message": "Publication request submitted"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Request publish failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to submit publication request")
+
+
 @router.post('/data-products/{product_id}/certify')
 async def certify_product(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    audit_manager: AuditManagerDep,
+    current_user: AuditCurrentUserDep,
+    body: dict = Body(...),
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(ApprovalChecker('PRODUCTS'))
+):
+    """
+    Certify a data product at a specific certification level.
+    Requires active status. Certification is now a separate dimension from status.
+    Body: { "certification_level": int, "notes": str? }
+    """
+    from datetime import datetime, timezone
+    certification_level = body.get("certification_level")
+    if certification_level is None:
+        raise HTTPException(status_code=422, detail="certification_level is required")
+
+    try:
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        if product_db.status not in ("active",):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Product must be active to certify. Current status: {product_db.status}"
+            )
+
+        from src.repositories.certification_levels_repository import certification_levels_repo
+        level = certification_levels_repo.get_by_order(db, certification_level)
+        if not level:
+            raise HTTPException(status_code=404, detail=f"Certification level {certification_level} not found")
+
+        product_db.certification_level = certification_level
+        product_db.certified_at = datetime.now(timezone.utc)
+        product_db.certified_by = current_user.username if current_user else None
+        product_db.certification_notes = body.get("notes")
+        db.add(product_db)
+        db.commit()
+        db.refresh(product_db)
+
+        audit_manager.log_action(
+            db=db,
+            username=current_user.username,
+            ip_address=request.client.host if request.client else None,
+            feature=DATA_PRODUCTS_FEATURE_ID,
+            action='CERTIFY',
+            success=True,
+            details={'product_id': product_id, 'certification_level': certification_level}
+        )
+
+        # Propagate certification to downstream entities
+        from src.controller.certification_propagator import propagate_certification
+        propagate_certification(db, "DataProduct", product_id)
+        db.commit()
+
+        get_trigger_registry(db).on_certify(
+            EntityType.DATA_PRODUCT,
+            product_id,
+            entity_name=product_db.name,
+            entity_data={"certification_level": product_db.certification_level},
+            user_email=current_user.username,
+        )
+
+        return {
+            'certification_level': product_db.certification_level,
+            'certified_at': str(product_db.certified_at),
+            'certified_by': product_db.certified_by,
+            'certification_notes': product_db.certification_notes,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Certify product failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to certify product")
+
+
+@router.post('/data-products/{product_id}/decertify')
+async def decertify_product(
     product_id: str,
     request: Request,
     db: DBSessionDep,
@@ -253,32 +824,45 @@ async def certify_product(
     manager: DataProductsManager = Depends(get_data_products_manager),
     _: bool = Depends(ApprovalChecker('PRODUCTS'))
 ):
-    """
-    Certify an active product (active → certified).
-    ODPS lifecycle (aligned with ODCS): Elevated status for high-value products.
-    """
+    """Remove certification from a data product."""
     try:
-        updated_product = manager.certify_product(product_id, current_user.username if current_user else None)
-        
+        product_db = manager._repo.get(db=db, id=product_id)
+        if not product_db:
+            raise HTTPException(status_code=404, detail="Data product not found")
+
+        old_level = product_db.certification_level
+        product_db.certification_level = None
+        product_db.certified_at = None
+        product_db.certified_by = None
+        product_db.certification_expires_at = None
+        product_db.certification_notes = None
+        db.add(product_db)
+        db.commit()
+
+        get_trigger_registry(db).on_decertify(
+            EntityType.DATA_PRODUCT,
+            product_id,
+            entity_name=product_db.name,
+            user_email=current_user.username,
+        )
+
         audit_manager.log_action(
             db=db,
             username=current_user.username,
             ip_address=request.client.host if request.client else None,
             feature=DATA_PRODUCTS_FEATURE_ID,
-            action='CERTIFY',
+            action='DECERTIFY',
             success=True,
-            details={'product_id': product_id, 'status': updated_product.status}
+            details={'product_id': product_id, 'previous_level': old_level}
         )
-        
-        return {'status': updated_product.status}
-    except ValueError as e:
-        logger.error("Validation error certifying product %s: %s", product_id, e)
-        raise HTTPException(status_code=409, detail=str(e))
+
+        return {'certification_level': None}
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Certify product failed for product_id=%s", product_id)
-        raise HTTPException(status_code=500, detail="Failed to certify product")
+        db.rollback()
+        logger.exception("Decertify product failed for product_id=%s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to decertify product")
 
 
 @router.post('/data-products/{product_id}/deprecate')
@@ -523,6 +1107,110 @@ async def get_product_datasets(
         )
 
 
+@router.get('/data-products/{product_id}/assets')
+async def get_product_linked_assets(
+    product_id: str,
+    request: Request,
+    db: DBSessionDep,
+    current_user: CurrentUserDep,
+    skip: int = 0,
+    limit: int = 200,
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_ONLY))
+):
+    """Return the assets linked to this Data Product via entity relationships.
+
+    Issue #347 — gated by ``data-products`` only (NOT ``assets``), so Data
+    Consumers can see Linked Assets in the DP detail view even when the
+    ``assets`` feature is not granted to them. The caller's access to the
+    Data Product itself is the implicit authorization here.
+    """
+    from src.controller.assets_manager import assets_manager
+
+    # The PermissionChecker decorator above already verifies the caller has
+    # data-products:READ_ONLY at minimum. To prevent a Consumer from peeking
+    # at a DP they have no listing access to, additionally check that the
+    # DP is in the user's accessible set — unless they have admin-level
+    # data-products access (admins / data-product admins see all).
+    auth_manager = getattr(request.app.state, "authorization_manager", None)
+    settings_manager = getattr(request.app.state, "settings_manager", None)
+    is_dp_admin = False
+    try:
+        if auth_manager and current_user:
+            applied_role_id = None
+            if settings_manager:
+                applied_role_id = settings_manager.get_applied_role_override_for_user(
+                    current_user.email
+                )
+            if applied_role_id and settings_manager:
+                eff = settings_manager.get_feature_permissions_for_role_id(applied_role_id)
+            else:
+                eff = auth_manager.get_user_effective_permissions(current_user.groups or [], None)
+            is_dp_admin = auth_manager.has_permission(
+                eff, DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.ADMIN
+            )
+    except Exception:
+        logger.exception("Failed to determine data-products admin level for DP-assets scoping")
+        is_dp_admin = False
+
+    if not is_dp_admin:
+        dpm = getattr(request.app.state, "data_products_manager", None)
+        if dpm is None:
+            raise HTTPException(status_code=503, detail="Data Products service unavailable")
+        # Compute caller's ownership scope so list_products returns the
+        # accessible set (instead of empty, which would 403 every DP for
+        # non-admins after the repository scoping change).
+        caller_email = current_user.email if current_user else None
+        user_groups = current_user.groups if current_user else []
+        caller_team_ids: list = []
+        caller_project_ids: list = []
+        try:
+            from src.controller.teams_manager import teams_manager
+            from src.controller.projects_manager import projects_manager
+
+            user_teams = teams_manager.get_teams_for_user(db, caller_email, user_groups)
+            caller_team_ids = [t.id for t in user_teams if getattr(t, "id", None)]
+            user_projects = projects_manager.get_user_projects(
+                db, caller_email, user_groups
+            )
+            caller_project_ids = [
+                p.id for p in user_projects.projects if getattr(p, "id", None)
+            ]
+        except Exception:
+            logger.exception(
+                f"Failed to resolve ownership scope for {caller_email} in DP-asset access; "
+                f"will fall back to draft-owner branch only"
+            )
+
+        try:
+            accessible = dpm.list_products(
+                skip=0,
+                limit=10_000,
+                is_admin=False,
+                caller_email=caller_email,
+                caller_team_ids=caller_team_ids,
+                caller_project_ids=caller_project_ids,
+            )
+            accessible_ids = {str(p.id) for p in accessible if getattr(p, "id", None)}
+        except Exception:
+            logger.exception("Failed to list products for DP-asset scoping")
+            raise HTTPException(status_code=500, detail="Failed to authorize DP access")
+        if product_id not in accessible_ids:
+            raise HTTPException(status_code=403, detail="Data Product not accessible")
+
+    # The DP membership check above is the authorization here, not the assets
+    # feature — so we ask the data-products manager for the asset linkage and
+    # then list via AssetsManager with an explicit restriction.
+    dpm = getattr(request.app.state, "data_products_manager", None)
+    if dpm is None:
+        raise HTTPException(status_code=503, detail="Data Products service unavailable")
+    asset_ids = list(dpm.list_linked_asset_ids_for_products(
+        db, product_ids=[product_id],
+    ))
+    return assets_manager.get_all_assets(
+        db=db, skip=skip, limit=limit, restrict_to_ids=asset_ids,
+    )
+
+
 @router.get('/data-products/{product_id}/hierarchy')
 async def get_product_hierarchy(
     product_id: str,
@@ -732,32 +1420,23 @@ async def get_data_product_owners(
 
 @router.get('/data-products/published', response_model=List[DataProduct])
 async def get_published_products(
+    scope: Optional[str] = Query(
+        None,
+        description="Filter by publication scope: domain, organization, external",
+    ),
     manager: DataProductsManager = Depends(get_data_products_manager),
     _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_ONLY))
 ):
     """
-    Get all published (active status) data products for marketplace/discovery.
-    Get all published (active status) data products for marketplace/discovery.
+    Get data products published to the marketplace (publication_scope other than none).
 
-    Returns only products that are in 'active' status, meaning they have been:
-    - Proposed for certification
-    Returns only products that are in 'active' status, meaning they have been:
-    - Proposed for certification
-    - Published (all output ports have contracts)
-    - Made available for consumption
-
-    ODPS v1.0.0: Returns products with status='active'
-
-    ODPS v1.0.0: Returns products with status='active'
+    Optional ``scope`` narrows results to a single publication scope (case-insensitive).
     """
     try:
-        # Delegate to manager
-        published_products = manager.get_published_products(limit=10000)
-        # Delegate to manager
-        published_products = manager.get_published_products(limit=10000)
-
-        logger.info(f"Retrieved {len(published_products)} published data products (active status)")
-        logger.info(f"Retrieved {len(published_products)} published data products (active status)")
+        published_products = manager.get_published_products(limit=10000, scope=scope)
+        logger.info(
+            f"Retrieved {len(published_products)} published data products (scope={scope or 'all'})"
+        )
         return published_products
     except Exception as e:
         error_msg = f"Error retrieving published data products: {e!s}"
@@ -931,25 +1610,85 @@ async def upload_data_products(
 
 @router.get('/data-products', response_model=Any)
 async def get_data_products(
+    request: Request,
     project_id: Optional[str] = None,
+    include_history: bool = False,
     current_user: CurrentUserDep = None,
+    db: DBSessionDep = None,
     manager: DataProductsManager = Depends(get_data_products_manager),
     _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_ONLY))
 ):
     try:
         logger.info(f"Retrieving data products via get_data_products route (project_id: {project_id})...")
 
-        # Check if user is admin
-        from src.common.authorization import is_user_admin
-        from src.common.config import get_settings
-        settings = get_settings()
+        # Cascade-bypass admin check.
+        #
+        # PR D originally used ``is_user_admin(user_groups, settings)`` here,
+        # which only matches workspace-``APP_ADMIN_DEFAULT_GROUPS`` membership.
+        # That mis-classifies users whose admin status comes from the Ontos
+        # role system (e.g., a customer's "Admin" role assigned to a non-
+        # ``admins`` workspace group): they have FeatureAccessLevel.ADMIN on
+        # data-products via their role, but get cascade-restricted and see
+        # an empty Products page.
+        #
+        # ``is_user_feature_admin`` consults the same auth manager that
+        # ``/api/user/permissions`` uses, so the bypass aligns with the
+        # user's effective permissions. The behavior for workspace-``admins``
+        # users is unchanged (the helper short-circuits on workspace-admin
+        # membership before doing role resolution).
+        from src.common.authorization import is_user_feature_admin
         user_groups = current_user.groups if current_user else []
-        is_admin = is_user_admin(user_groups, settings)
+        caller_email = current_user.email if current_user else None
+        is_admin = await is_user_feature_admin(
+            user_email=caller_email,
+            user_groups=user_groups,
+            feature_id=DATA_PRODUCTS_FEATURE_ID,
+            request=request,
+        )
 
         logger.info(f"User {current_user.email if current_user else 'unknown'} is_admin: {is_admin}")
 
-        products = manager.list_products(project_id=project_id, is_admin=is_admin)
-        logger.info(f"Retrieved {len(products)} data products")
+        # Resolve ownership scope for non-admin callers. Admins skip scoping
+        # entirely; we still pass the inputs harmlessly so the call site is
+        # uniform.
+        caller_team_ids: List[str] = []
+        caller_project_ids: List[str] = []
+        if not is_admin and current_user:
+            try:
+                from src.controller.teams_manager import teams_manager
+                from src.controller.projects_manager import projects_manager
+
+                user_teams = teams_manager.get_teams_for_user(
+                    db, caller_email, user_groups
+                )
+                caller_team_ids = [t.id for t in user_teams if getattr(t, "id", None)]
+
+                user_projects = projects_manager.get_user_projects(
+                    db, caller_email, user_groups
+                )
+                caller_project_ids = [
+                    p.id for p in user_projects.projects if getattr(p, "id", None)
+                ]
+            except Exception:
+                # Scope-resolution failure is non-fatal but yields fail-closed
+                # behavior downstream (empty list), which is the safe default.
+                logger.exception(
+                    f"Failed to resolve ownership scope for user {caller_email}; "
+                    f"caller will see only their draft-owned products"
+                )
+
+        products = manager.list_products(
+            project_id=project_id,
+            is_admin=is_admin,
+            caller_email=caller_email,
+            caller_team_ids=caller_team_ids,
+            caller_project_ids=caller_project_ids,
+            include_history=include_history,
+        )
+        logger.info(
+            f"Retrieved {len(products)} data products "
+            f"(include_history={include_history})"
+        )
         return [p.model_dump() for p in products]
     except Exception as e:
         error_msg = f"Error retrieving data products: {e!s}"
@@ -1011,6 +1750,16 @@ async def create_data_product(
         created_product_response = manager.create_product(payload, db=db, user=current_user.username if current_user else None)
         success = True
 
+        # Fire on_create workflow trigger
+        fire_trigger_safe(
+            db, "on_create",
+            entity_type=EntityType.DATA_PRODUCT,
+            entity_id=str(created_product_response.id) if created_product_response else str(payload.get('id', '')),
+            entity_name=getattr(created_product_response, 'name', None),
+            entity_data={"product_id": str(created_product_response.id), "name": getattr(created_product_response, 'name', None)},
+            user_email=current_user.email if current_user else None,
+        )
+
         if created_product_response and hasattr(created_product_response, 'id'):
             details_for_audit["created_resource_id"] = str(created_product_response.id)
 
@@ -1036,6 +1785,147 @@ async def create_data_product(
             details=details_for_audit.copy()
         )
 
+@router.get("/data-products/{product_id}/versions", response_model=List[dict])
+async def get_data_product_versions(
+    product_id: str,
+    db: DBSessionDep,
+    current_user: AuditCurrentUserDep,
+    manager: DataProductsManager = Depends(get_data_products_manager),
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_ONLY))
+):
+    """Get every visible version of a product's family, newest first.
+
+    Grouped by ``version_family_id`` (PRD #442): one indexed equality
+    lookup returns every member, regardless of which clone path produced
+    them. Personal drafts owned by other users are hidden.
+    """
+    try:
+        from src.common.authorization import is_user_admin
+        from src.common.config import get_settings
+        user_email = current_user.username if current_user else None
+        is_admin = is_user_admin(current_user.groups if current_user else [], get_settings())
+        products = manager.get_product_versions(
+            db=db,
+            product_id=product_id,
+            user_email=user_email,
+            is_admin=is_admin,
+        )
+        # Hand back a tight shape matching the unified VersionSelector's
+        # type — avoids loading every product relationship just to render
+        # a dropdown.
+        return [
+            {
+                "id": p.id,
+                "name": p.name,
+                "version": p.version,
+                "status": p.status,
+                "versionFamilyId": p.version_family_id,
+                "parentProductId": p.parent_product_id,
+                "baseName": p.base_name,
+                "changeSummary": p.change_summary,
+                "draftOwnerId": p.draft_owner_id,
+                "publicationScope": getattr(p, "publication_scope", None) or "none",
+                "createdAt": p.created_at.isoformat() if p.created_at else None,
+                "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in products
+        ]
+    except ValueError as ve:
+        logger.error("Validation error fetching product versions for %s: %s", product_id, ve)
+        raise HTTPException(status_code=404, detail="Product not found")
+    except Exception:
+        logger.error("Error fetching product versions for %s", product_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch product versions")
+
+
+@router.get("/data-products/families/{family_id}/latest", response_model=dict)
+async def get_product_family_latest(
+    family_id: str,
+    db: DBSessionDep,
+    current_user: AuditCurrentUserDep,
+    _: bool = Depends(PermissionChecker(DATA_PRODUCTS_FEATURE_ID, FeatureAccessLevel.READ_ONLY)),
+):
+    """Resolve a family-follow-latest reference to a concrete product row.
+
+    Returns the visible "latest" version of the family per the role-aware
+    rank in :mod:`src.common.version_visibility`. Subscribers and owners
+    of any version in the family see in-flight rows (draft/proposed/...);
+    plain consumers see only active/deprecated. See PRD #442.
+    """
+    from src.common.authorization import is_user_admin
+    from src.common.config import get_settings
+    from src.common.version_visibility import (
+        collapse_by_family,
+        is_admin_only_status,
+        is_visible_consumer,
+    )
+    from src.repositories.data_products_repository import data_product_repo
+    from src.db_models.data_products import DataProductSubscriptionDb
+
+    user_email = current_user.username if current_user else None
+    is_admin = is_user_admin(current_user.groups if current_user else [], get_settings())
+
+    rows = data_product_repo.get_family_versions(
+        db, family_id=family_id, user_email=user_email, is_admin=is_admin
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Family not found or empty")
+
+    # Elevation sources: admin > owner/draft > subscription. The first
+    # match short-circuits the more expensive subscription query.
+    elevated = is_admin or (
+        user_email is not None
+        and any(r.draft_owner_id == user_email for r in rows)
+    )
+    if not elevated and user_email:
+        try:
+            product_ids = [r.id for r in rows]
+            sub = (
+                db.query(DataProductSubscriptionDb.id)
+                .filter(
+                    DataProductSubscriptionDb.subscriber_email == user_email,
+                    DataProductSubscriptionDb.product_id.in_(product_ids),
+                )
+                .first()
+            )
+            elevated = sub is not None
+        except Exception:
+            logger.exception(
+                f"Subscription lookup failed for {user_email} on family {family_id}; "
+                "treating as consumer"
+            )
+
+    if not is_admin:
+        rows = [
+            r
+            for r in rows
+            if elevated
+            or (not is_admin_only_status(r) and is_visible_consumer(r))
+        ]
+    reps = collapse_by_family(
+        rows,
+        elevated_family_ids={family_id} if elevated else set(),
+        is_admin=is_admin,
+    )
+    if not reps:
+        raise HTTPException(status_code=404, detail="No visible version in family")
+
+    p = reps[0]
+    return {
+        "id": p.id,
+        "name": p.name,
+        "version": p.version,
+        "status": p.status,
+        "versionFamilyId": p.version_family_id,
+        "parentProductId": p.parent_product_id,
+        "changeSummary": p.change_summary,
+        "draftOwnerId": p.draft_owner_id,
+        "publicationScope": getattr(p, "publication_scope", None) or "none",
+        "createdAt": p.created_at.isoformat() if p.created_at else None,
+        "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
 @router.post("/data-products/{product_id}/versions", response_model=DataProduct, status_code=201)
 async def create_data_product_version(
     product_id: str, # This is the original product ID
@@ -1057,7 +1947,7 @@ async def create_data_product_version(
     try:
         logger.info(f"Received request to create version '{version_request.new_version}' from product ID: {product_id}")
         # The manager method handles its own DB interactions
-        new_product_response = manager.create_new_version(product_id, version_request.new_version)
+        new_product_response = manager.create_new_version(product_id, version_request)
         
         # request.state.audit_created_resource_id is no longer needed here as we capture it below
         
@@ -1234,7 +2124,29 @@ async def update_data_product(
 
         # Delegate to manager (includes auth check)
         user_groups = current_user.groups or []
-        product_dict = product_update.model_dump(by_alias=True)
+        # PR I: exclude_unset preserves partial-update semantics. Without it,
+        # Pydantic's defaults flood the dict with None for every Optional field,
+        # the manager re-instantiates DataProductUpdate(**full_dump) marking all
+        # fields as "set", and the repository's
+        # `if 'field' in update_data: db_obj.field = ...` pattern clears every
+        # unmodified Optional column (delivery_method_id, contract_id, etc).
+        product_dict = product_update.model_dump(exclude_unset=True)
+
+        # Resolve caller's team memberships so the manager can run the
+        # team-ownership branch of the cascade. Failure here is non-fatal —
+        # the manager still has project-membership + draft-owner branches.
+        caller_team_ids: List[str] = []
+        try:
+            from src.controller.teams_manager import teams_manager
+            user_teams = teams_manager.get_teams_for_user(
+                db, current_user.email, user_groups
+            )
+            caller_team_ids = [t.id for t in user_teams if getattr(t, "id", None)]
+        except Exception:
+            logger.exception(
+                f"Failed to resolve teams for user {current_user.email} on update; "
+                f"continuing without team-ownership branch"
+            )
 
         updated_product_response = manager.update_product_with_auth(
             product_id=product_id,
@@ -1243,6 +2155,7 @@ async def update_data_product(
             user_groups=user_groups,
             db=db,
             background_tasks=background_tasks,
+            caller_team_ids=caller_team_ids,
         )
 
         if not updated_product_response:
@@ -1251,10 +2164,21 @@ async def update_data_product(
 
         success = True
         response_status_code = 200
+
+        # Fire on_update workflow trigger
+        fire_trigger_safe(
+            db, "on_update",
+            entity_type=EntityType.DATA_PRODUCT,
+            entity_id=product_id,
+            entity_name=getattr(updated_product_response, 'name', None),
+            entity_data=product_dict,
+            user_email=current_user.email if current_user else None,
+        )
+
         logger.info(f"Successfully updated data product with ID: {product_id}")
-        
+
         # Delivery is now handled in the manager via DeliveryMixin
-        
+
         return updated_product_response
 
     except PermissionError as e:
@@ -1327,9 +2251,19 @@ async def delete_data_product(
 
         success = True
         response_status_code = 204 # Standard for successful DELETE
+
+        # Fire on_delete workflow trigger
+        fire_trigger_safe(
+            db, "on_delete",
+            entity_type=EntityType.DATA_PRODUCT,
+            entity_id=product_id,
+            entity_data={"product_id": product_id},
+            user_email=current_user.email if current_user else None,
+        )
+
         logger.info(f"Successfully deleted data product with ID: {product_id}")
         # No response body for 204, so no updated_product_response or response_preview
-        return None 
+        return None
 
     except HTTPException as http_exc:
         success = False
@@ -1338,7 +2272,7 @@ async def delete_data_product(
         raise
     except Exception as e:
         success = False
-        response_status_code = 500 
+        response_status_code = 500
         error_msg = f"Unexpected error deleting data product {product_id}: {e!s}"
         details_for_audit["exception"] = {"type": type(e).__name__, "message": str(e)}
         logger.exception(error_msg)
@@ -1374,6 +2308,8 @@ async def get_data_product(
     except ValueError as e:
         logger.error("Validation error fetching product %s: %s", product_id, e)
         raise HTTPException(status_code=404, detail="Data product not found")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Unexpected error fetching product {product_id}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -1469,16 +2405,21 @@ async def subscribe_to_product(
             raise HTTPException(status_code=401, detail="Authentication required")
         
         reason = subscription_data.reason if subscription_data else None
+        on_behalf_of = subscription_data.on_behalf_of if subscription_data else None
+        # Trigger firing for on_subscribe lives inside manager.subscribe()
+        # (Option A refactor) so the wizard auto-subscribe path also fires
+        # it. The route handler just calls the manager and returns.
         result = manager.subscribe(
             product_id=product_id,
             subscriber_email=current_user.username,
             reason=reason,
+            on_behalf_of=on_behalf_of,
             db=db
         )
-        
+
         success = True
         return result
-        
+
     except ValueError as e:
         logger.error("Validation error subscribing to product %s: %s", product_id, e)
         raise HTTPException(status_code=400, detail=str(e))
@@ -1517,10 +2458,21 @@ async def unsubscribe_from_product(
             subscriber_email=current_user.username,
             db=db
         )
-        
+
         success = True
+
+        # Fire on_unsubscribe workflow trigger
+        fire_trigger_safe(
+            db, "on_unsubscribe",
+            entity_type=EntityType.SUBSCRIPTION,
+            entity_id=product_id,
+            entity_name=product_id,
+            entity_data={"product_id": product_id, "subscriber_email": current_user.username},
+            user_email=current_user.username,
+        )
+
         return result
-        
+
     except Exception as e:
         logger.error("Error unsubscribing from product %s: %s", product_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to unsubscribe from product")

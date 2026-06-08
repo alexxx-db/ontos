@@ -178,6 +178,33 @@ class SchemaImportManager:
         except Exception as exc:
             logger.debug(f"list_assets at path '{path}' failed (OK for top-level): {exc}")
 
+        # Enrich with column nodes when the current path identifies a leaf asset
+        # whose metadata exposes a column schema. Columns are not "listable"
+        # siblings — they live inside the asset's metadata. Failures here must
+        # degrade silently to listing-only nodes (see PRD: Failure model).
+        if path:
+            try:
+                metadata = connector.get_asset_metadata(path)
+                schema_info = getattr(metadata, "schema_info", None) if metadata else None
+                columns = getattr(schema_info, "columns", None) if schema_info else None
+                if columns:
+                    existing_paths = {n.path for n in nodes}
+                    for col in columns:
+                        col_path = f"{path}.{col.name}"
+                        if col_path in existing_paths:
+                            continue
+                        nodes.append(BrowseNode(
+                            name=col.name,
+                            node_type="column",
+                            path=col_path,
+                            has_children=False,
+                            description=getattr(col, "description", None),
+                            connector_type=connector.connector_type,
+                        ))
+                        existing_paths.add(col_path)
+            except Exception as exc:
+                logger.debug(f"Column enrichment for path '{path}' failed: {exc}")
+
         return BrowseResponse(
             connection_id=connection_id,
             path=path,
@@ -201,17 +228,24 @@ class SchemaImportManager:
             raise ValueError(f"Connection '{request.connection_id}' not found or connector unavailable")
 
         items: List[ImportPreviewItem] = []
+        selected_set = set(request.selected_paths)
         expanded = self._expand_with_ancestors(request.selected_paths)
 
-        for path, parent_path in expanded:
+        # Prepend System preview item
+        system_item = self._build_system_preview_item(db, request.connection_id, connector)
+        if system_item:
+            items.append(system_item)
+
+        for path, parent_path, is_selected in expanded:
             self._collect_items(
                 db=db,
                 connector=connector,
                 path=path,
-                depth=request.depth,
+                depth=request.depth if is_selected else ImportDepth.SELECTED_ONLY,
                 items=items,
                 parent_path=parent_path,
                 current_depth=0,
+                _is_ancestor=not is_selected,
             )
 
         return items
@@ -231,20 +265,29 @@ class SchemaImportManager:
         if connector is None:
             raise ValueError(f"Connection '{request.connection_id}' not found or connector unavailable")
 
-        # 0. Resolve or create the System asset for this connection
-        system_asset_id = self._resolve_system_asset(
-            db, request.connection_id, connector, current_user_id,
-        )
+        excluded = set(request.excluded_paths)
+        path_mappings = request.path_mappings or {}
+
+        # 0. Resolve System: use mapped asset if provided, otherwise auto-resolve
+        system_path = f"__system__{request.connection_id}"
+        if system_path in path_mappings:
+            system_asset_id = path_mappings[system_path]
+        elif system_path not in excluded:
+            system_asset_id = self._resolve_system_asset(
+                db, request.connection_id, connector, current_user_id,
+            )
+        else:
+            system_asset_id = None
 
         # 1. Collect all items to import (ancestors first so parents exist)
         preview_items: List[ImportPreviewItem] = []
         expanded = self._expand_with_ancestors(request.selected_paths)
-        for path, parent_path in expanded:
+        for path, parent_path, is_selected in expanded:
             self._collect_items(
                 db=db,
                 connector=connector,
                 path=path,
-                depth=request.depth,
+                depth=request.depth if is_selected else ImportDepth.SELECTED_ONLY,
                 items=preview_items,
                 parent_path=parent_path,
                 current_depth=0,
@@ -260,6 +303,25 @@ class SchemaImportManager:
 
         # 2. Create assets (parents before children — items are in BFS order)
         for item in preview_items:
+            # Skip items the user explicitly excluded
+            if item.path in excluded:
+                continue
+
+            # Use mapped existing asset instead of creating
+            if item.path in path_mappings:
+                mapped_id = path_mappings[item.path]
+                created_assets[item.path] = mapped_id
+                result.skipped += 1
+                result.items.append(ImportResultItem(
+                    path=item.path,
+                    name=item.name,
+                    asset_type=item.asset_type,
+                    action="skipped",
+                    asset_id=mapped_id,
+                    parent_path=item.parent_path,
+                ))
+                continue
+
             if not item.will_create:
                 result.skipped += 1
                 result.items.append(ImportResultItem(
@@ -407,18 +469,21 @@ class SchemaImportManager:
     ) -> List[tuple]:
         """Expand selected paths to include ancestor paths (catalog, schema).
 
-        Returns a list of ``(path, parent_path)`` tuples ordered so that
-        ancestors are processed before their descendants.  Duplicates are
-        removed so each path appears at most once.
+        Returns a list of ``(path, parent_path, is_selected)`` tuples ordered
+        so that ancestors are processed before their descendants.  Duplicates
+        are removed so each path appears at most once.  ``is_selected`` is
+        *True* only for paths that were in the original *selected_paths* list;
+        auto-added ancestors are marked *False*.
 
         Example:
           Input:  ["cat.sch.table1", "cat.sch.table2"]
-          Output: [("cat", None),
-                   ("cat.sch", "cat"),
-                   ("cat.sch.table1", "cat.sch"),
-                   ("cat.sch.table2", "cat.sch")]
+          Output: [("cat", None, False),
+                   ("cat.sch", "cat", False),
+                   ("cat.sch.table1", "cat.sch", True),
+                   ("cat.sch.table2", "cat.sch", True)]
         """
         seen: set = set()
+        selected_set: set = set(selected_paths)
         result: List[tuple] = []
 
         for selected in selected_paths:
@@ -429,7 +494,7 @@ class SchemaImportManager:
                     continue
                 seen.add(path)
                 parent = ".".join(parts[: i - 1]) if i > 1 else None
-                result.append((path, parent))
+                result.append((path, parent, path in selected_set))
 
         return result
 
@@ -490,6 +555,49 @@ class SchemaImportManager:
         logger.info(f"Created System asset '{conn_db.name}' (id={system_asset.id}) for connection {connection_id}")
         return system_asset.id
 
+    def _build_system_preview_item(
+        self,
+        db: Session,
+        connection_id: UUID,
+        connector: AssetConnector,
+    ) -> Optional[ImportPreviewItem]:
+        """Build a read-only preview item for the System asset (no creation)."""
+        conn_db = connections_repo.get(db, connection_id)
+        if conn_db is None:
+            return None
+
+        system_type_db = asset_type_repo.get_by_name(db, name="System")
+        if not system_type_db:
+            return None
+
+        # Check if already linked or exists by identity
+        existing_id: Optional[UUID] = None
+        if conn_db.system_asset_id:
+            existing = asset_repo.get(db, conn_db.system_asset_id)
+            if existing:
+                existing_id = existing.id
+        if not existing_id:
+            existing = asset_repo.get_by_identity(
+                db,
+                name=conn_db.name,
+                asset_type_id=system_type_db.id,
+                platform=connector.connector_type,
+                location=connector.connector_type,
+            )
+            if existing:
+                existing_id = existing.id
+
+        system_path = f"__system__{connection_id}"
+        return ImportPreviewItem(
+            path=system_path,
+            name=conn_db.name,
+            asset_type="System",
+            will_create=existing_id is None,
+            existing_asset_id=existing_id,
+            parent_path=None,
+            is_ancestor=True,
+        )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -504,6 +612,7 @@ class SchemaImportManager:
         parent_path: Optional[str],
         current_depth: int,
         _type_cache: Optional[Dict[str, Any]] = None,
+        _is_ancestor: bool = False,
     ) -> None:
         """Recursively collect ImportPreviewItem entries for a given path."""
         seen_paths = {i.path for i in items}
@@ -546,6 +655,7 @@ class SchemaImportManager:
                     will_create=existing is None,
                     existing_asset_id=existing.id if existing else None,
                     parent_path=parent_path,
+                    is_ancestor=_is_ancestor,
                 ))
                 seen_paths.add(path)
 
@@ -756,31 +866,97 @@ class SchemaImportManager:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+# Per-asset-type display labels for the browse tree (drives the
+# `node_type` field on BrowseNode and the icon picked by the frontend).
+#
+# Distinct from `_TYPE_MAP` on purpose: `_TYPE_MAP` collapses source-system
+# concepts to a smaller Ontos asset-type vocabulary used at *import* time
+# (e.g. UC_FUNCTION/UC_VOLUME -> "System"), but at *browse* time we want
+# to preserve the source label so users can tell a function from a volume.
+_DISPLAY_TYPE_MAP: Dict[str, str] = {
+    # Databricks / Unity Catalog
+    UnifiedAssetType.UC_CATALOG.value: "catalog",
+    UnifiedAssetType.UC_SCHEMA.value: "schema",
+    UnifiedAssetType.UC_TABLE.value: "table",
+    UnifiedAssetType.UC_VIEW.value: "view",
+    UnifiedAssetType.UC_MATERIALIZED_VIEW.value: "view",
+    UnifiedAssetType.UC_STREAMING_TABLE.value: "table",
+    UnifiedAssetType.UC_FUNCTION.value: "function",
+    UnifiedAssetType.UC_MODEL.value: "model",
+    UnifiedAssetType.UC_VOLUME.value: "volume",
+    # BigQuery
+    UnifiedAssetType.BQ_PROJECT.value: "project",
+    UnifiedAssetType.BQ_DATASET.value: "dataset",
+    UnifiedAssetType.BQ_TABLE.value: "table",
+    UnifiedAssetType.BQ_VIEW.value: "view",
+    UnifiedAssetType.BQ_MATERIALIZED_VIEW.value: "view",
+    UnifiedAssetType.BQ_EXTERNAL_TABLE.value: "table",
+    UnifiedAssetType.BQ_ROUTINE.value: "routine",
+    UnifiedAssetType.BQ_MODEL.value: "model",
+    # Snowflake
+    UnifiedAssetType.SNOWFLAKE_DATABASE.value: "database",
+    UnifiedAssetType.SNOWFLAKE_SCHEMA.value: "schema",
+    UnifiedAssetType.SNOWFLAKE_TABLE.value: "table",
+    UnifiedAssetType.SNOWFLAKE_VIEW.value: "view",
+    UnifiedAssetType.SNOWFLAKE_MATERIALIZED_VIEW.value: "view",
+    UnifiedAssetType.SNOWFLAKE_FUNCTION.value: "function",
+    UnifiedAssetType.SNOWFLAKE_PROCEDURE.value: "procedure",
+}
+
+
 def _display_type(asset_type: Optional[UnifiedAssetType]) -> str:
-    """Human-friendly type label for browse nodes."""
+    """Human-friendly type label for browse nodes.
+
+    Drives the `node_type` field returned to the UI, which selects the
+    Lucide icon and the small label printed next to each node name.
+    """
     if asset_type is None:
         return "unknown"
-    mapping = _TYPE_MAP.get(asset_type.value)
-    if mapping:
-        return mapping[0].lower()
+    label = _DISPLAY_TYPE_MAP.get(asset_type.value)
+    if label:
+        return label
+    # Last-resort fallback for newly-added asset types: take the trailing
+    # segment of the enum value (e.g. "powerbi_dashboard" -> "dashboard").
     return asset_type.value.split("_")[-1].lower()
 
 
 def _has_children(asset_type: Optional[UnifiedAssetType]) -> bool:
-    """Whether an asset type may have child nodes (e.g., columns)."""
+    """Whether an asset type may have child nodes (e.g., columns).
+
+    Used to set ``BrowseNode.has_children`` so the UI renders an expand
+    chevron. The set must include every leaf type whose
+    ``get_asset_metadata().schema_info`` is populated by the connector,
+    otherwise the user has no way to drill into its columns/parameters.
+
+    Excluded by design: models, volumes, datasets — they have no
+    column-level schema, so an expand chevron would yield an empty list.
+    """
     if asset_type is None:
         return False
     return asset_type.value in {
+        # Containers
         UnifiedAssetType.UC_CATALOG.value,
         UnifiedAssetType.UC_SCHEMA.value,
-        UnifiedAssetType.UC_TABLE.value,
-        UnifiedAssetType.UC_VIEW.value,
         UnifiedAssetType.BQ_PROJECT.value,
         UnifiedAssetType.BQ_DATASET.value,
-        UnifiedAssetType.BQ_TABLE.value,
-        UnifiedAssetType.BQ_VIEW.value,
         UnifiedAssetType.SNOWFLAKE_DATABASE.value,
         UnifiedAssetType.SNOWFLAKE_SCHEMA.value,
+        # UC leaves with column-bearing metadata
+        UnifiedAssetType.UC_TABLE.value,
+        UnifiedAssetType.UC_VIEW.value,
+        UnifiedAssetType.UC_MATERIALIZED_VIEW.value,
+        UnifiedAssetType.UC_STREAMING_TABLE.value,
+        UnifiedAssetType.UC_FUNCTION.value,
+        # BigQuery leaves with column-bearing metadata
+        UnifiedAssetType.BQ_TABLE.value,
+        UnifiedAssetType.BQ_VIEW.value,
+        UnifiedAssetType.BQ_MATERIALIZED_VIEW.value,
+        UnifiedAssetType.BQ_EXTERNAL_TABLE.value,
+        UnifiedAssetType.BQ_ROUTINE.value,
+        # Snowflake leaves with column-bearing metadata
         UnifiedAssetType.SNOWFLAKE_TABLE.value,
         UnifiedAssetType.SNOWFLAKE_VIEW.value,
+        UnifiedAssetType.SNOWFLAKE_MATERIALIZED_VIEW.value,
+        UnifiedAssetType.SNOWFLAKE_FUNCTION.value,
+        UnifiedAssetType.SNOWFLAKE_PROCEDURE.value,
     }

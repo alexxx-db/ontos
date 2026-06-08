@@ -1,19 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DataContractListItem, DataContractCreate } from '@/types/data-contract';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useDomains } from '@/hooks/use-domains'
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import TagChip from '@/components/ui/tag-chip';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Plus, Pencil, Trash2, AlertCircle, Upload, ChevronDown, ChevronRight, KeyRound, HelpCircle, FileText, Table2, Loader2, X, Eye } from 'lucide-react';
+import { Plus, Pencil, Trash2, AlertCircle, Upload, ChevronDown, ChevronRight, KeyRound, HelpCircle, FileText, Loader2, X, Eye } from 'lucide-react';
 import { ListViewSkeleton } from '@/components/common/list-view-skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import DataContractBasicFormDialog from '@/components/data-contracts/data-contract-basic-form-dialog'
-import CreateContractFromDatasetDialog from '@/components/datasets/create-contract-from-dataset-dialog'
 import { useDropzone } from 'react-dropzone';
 import { ColumnDef } from "@tanstack/react-table"
 import { useToast } from "@/hooks/use-toast"
@@ -22,6 +21,12 @@ import { useProjectContext } from '@/stores/project-store';
 import { DataTable } from '@/components/ui/data-table';
 import { RelativeDate } from '@/components/common/relative-date';
 import EntityInfoDialog from '@/components/metadata/entity-info-dialog';
+import CertificationBadge from '@/components/common/certification-badge';
+import PublicationBadge from '@/components/common/publication-badge';
+import VersionCountBadge from '@/components/common/version-count-badge';
+import { Switch } from '@/components/ui/switch';
+import type { CertificationLevel } from '@/types/lifecycle';
+import { useApi } from '@/hooks/use-api';
 
 export default function DataContracts() {
   const { t } = useTranslation(['data-contracts', 'common']);
@@ -29,10 +34,13 @@ export default function DataContracts() {
   const { getDomainName } = useDomains();
   const [contracts, setContracts] = useState<DataContractListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // "Show all versions" toggle — flips the family-collapse on the backend.
+  // When false (default) the list collapses to one row per version family
+  // and exposes a "N versions" badge. See PRD #442.
+  const [includeHistory, setIncludeHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openWizard, setOpenWizard] = useState(false);
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
-  const [openFromDatasetDialog, setOpenFromDatasetDialog] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<{ message: string; detail?: string } | null>(null);
   const [odcsPaste, setOdcsPaste] = useState<string>('')
@@ -40,12 +48,15 @@ export default function DataContracts() {
   const [showErrorDetail, setShowErrorDetail] = useState(false)
   const [previewContractId, setPreviewContractId] = useState<string | null>(null);
   const [previewContractTitle, setPreviewContractTitle] = useState('');
+  const [certificationLevels, setCertificationLevels] = useState<CertificationLevel[]>([]);
 
+  const { get } = useApi();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
   const { currentProject, hasProjectContext } = useProjectContext();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     fetchContracts();
@@ -58,7 +69,16 @@ export default function DataContracts() {
         setStaticSegments([]);
         setDynamicTitle(null);
     };
-  }, [setStaticSegments, setDynamicTitle, hasProjectContext, currentProject, t]);
+    // includeHistory belongs in the deps so toggling the switch triggers a
+    // re-fetch with the new query param.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setStaticSegments, setDynamicTitle, hasProjectContext, currentProject, t, includeHistory]);
+
+  useEffect(() => {
+    get<CertificationLevel[]>('/api/certification-levels').then(({ data }) => {
+      if (Array.isArray(data)) setCertificationLevels(data);
+    });
+  }, [get]);
 
   // Removed ODCS schema load for inline JSON validation
   // Removed inline JSON validation
@@ -70,11 +90,16 @@ export default function DataContracts() {
     try {
       setLoading(true);
 
-      // Build URL with project context if available
-      let endpoint = '/api/data-contracts';
+      // Build URL with project context and include_history (PRD #442)
+      const params = new URLSearchParams();
       if (hasProjectContext && currentProject) {
-        endpoint += `?project_id=${currentProject.id}`;
+        params.set('project_id', currentProject.id);
       }
+      if (includeHistory) {
+        params.set('include_history', 'true');
+      }
+      const qs = params.toString();
+      const endpoint = qs ? `/api/data-contracts?${qs}` : '/api/data-contracts';
 
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error('Failed to fetch contracts');
@@ -189,7 +214,7 @@ export default function DataContracts() {
 
       const file = acceptedFiles[0];
       if (!file.type.startsWith('text/') && file.type !== 'application/json' && file.type !== 'application/x-yaml') {
-        setUploadError('Please upload a text file (JSON, YAML, etc)');
+        setUploadError({ message: 'Please upload a text file (JSON, YAML, etc)' });
         return;
       }
 
@@ -268,6 +293,18 @@ export default function DataContracts() {
     }
   };
 
+  // Filter contracts based on URL parameter
+  const filteredContracts = useMemo(() => {
+    const statusFilter = searchParams.get('status');
+    if (!statusFilter) return contracts;
+
+    const filterLower = statusFilter.toLowerCase();
+    return contracts.filter(c => {
+      const contractStatus = (c.status || '').toLowerCase();
+      return contractStatus === filterLower;
+    });
+  }, [contracts, searchParams]);
+
   const columns: ColumnDef<DataContractListItem>[] = [
     {
       accessorKey: "name",
@@ -335,7 +372,21 @@ export default function DataContracts() {
           </Button>
         );
       },
-      cell: ({ row }) => <Badge variant="secondary">{row.getValue("version")}</Badge>,
+      cell: ({ row }) => {
+        const id = row.original.id
+        return (
+          <div className="flex items-center gap-1.5">
+            <Badge variant="secondary">{row.getValue("version")}</Badge>
+            {/* Family badge — only renders for families with > 1 visible version.
+                Click expands the version family for this row by routing into
+                the detail view, where VersionNavigator handles prev/next. */}
+            <VersionCountBadge
+              count={row.original.versionCount}
+              onClick={() => id && navigate(`${pathname}/${id}`)}
+            />
+          </div>
+        )
+      },
     },
     {
       accessorKey: "status",
@@ -353,7 +404,7 @@ export default function DataContracts() {
       cell: ({ row }) => {
         const contract = row.original;
         return (
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
             {contract.draftOwnerId && (
               <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">
                 Personal
@@ -362,6 +413,19 @@ export default function DataContracts() {
             <Badge variant="outline" className={getStatusColor(row.getValue("status"))}>
               {row.getValue("status")}
             </Badge>
+            <CertificationBadge
+              certificationLevel={contract.certification_level}
+              inheritedCertificationLevel={contract.inherited_certification_level}
+              certifiedAt={contract.certified_at}
+              certifiedBy={contract.certified_by}
+              levels={certificationLevels}
+              size="sm"
+            />
+            <PublicationBadge
+              publicationScope={contract.publication_scope}
+              publishedAt={contract.published_at}
+              publishedBy={contract.published_by}
+            />
           </div>
         );
       },
@@ -421,7 +485,7 @@ export default function DataContracts() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={(e) => { e.stopPropagation(); setPreviewContractId(contract.id ?? null); setPreviewContractTitle(contract.title ?? ''); }}
+              onClick={(e) => { e.stopPropagation(); setPreviewContractId(contract.id ?? null); setPreviewContractTitle(contract.name ?? ''); }}
               title="Preview Metadata"
             >
               <Eye className="h-4 w-4" />
@@ -476,35 +540,33 @@ export default function DataContracts() {
       )}
 
       {loading ? (
-        <ListViewSkeleton columns={6} rows={5} toolbarButtons={3} />
+        <ListViewSkeleton columns={8} rows={5} toolbarButtons={3} />
       ) : (
         <DataTable
           columns={columns}
-          data={contracts}
+          data={filteredContracts}
           searchColumn="name"
           storageKey="data-contracts-sort"
           toolbarActions={
             <>
+              {/* Family-collapse toggle. Off = one row per family + "N versions"
+                  badge; On = every version is its own row (legacy behavior).
+                  See PRD #442. */}
+              <div className="flex items-center gap-2 h-9 pr-2 border-r border-border">
+                <Switch
+                  id="contracts-include-history"
+                  checked={includeHistory}
+                  onCheckedChange={setIncludeHistory}
+                  aria-label={t('versionFamily.showAllVersions', { defaultValue: 'Show all versions' })}
+                />
+                <Label htmlFor="contracts-include-history" className="text-xs text-muted-foreground cursor-pointer">
+                  {t('versionFamily.showAllVersions', { defaultValue: 'Show all versions' })}
+                </Label>
+              </div>
               <Button onClick={() => setOpenWizard(true)} className="gap-2 h-9" title={t('common:tooltips.createDataContract')}>
                 <Plus className="h-4 w-4" />
                 {t('newContract')}
               </Button>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button onClick={() => setOpenFromDatasetDialog(true)} variant="outline" className="gap-2 h-9">
-                      <Table2 className="h-4 w-4" />
-                      From Dataset
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs">
-                    <p className="font-medium">Create from Dataset</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Create a new Data Contract from an existing Dataset, optionally inferring the schema from one of its instances.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -680,16 +742,6 @@ export default function DataContracts() {
         onSubmit={createContract}
       />
 
-      {/* Create from Dataset Dialog */}
-      <CreateContractFromDatasetDialog
-        isOpen={openFromDatasetDialog}
-        onOpenChange={setOpenFromDatasetDialog}
-        onSuccess={(contractId) => {
-          fetchContracts();
-          setOpenFromDatasetDialog(false);
-          navigate(`${pathname}/${contractId}`);
-        }}
-      />
     </div>
   );
 } 

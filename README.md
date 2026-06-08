@@ -1,5 +1,10 @@
 # Ontos
 
+[![Test Coverage](https://github.com/databrickslabs/ontos/actions/workflows/test-coverage.yml/badge.svg?branch=main)](https://github.com/databrickslabs/ontos/actions/workflows/test-coverage.yml)
+[![codecov](https://codecov.io/gh/databrickslabs/ontos/branch/main/graph/badge.svg)](https://codecov.io/gh/databrickslabs/ontos)
+[![backend coverage](https://codecov.io/gh/databrickslabs/ontos/branch/main/graph/badge.svg?flag=backend)](https://codecov.io/gh/databrickslabs/ontos?flags[0]=backend)
+[![frontend coverage](https://codecov.io/gh/databrickslabs/ontos/branch/main/graph/badge.svg?flag=frontend)](https://codecov.io/gh/databrickslabs/ontos?flags[0]=frontend)
+
 A comprehensive data governance and management platform built for Databricks Unity Catalog.
 
 ![Home](docs/images/home.png)
@@ -14,7 +19,7 @@ A comprehensive data governance and management platform built for Databricks Uni
 Group and manage related Databricks assets (tables, views, functions, models, dashboards) as cohesive, consumable products with clear ownership and lifecycle management.
 
 ### 📝 Data Contracts
-Define formal specifications for data assets with schema definitions, quality rules, SLOs, and semantic meaning following the ODCS v3.0.2 standard.
+Define formal specifications for data assets with schema definitions, quality rules, SLOs, and semantic meaning following the ODCS v3.1.0 standard.
 
 ### 📦 Datasets
 Register and group existing data assets across systems (Unity Catalog, Snowflake) and environments (dev, staging, prod), bridging physical assets to formal contracts.
@@ -57,7 +62,7 @@ Ontos is designed to run as a **Databricks App**:
 
 ```bash
 # Clone the repository
-git clone https://github.com/larsgeorge/ontos.git
+git clone https://github.com/databrickslabs/ontos.git
 cd ontos
 
 # Install frontend dependencies
@@ -152,7 +157,7 @@ ontos/
 
 Ontos implements and integrates with these standards:
 
-- **[ODCS](https://github.com/bitol-io/open-data-contract-standard)** - Open Data Contract Standard (v3.0.2)
+- **[ODCS](https://github.com/bitol-io/open-data-contract-standard)** - Open Data Contract Standard (v3.1.0)
 - **[ODPS](https://github.com/bitol-io/open-data-product-standard)** - Open Data Product Specification
 - **[MCP](https://modelcontextprotocol.io/)** - Model Context Protocol for AI integration
 - **[RDF](https://www.w3.org/RDF/)** - Resource Description Framework for ontology-driven asset modeling

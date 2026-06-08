@@ -665,11 +665,15 @@ async def mcp_delete_session(
 
 @router.get("/health")
 async def mcp_health():
-    """Health check endpoint for MCP server."""
+    """Health check endpoint for MCP server.
+
+    Public liveness probe — no auth required by design (load balancers,
+    uptime checks). Does NOT expose session counts or any operational
+    detail. Use ``/api/mcp/sessions`` (token-gated) for diagnostics.
+    """
     return {
         "status": "ok",
         "server": "ontos-mcp-server",
         "version": "1.0.0",
         "protocol_version": MCP_PROTOCOL_VERSION,
-        "active_sessions": len(_sessions)
     }

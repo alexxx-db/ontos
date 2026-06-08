@@ -8,13 +8,12 @@ import yaml
 
 
 class ContractStatus(Enum):
-    """ODCS lifecycle status values."""
+    """ODCS lifecycle status values. CERTIFIED removed — certification is a separate dimension."""
     DRAFT = "draft"
     PROPOSED = "proposed"
     UNDER_REVIEW = "under_review"
     APPROVED = "approved"
     ACTIVE = "active"
-    CERTIFIED = "certified"
     DEPRECATED = "deprecated"
     RETIRED = "retired"
 

@@ -52,6 +52,90 @@ def is_user_admin(user_groups: Optional[List[str]], settings: Settings) -> bool:
         return "admins" in [g.lower() for g in user_groups]
 
 
+async def is_user_feature_admin(
+    user_email: Optional[str],
+    user_groups: Optional[List[str]],
+    feature_id: str,
+    request: Request,
+) -> bool:
+    """Return True if the user has admin-level rights for the given feature.
+
+    Distinct from :func:`is_user_admin`, which only checks workspace-group
+    membership (``APP_ADMIN_DEFAULT_GROUPS``). This helper also consults the
+    Ontos role system: a user whose effective permissions include
+    ``FeatureAccessLevel.ADMIN`` on ``feature_id`` is considered admin for
+    cascade-bypass purposes — even when their workspace groups don't include
+    the literal ``admins`` group.
+
+    Use this when deciding whether a user should bypass ownership scoping
+    on a specific feature (e.g., "should this user see all data products?").
+    It mirrors the resolution used by :func:`enforce_feature_permission`
+    (team-role override → applied-role override → group-based merge) so the
+    bypass stays consistent with whatever role the user is currently acting
+    under.
+
+    Resolution failures fall back to the workspace-admin check only — i.e.,
+    a transient DB error never flips a non-admin into admin.
+
+    Args:
+        user_email: Caller's email (matched against role ``assigned_groups``
+            via the auth manager's email-as-group support).
+        user_groups: Caller's workspace groups.
+        feature_id: Feature identifier (e.g., ``"data-products"``).
+        request: FastAPI request — used to reach ``auth_manager`` and
+            ``settings_manager`` from ``request.app.state``.
+
+    Returns:
+        True if the user is admin via workspace group OR Ontos role.
+    """
+    workspace_admin = is_user_admin(user_groups or [], get_settings())
+    if workspace_admin:
+        return True
+    if not user_email:
+        return False
+    try:
+        auth_manager: Optional[AuthorizationManager] = getattr(
+            request.app.state, "authorization_manager", None
+        )
+        settings_manager: Optional[SettingsManager] = getattr(
+            request.app.state, "settings_manager", None
+        )
+        if auth_manager is None:
+            return False
+
+        team_role_override = await get_user_team_role_overrides(
+            user_email, user_groups or [], request
+        )
+
+        applied_role_id: Optional[str] = None
+        if settings_manager is not None:
+            try:
+                applied_role_id = settings_manager.get_applied_role_override_for_user(
+                    user_email
+                )
+            except Exception:
+                applied_role_id = None
+
+        if applied_role_id and settings_manager is not None:
+            effective = settings_manager.get_feature_permissions_for_role_id(
+                applied_role_id
+            )
+        else:
+            effective = auth_manager.get_user_effective_permissions(
+                user_groups or [], team_role_override
+            )
+
+        return effective.get(feature_id) == FeatureAccessLevel.ADMIN
+    except Exception:
+        logger.exception(
+            "is_user_feature_admin: failed to resolve Ontos-role admin for user '%s' on feature '%s'; "
+            "falling back to workspace-admin check (False)",
+            user_email,
+            feature_id,
+        )
+        return False
+
+
 # Local Dev Mock User (keep here for the dependency function)
 LOCAL_DEV_USER = UserInfo(
     email="localdev@example.com",  # Use example.com which is reserved for documentation
@@ -60,6 +144,117 @@ LOCAL_DEV_USER = UserInfo(
     ip="127.0.0.1",
     groups=["admins", "local-admins", "developers"] # Added 'admins' for testing
 )
+
+
+# Per-request test-user override headers (see config.TEST_USER_TOKEN).
+TEST_TOKEN_HEADER = "X-Test-Token"
+TEST_USER_EMAIL_HEADER = "X-Test-User-Email"
+TEST_USER_GROUPS_HEADER = "X-Test-User-Groups"
+TEST_USER_USERNAME_HEADER = "X-Test-User-Username"
+TEST_USER_NAME_HEADER = "X-Test-User-Name"
+TEST_USER_IP_HEADER = "X-Test-User-Ip"
+
+
+def _parse_test_groups(raw: str) -> List[str]:
+    """Parse the X-Test-User-Groups header.
+
+    Accepts a JSON array (e.g. ``["admins","data-producers"]``) or a
+    comma-separated string (e.g. ``admins,data-producers``). Whitespace is
+    trimmed and empty entries dropped.
+    """
+    import json as _json
+    try:
+        parsed = _json.loads(raw)
+        if isinstance(parsed, list) and all(isinstance(x, str) for x in parsed):
+            return [g.strip() for g in parsed if g and g.strip()]
+    except Exception:
+        pass
+    return [g.strip() for g in raw.split(',') if g.strip()]
+
+
+def _try_resolve_test_override(
+    request: Request,
+    settings: Settings,
+    manager: Optional[UsersManager],
+    real_ip: Optional[str] = None,
+) -> Optional[UserInfo]:
+    """Return a synthetic ``UserInfo`` when the request carries valid test headers.
+
+    Gating: a non-empty ``TEST_USER_TOKEN`` must be configured AND the request must
+    present an ``X-Test-Token`` header whose value matches it exactly. When the
+    feature is not configured (token unset), this function is a no-op and returns
+    ``None`` regardless of the headers present.
+
+    Behavior when active:
+      - ``X-Test-User-Email`` is required; missing/empty yields a 400.
+      - ``X-Test-User-Groups`` is optional. If provided, parsed locally.
+        If absent, groups are resolved via the SP-scoped SCIM lookup
+        (``UsersManager.get_user_details_by_email``) so the override
+        mirrors real Databricks Apps behavior.
+      - Optional ``X-Test-User-{Username,Name,Ip}`` headers refine the identity.
+
+    Returns ``None`` (without raising) when the token is unset or doesn't match,
+    so the caller can fall through to the regular identity-resolution path.
+    """
+    if not settings.TEST_USER_TOKEN:
+        return None
+    presented = request.headers.get(TEST_TOKEN_HEADER)
+    if not presented or presented != settings.TEST_USER_TOKEN:
+        return None
+
+    email = request.headers.get(TEST_USER_EMAIL_HEADER)
+    if not email or not email.strip():
+        # Token matched, so the caller clearly meant to use the override;
+        # surface a precise error instead of silently falling through.
+        raise HTTPException(
+            status_code=400,
+            detail=f"{TEST_TOKEN_HEADER} matched but {TEST_USER_EMAIL_HEADER} is missing or empty",
+        )
+    email = email.strip()
+
+    groups_raw = request.headers.get(TEST_USER_GROUPS_HEADER)
+    if groups_raw is not None:
+        groups: List[str] = _parse_test_groups(groups_raw)
+        groups_source = "header"
+    elif manager is not None:
+        # Fall back to SCIM lookup so the persona reflects real workspace state.
+        try:
+            sdk_info = manager.get_user_details_by_email(user_email=email, real_ip=real_ip)
+            groups = list(sdk_info.groups or [])
+            groups_source = "scim"
+        except NotFound:
+            logger.warning(
+                "Test override: SCIM lookup for %s returned NotFound; defaulting to email-as-group fallback",
+                email,
+            )
+            groups = [email]
+            groups_source = "fallback"
+        except Exception:
+            logger.exception(
+                "Test override: SCIM lookup for %s failed; defaulting to empty groups",
+                email,
+            )
+            groups = []
+            groups_source = "error"
+    else:
+        groups = []
+        groups_source = "no-manager"
+
+    username = (request.headers.get(TEST_USER_USERNAME_HEADER) or email).strip()
+    name = (request.headers.get(TEST_USER_NAME_HEADER) or email).strip()
+    ip = (request.headers.get(TEST_USER_IP_HEADER) or real_ip or "").strip() or None
+
+    logger.warning(
+        "TEST OVERRIDE active: identity=%s username=%s groups_source=%s groups=%s",
+        email, username, groups_source, groups,
+    )
+    return UserInfo(
+        email=email,
+        username=username,
+        user=name,
+        ip=ip,
+        groups=groups,
+    )
 
 async def get_user_details_from_sdk(
     request: Request,
@@ -74,6 +269,14 @@ async def get_user_details_from_sdk(
     
     Falls back to get_user_details_by_email if OBO token is not available.
     """
+    # Per-request test-user override (highest precedence; gated by TEST_USER_TOKEN).
+    # Safe no-op when token is unset, regardless of headers present.
+    override = _try_resolve_test_override(
+        request, settings, manager, real_ip=request.headers.get("X-Real-Ip")
+    )
+    if override is not None:
+        return override
+
     # Check for local development environment or explicit mock flag
     if settings.ENV.upper().startswith("LOCAL") or getattr(settings, "MOCK_USER_DETAILS", False):
         # Build mock user from env-var overrides if provided
@@ -115,8 +318,20 @@ async def get_user_details_from_sdk(
 
     # Try using OBO client with current_user.me() first (no admin permissions required)
     obo_token = request.headers.get('x-forwarded-access-token')
+    # Diagnostic: surface which forwarded headers actually arrive from the
+    # Databricks Apps proxy. Without these at INFO level we can't tell the
+    # difference between "OBO header missing" vs "OBO header present but empty"
+    # vs "scope not granted" when triaging a deployed app.
+    fwd_email = request.headers.get('X-Forwarded-Email')
+    fwd_user = request.headers.get('X-Forwarded-User')
+    logger.info(
+        "auth.headers: x-forwarded-access-token=%s, X-Forwarded-Email=%s, X-Forwarded-User=%s",
+        "present" if obo_token else "MISSING",
+        fwd_email or "<none>",
+        fwd_user or "<none>",
+    )
     if obo_token:
-        logger.debug("Using OBO token with current_user.me() for user lookup (no admin permissions required).")
+        logger.info("Using OBO token with current_user.me() for user lookup (no admin permissions required).")
         try:
             obo_client = get_obo_workspace_client(request, settings)
             user_info_response = manager.get_current_user(obo_client=obo_client, real_ip=real_ip)
@@ -132,7 +347,10 @@ async def get_user_details_from_sdk(
             raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
     # Fallback: Use get_user_details_by_email if no OBO token (requires admin permissions)
-    logger.debug("No OBO token available, falling back to get_user_details_by_email (requires admin permissions).")
+    logger.info(
+        "No OBO token (x-forwarded-access-token) on request, falling back to SP-scoped get_user_details_by_email. "
+        "If groups appear missing in the response, the app's user_authorization scopes likely need iam.current-user:read."
+    )
     user_email = request.headers.get("X-Forwarded-Email")
     if not user_email:
         user_email = request.headers.get("X-Forwarded-User")
@@ -162,10 +380,55 @@ async def get_user_details_from_sdk(
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
-async def get_user_groups(user_email: str) -> List[str]:
-    """Get user groups for the given user email."""
+async def require_ontos_admin(
+    user_details: UserInfo = Depends(get_user_details_from_sdk),
+    auth_manager: AuthorizationManager = Depends(get_auth_manager),
+) -> UserInfo:
+    """FastAPI dependency that gates an endpoint on Ontos admin membership.
+
+    "Ontos admin" means the caller's workspace groups intersect the
+    ``assigned_groups`` of at least one ``AppRole`` flagged ``is_admin=True``.
+    This is distinct from ``settings:ADMIN`` (which only governs administration
+    of the Settings feature) and from workspace admin via
+    ``APP_ADMIN_DEFAULT_GROUPS`` (which gates moderation-style operations).
+
+    Use this for routes that grant capabilities beyond a single feature —
+    impersonation, MCP token management, full role catalog access, etc.
+    """
+    if not auth_manager.is_user_ontos_admin(user_details.groups):
+        logger.warning(
+            "Ontos admin required but caller '%s' is not in any is_admin role",
+            user_details.user or user_details.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ontos admin role required.",
+        )
+    return user_details
+
+
+async def get_user_groups(user_email: str, request: Optional[Request] = None) -> List[str]:
+    """Get user groups for the given user email.
+
+    When ``request`` is provided and a valid test-user override header is
+    present, the override's groups are returned (mirrors
+    :func:`get_user_details_from_sdk`).
+    """
     # Get settings directly instead of using dependency injection
     settings = get_settings()
+
+    # Per-request test override (only when caller threaded the request through).
+    if request is not None:
+        try:
+            override = _try_resolve_test_override(
+                request, settings, manager=None, real_ip=request.headers.get("X-Real-Ip")
+            )
+            if override is not None and override.email == user_email:
+                return list(override.groups or [])
+        except HTTPException:
+            # A 400 here means the caller meant to override but did it wrong.
+            # Surface it rather than masking with an empty group list.
+            raise
 
     if settings.ENV.upper().startswith("LOCAL") or getattr(settings, "MOCK_USER_DETAILS", False):
         # Return mock groups for local/mock development honoring overrides
@@ -295,6 +558,92 @@ class ProjectAccessChecker:
 
         logger.debug("Project access granted for user '%s' to project '%s'", user_details.email, project_id)
         return
+
+
+async def enforce_feature_permission(
+    feature_id: str,
+    required_level: FeatureAccessLevel,
+    user_details: UserInfo,
+    request: Request,
+) -> None:
+    """Programmatic equivalent of :class:`PermissionChecker` for use inside
+    route handler bodies.
+
+    Raises ``HTTPException(403)`` if the user lacks the required permission
+    level for the given feature. Reuses the same precedence as
+    ``PermissionChecker.__call__``: explicit role override > team role
+    override > group-based effective permissions.
+
+    Exists because some endpoints (notably the wizard endpoints) need to
+    dispatch the feature_id at request time based on path/body data, which
+    can't be done with FastAPI's ``Depends`` (resolved before the handler
+    runs).
+    """
+    if not user_details.groups:
+        logger.warning(
+            "User '%s' has no groups. Denying access for '%s'",
+            user_details.user or user_details.email,
+            feature_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User has no assigned groups, cannot determine permissions.",
+        )
+
+    auth_manager: AuthorizationManager = getattr(request.app.state, "authorization_manager", None)
+    if not auth_manager:
+        logger.critical("AuthorizationManager not found in app state during enforce_feature_permission")
+        raise HTTPException(status_code=503, detail="Authorization service not configured.")
+
+    try:
+        # Mirror PermissionChecker.__call__: team override → applied role override → group merge.
+        team_role_override = await get_user_team_role_overrides(
+            user_details.email,
+            user_details.groups or [],
+            request,
+        )
+
+        applied_role_id = None
+        settings_manager = getattr(request.app.state, "settings_manager", None)
+        try:
+            if settings_manager:
+                applied_role_id = settings_manager.get_applied_role_override_for_user(user_details.email)
+        except Exception:
+            applied_role_id = None
+
+        if applied_role_id and settings_manager:
+            effective_permissions = settings_manager.get_feature_permissions_for_role_id(applied_role_id)
+        else:
+            effective_permissions = auth_manager.get_user_effective_permissions(
+                user_details.groups,
+                team_role_override,
+            )
+
+        if not auth_manager.has_permission(effective_permissions, feature_id, required_level):
+            user_level = effective_permissions.get(feature_id, FeatureAccessLevel.NONE)
+            logger.warning(
+                "Permission denied for user '%s' on feature '%s'. Required: '%s', Found: '%s'",
+                user_details.user or user_details.email,
+                feature_id,
+                required_level.value,
+                user_level.value,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions for feature '{feature_id}'. Required level: {required_level.value}.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error(
+            "Unexpected error during enforce_feature_permission for feature '%s'",
+            feature_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error checking user permissions.",
+        )
 
 
 class PermissionChecker:

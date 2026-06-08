@@ -11,6 +11,10 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Save, RefreshCw, Search, Settings2, Layers, ArrowUpDown, Check, AlertCircle } from 'lucide-react';
+import {
+  CardSkeleton,
+  SkeletonLine,
+} from '@/components/common/list-view-skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/stores/permissions-store';
 import { 
@@ -43,7 +47,6 @@ const ASSET_TYPE_DISPLAY_NAMES: Record<string, string> = {
   'data-product': 'Data Products',
   'data-contract': 'Data Contracts',
   'glossary-term': 'Glossary Terms',
-  'dataset': 'Datasets',
   'data-asset-review': 'Asset Reviews',
   'tag': 'Tags',
   'data-domain': 'Data Domains',
@@ -150,7 +153,7 @@ export default function SearchConfigEditor() {
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
   
-  const hasWriteAccess = hasPermission('settings', FeatureAccessLevel.ADMIN);
+  const hasWriteAccess = hasPermission('settings-search', FeatureAccessLevel.ADMIN);
 
   const [config, setConfig] = useState<SearchConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -293,9 +296,12 @@ export default function SearchConfigEditor() {
   }, [updateConfig]);
 
   if (isLoading) {
+    // Tab strip + 2 config sections
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="space-y-6">
+        <SkeletonLine height="h-10" width="w-96" />
+        <CardSkeleton titleWidth="w-48" descriptionWidth="w-72" contentRows={5} />
+        <CardSkeleton titleWidth="w-40" descriptionWidth="w-60" contentRows={4} />
       </div>
     );
   }

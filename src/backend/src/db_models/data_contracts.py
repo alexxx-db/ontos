@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     ForeignKey,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -22,10 +23,11 @@ class DataContractDb(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     name = Column(String, nullable=False, index=True)  # Required for app usability
     kind = Column(String, nullable=False, default="DataContract")
-    api_version = Column(String, nullable=False, default="v3.0.2")
+    api_version = Column(String, nullable=False, default="v3.1.0")
     version = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, default="draft", index=True)
-    published = Column(Boolean, nullable=False, default=False, index=True)  # Marketplace publication status
+    # Deprecated: legacy marketplace flag; use publication_scope. Column retained for DB compatibility.
+    published = Column(Boolean, nullable=False, default=False, index=True)
     owner_team_id = Column(String, ForeignKey('teams.id'), nullable=True, index=True)  # Team UUID reference
     tenant = Column(String, nullable=True)
     data_product = Column(String, nullable=True)
@@ -39,19 +41,34 @@ class DataContractDb(Base):
     description_purpose = Column(Text, nullable=True)
     description_limitations = Column(Text, nullable=True)
 
-    # ODCS v3.0.2 additional top-level fields
+    # ODCS additional top-level fields
     sla_default_element = Column(String, nullable=True)  # ODCS slaDefaultElement field
     contract_created_ts = Column(DateTime(timezone=True), nullable=True)  # ODCS contractCreatedTs field
 
     # Semantic versioning fields
-    parent_contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="SET NULL"), nullable=True, index=True)  # Parent version reference
-    base_name = Column(String, nullable=True, index=True)  # Base name without version (e.g., "customer_data" for "customer_data_v1.0.0")
+    parent_contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="SET NULL"), nullable=True, index=True)  # Parent version reference (lineage)
+    # Canonical, immutable family grouping key. Copied from parent on every
+    # clone, or set to self.id on first creation. Single indexed equality
+    # lookup returns every version of the family. See PRD #442 in GH.
+    version_family_id = Column(String, nullable=False, index=True)
+    base_name = Column(String, nullable=True, index=True)  # Legacy base name; superseded by version_family_id. Kept for back-compat, no longer queried.
     change_summary = Column(Text, nullable=True)  # Summary of changes in this version
 
     # Personal draft visibility field
-    # If set, this is a personal draft visible only to the owner
-    # NULL = follows normal team/project visibility rules (Tier 2/3)
     draft_owner_id = Column(String, nullable=True, index=True)
+
+    # Publication scope (replaces boolean `published`)
+    publication_scope = Column(String, nullable=False, default="none", index=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    published_by = Column(String, nullable=True)
+
+    # Certification
+    certification_level = Column(Integer, nullable=True, index=True)
+    inherited_certification_level = Column(Integer, nullable=True)
+    certified_at = Column(DateTime(timezone=True), nullable=True)
+    certified_by = Column(String, nullable=True)
+    certification_expires_at = Column(DateTime(timezone=True), nullable=True)
+    certification_notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -69,6 +86,7 @@ class DataContractDb(Base):
     authoritative_defs = relationship("DataContractAuthoritativeDefinitionDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
     custom_properties = relationship("DataContractCustomPropertyDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
     sla_properties = relationship("DataContractSlaPropertyDb", back_populates="contract", cascade="all, delete-orphan", lazy="selectin")
+    team_metadata = relationship("DataContractTeamMetadataDb", back_populates="contract", uselist=False, cascade="all, delete-orphan", lazy="selectin")
     # Heavy relationships: lazy="select" to prevent auto-loading on list queries
     owner_team = relationship("TeamDb", foreign_keys=[owner_team_id], lazy="select")
     parent_contract = relationship("DataContractDb", remote_side=[id], foreign_keys=[parent_contract_id], lazy="select")
@@ -76,6 +94,21 @@ class DataContractDb(Base):
     comments = relationship("DataContractCommentDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
     profiling_runs = relationship("DataProfilingRunDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
     suggested_quality_checks = relationship("SuggestedQualityCheckDb", back_populates="contract", cascade="all, delete-orphan", lazy="select")
+
+
+@event.listens_for(DataContractDb, "before_insert")
+def _seed_contract_version_family_id(_mapper, _connection, target):
+    """Guarantee the version_family_id NOT NULL invariant regardless of
+    insert path (repository, direct ORM construction, demo loader, etc.).
+
+    Roots get themselves as family root; clones must explicitly carry the
+    source's family id (see ContractCloner / DataContractsManager) — this
+    listener only fires when the caller forgot.
+    """
+    if not getattr(target, "id", None):
+        target.id = str(uuid4())
+    if not getattr(target, "version_family_id", None):
+        target.version_family_id = target.id
 
 
 class DataContractTagDb(Base):
@@ -93,6 +126,7 @@ class DataContractServerDb(Base):
     __tablename__ = "data_contract_servers"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     server = Column(String, nullable=True)  # identifier
     type = Column(String, nullable=False)
     description = Column(Text, nullable=True)
@@ -116,6 +150,7 @@ class DataContractRoleDb(Base):
     __tablename__ = "data_contract_roles"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     role = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     access = Column(String, nullable=True)
@@ -140,6 +175,8 @@ class DataContractTeamDb(Base):
     __tablename__ = "data_contract_team"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
+    name = Column(String, nullable=True)  # ODCS TeamMember name field
     username = Column(String, nullable=False)
     role = Column(String, nullable=True)
     description = Column(Text, nullable=True)
@@ -154,6 +191,7 @@ class DataContractSupportDb(Base):
     __tablename__ = "data_contract_support"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     channel = Column(String, nullable=False)
     url = Column(String, nullable=False)
     description = Column(Text, nullable=True)
@@ -175,10 +213,11 @@ class DataContractPricingDb(Base):
 
 
 class DataContractAuthoritativeDefinitionDb(Base):
-    """ODCS v3.0.2 contract-level authoritative definitions"""
+    """ODCS contract-level authoritative definitions"""
     __tablename__ = "data_contract_authoritative_definitions"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     url = Column(String, nullable=False)
     type = Column(String, nullable=False)
     contract = relationship("DataContractDb", back_populates="authoritative_defs")
@@ -189,6 +228,7 @@ class DataContractCustomPropertyDb(Base):
     __tablename__ = "data_contract_custom_properties"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     property = Column(String, nullable=False)
     value = Column(Text, nullable=True)
     contract = relationship("DataContractDb", back_populates="custom_properties")
@@ -199,6 +239,7 @@ class DataContractSlaPropertyDb(Base):
     __tablename__ = "data_contract_sla_properties"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     property = Column(String, nullable=False)
     value = Column(String, nullable=True)
     value_ext = Column(String, nullable=True)
@@ -213,12 +254,13 @@ class SchemaObjectDb(Base):
     __tablename__ = "data_contract_schema_objects"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     name = Column(String, nullable=False)
     logical_type = Column(String, nullable=False, default="object")
     physical_name = Column(String, nullable=True)
     data_granularity_description = Column(Text, nullable=True)
 
-    # ODCS v3.0.2 additional schema object fields
+    # ODCS additional schema object fields
     business_name = Column(String, nullable=True)  # ODCS businessName field
     physical_type = Column(String, nullable=True)  # ODCS physicalType field (table, view, etc.)
     tags = Column(Text, nullable=True)  # ODCS schema-level tags (JSON array stored as text)
@@ -229,6 +271,7 @@ class SchemaObjectDb(Base):
     quality_checks = relationship("DataQualityCheckDb", back_populates="schema_object", cascade="all, delete-orphan")
     authoritative_definitions = relationship("SchemaObjectAuthoritativeDefinitionDb", back_populates="schema_object", cascade="all, delete-orphan")
     custom_properties = relationship("SchemaObjectCustomPropertyDb", back_populates="schema_object", cascade="all, delete-orphan")
+    relationships = relationship("SchemaObjectRelationshipDb", back_populates="schema_object", cascade="all, delete-orphan")
 
 
 class SchemaPropertyDb(Base):
@@ -236,6 +279,7 @@ class SchemaPropertyDb(Base):
     __tablename__ = "data_contract_schema_properties"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     object_id = Column(String, ForeignKey("data_contract_schema_objects.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     parent_property_id = Column(String, ForeignKey("data_contract_schema_properties.id", ondelete="CASCADE"), nullable=True, index=True)
     name = Column(String, nullable=False)
     logical_type = Column(String, nullable=True)
@@ -259,6 +303,7 @@ class SchemaPropertyDb(Base):
     schema_object = relationship("SchemaObjectDb", back_populates="properties")
     parent_property = relationship("SchemaPropertyDb", remote_side=[id])
     authoritative_definitions = relationship("SchemaPropertyAuthoritativeDefinitionDb", back_populates="property", cascade="all, delete-orphan")
+    relationships = relationship("SchemaPropertyRelationshipDb", back_populates="property", cascade="all, delete-orphan")
 
 
 class DataQualityCheckDb(Base):
@@ -269,6 +314,7 @@ class DataQualityCheckDb(Base):
     __tablename__ = "data_contract_quality_checks"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     object_id = Column(String, ForeignKey("data_contract_schema_objects.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     property_id = Column(String, ForeignKey("data_contract_schema_properties.id", ondelete="CASCADE"), nullable=True, index=True)
     level = Column(String, nullable=True)  # optional, e.g., object/property
     name = Column(String, nullable=True)
@@ -389,32 +435,72 @@ class DataContractCommentDb(Base):
 
 
 class SchemaObjectAuthoritativeDefinitionDb(Base):
-    """ODCS v3.0.2 schema-level authoritative definitions"""
+    """ODCS schema-level authoritative definitions"""
     __tablename__ = "data_contract_schema_object_authoritative_definitions"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     schema_object_id = Column(String, ForeignKey("data_contract_schema_objects.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     url = Column(String, nullable=False)
     type = Column(String, nullable=False)
     schema_object = relationship("SchemaObjectDb", back_populates="authoritative_definitions")
 
 
 class SchemaObjectCustomPropertyDb(Base):
-    """ODCS v3.0.2 schema-level custom properties"""
+    """ODCS schema-level custom properties"""
     __tablename__ = "data_contract_schema_object_custom_properties"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     schema_object_id = Column(String, ForeignKey("data_contract_schema_objects.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     property = Column(String, nullable=False)
     value = Column(Text, nullable=True)
     schema_object = relationship("SchemaObjectDb", back_populates="custom_properties")
 
 
 class SchemaPropertyAuthoritativeDefinitionDb(Base):
-    """ODCS v3.0.2 property-level authoritative definitions"""
+    """ODCS property-level authoritative definitions"""
     __tablename__ = "data_contract_schema_property_authoritative_definitions"
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     property_id = Column(String, ForeignKey("data_contract_schema_properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    stable_id = Column(String, nullable=True)  # ODCS v3.1.0 StableId
     url = Column(String, nullable=False)
     type = Column(String, nullable=False)
     property = relationship("SchemaPropertyDb", back_populates="authoritative_definitions")
+
+
+class SchemaObjectRelationshipDb(Base):
+    """ODCS v3.1.0 schema-level relationship (foreign key) on a schema object."""
+    __tablename__ = "data_contract_schema_object_relationships"
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    schema_object_id = Column(String, ForeignKey("data_contract_schema_objects.id", ondelete="CASCADE"), nullable=False, index=True)
+    relationship_type = Column(String, nullable=False, default="foreignKey")
+    from_value = Column(Text, nullable=False)  # JSON-serialized: string or array
+    to_value = Column(Text, nullable=False)    # JSON-serialized: string or array
+    custom_properties_json = Column(Text, nullable=True)  # JSON array of {property, value}
+    schema_object = relationship("SchemaObjectDb", back_populates="relationships")
+
+
+class SchemaPropertyRelationshipDb(Base):
+    """ODCS v3.1.0 property-level relationship (foreign key) on a schema property."""
+    __tablename__ = "data_contract_schema_property_relationships"
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    property_id = Column(String, ForeignKey("data_contract_schema_properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    relationship_type = Column(String, nullable=False, default="foreignKey")
+    to_value = Column(Text, nullable=False)  # JSON-serialized: string or array
+    custom_properties_json = Column(Text, nullable=True)
+    property = relationship("SchemaPropertyDb", back_populates="relationships")
+
+
+class DataContractTeamMetadataDb(Base):
+    """ODCS v3.1.0 Team object metadata (name, description, tags, customProperties, authoritativeDefinitions)."""
+    __tablename__ = "data_contract_team_metadata"
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    contract_id = Column(String, ForeignKey("data_contracts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    stable_id = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    tags_json = Column(Text, nullable=True)  # JSON array
+    custom_properties_json = Column(Text, nullable=True)  # JSON array of {property, value}
+    authoritative_definitions_json = Column(Text, nullable=True)  # JSON array of {url, type}
+    contract = relationship("DataContractDb", back_populates="team_metadata")
 
 

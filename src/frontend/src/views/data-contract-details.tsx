@@ -4,10 +4,17 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Table2, Package, ChevronLeft, ChevronRight } from 'lucide-react'
-import { DetailViewSkeleton } from '@/components/common/list-view-skeleton'
+import { AlertCircle, Download, Pencil, Trash2, Loader2, ArrowLeft, FileText, KeyRound, CopyPlus, Plus, Shapes, Columns2, Database, Sparkles, Package, ShieldCheck, Globe, Link2 } from 'lucide-react'
+import {
+  DetailHeaderSkeleton,
+  PanelSkeleton,
+  SkeletonBlock,
+  SkeletonLine,
+  TableSkeleton,
+} from '@/components/common/list-view-skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { DataTable } from '@/components/ui/data-table'
 import { ColumnDef } from '@tanstack/react-table'
@@ -43,18 +50,21 @@ import CreateFromContractDialog from '@/components/data-products/create-from-con
 import DqxSchemaSelectDialog from '@/components/data-contracts/dqx-schema-select-dialog'
 import DqxSuggestionsDialog from '@/components/data-contracts/dqx-suggestions-dialog'
 import AuthoritativeDefinitionFormDialog from '@/components/data-contracts/authoritative-definition-form-dialog'
-import ImportTeamMembersDialog from '@/components/data-contracts/import-team-members-dialog'
 import LinkProductToContractDialog from '@/components/data-contracts/link-product-to-contract-dialog'
-import LinkDatasetToContractDialog from '@/components/data-contracts/link-dataset-to-contract-dialog'
 import VersioningRecommendationDialog from '@/components/common/versioning-recommendation-dialog'
 import CustomPropertyFormDialog from '@/components/data-contracts/custom-property-form-dialog'
 import CommitDraftDialog from '@/components/data-contracts/commit-draft-dialog'
-import VersionSelector from '@/components/data-contracts/version-selector'
+import VersionNavigator from '@/components/common/version-navigator'
 import type { DataProduct } from '@/types/data-product'
 import type { DataProfilingRun } from '@/types/data-contract'
-import type { DatasetListItem } from '@/types/dataset'
-import { DATASET_STATUS_LABELS, DATASET_STATUS_COLORS } from '@/types/dataset'
 import { useCopilotContext } from '@/hooks/use-copilot-context'
+import { useApi } from '@/hooks/use-api'
+import CertificationBadge from '@/components/common/certification-badge'
+import PublicationScopeBadge from '@/components/common/publication-scope-badge'
+import { DirectCertifyDialog, DirectPublishDialog } from '@/components/common/direct-lifecycle-dialogs'
+import type { CertificationLevel, PublicationScope } from '@/types/lifecycle'
+import { userHasApprovalPrivilege } from '@/lib/permissions'
+import { ApprovalEntity } from '@/types/settings'
 
 // Status-based editability constants
 // Only draft/proposed contracts can be edited in place
@@ -72,6 +82,8 @@ type SchemaProperty = {
   required: boolean
   unique: boolean
   description?: string
+  stableId?: string
+  relationships?: { id?: string; type: string; to: string | string[]; from?: string | string[]; customProperties?: any[] }[]
 }
 
 // Define this as a function to access component state
@@ -93,6 +105,9 @@ const createSchemaPropertyColumns = (
       return (
         <div>
           <span className="font-mono font-medium">{property.name}</span>
+          {property.stableId && (
+            <span className="ml-2 text-[10px] font-mono text-muted-foreground/60" title="ODCS StableId">{property.stableId}</span>
+          )}
           {links.length > 0 && (
             <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
               {links.map((link, idx) => {
@@ -148,6 +163,35 @@ const createSchemaPropertyColumns = (
     ),
   },
   {
+    id: 'fk',
+    header: '',
+    size: 32,
+    cell: ({ row }) => {
+      const rels = row.original.relationships
+      if (!rels || rels.length === 0) return null
+      return (
+        <Popover>
+          <PopoverTrigger asChild>
+            <span className="cursor-pointer" title="Foreign key relationship">
+              <Link2 className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+            </span>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto max-w-xs p-3" side="right">
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold">Relationships</p>
+              {rels.map((rel, i) => (
+                <div key={i} className="text-xs flex items-center gap-1.5">
+                  <Badge variant="outline" className="text-[10px] px-1 py-0">{rel.type}</Badge>
+                  <span className="font-mono">→ {typeof rel.to === 'string' ? rel.to : JSON.stringify(rel.to)}</span>
+                </div>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      )
+    },
+  },
+  {
     accessorKey: 'description',
     header: 'Description',
     cell: ({ row }) => (
@@ -184,7 +228,14 @@ export default function DataContractDetails() {
   const productBasePath = '/data-products'
   const { toast } = useToast()
   const { getDomainName } = useDomains()
-  const { getPermissionLevel } = usePermissions()
+  const {
+    getPermissionLevel,
+    hasPermission,
+    isLoading: permissionsLoading,
+    availableRoles,
+    appliedRoleId,
+  } = usePermissions()
+  const { post, get } = useApi()
   const { userInfo, fetchUserInfo } = useUserStore()
 
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments)
@@ -204,7 +255,7 @@ export default function DataContractDetails() {
   const [links, setLinks] = useState<EntitySemanticLink[]>([])
   const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0)
   const [schemaLinks, setSchemaLinks] = useState<Record<string, EntitySemanticLink[]>>({})
-  const [propertyLinks, setPropertyLinks] = useState<Record<string, EntitySemanticLink[]>>({})
+  const [propertyLinks] = useState<Record<string, EntitySemanticLink[]>>({})
 
   // Lazy-loaded schema properties with pagination
   const [schemaProperties, setSchemaProperties] = useState<Record<string, SchemaProperty[]>>({})
@@ -222,42 +273,45 @@ export default function DataContractDetails() {
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [isCreateProductDialogOpen, setIsCreateProductDialogOpen] = useState(false)
 
-  // Linked datasets state
-  const [linkedDatasets, setLinkedDatasets] = useState<DatasetListItem[]>([])
-  const [loadingDatasets, setLoadingDatasets] = useState(false)
-
   // Team import state
-  const [isImportTeamMembersOpen, setIsImportTeamMembersOpen] = useState(false)
+
+  // Team metadata (ODCS v3.1.0)
+  const [, setTeamMetadata] = useState<{ name?: string; description?: string }>({})
+  const [teamMetaName, setTeamMetaName] = useState('')
+  const [teamMetaDesc, setTeamMetaDesc] = useState('')
 
   // Link product dialog state
   const [isLinkProductDialogOpen, setIsLinkProductDialogOpen] = useState(false)
 
-  // Link dataset dialog state
-  const [isLinkDatasetDialogOpen, setIsLinkDatasetDialogOpen] = useState(false)
-
   // Commit draft dialog state
   const [isCommitDraftDialogOpen, setIsCommitDraftDialogOpen] = useState(false)
 
-  // Version navigation state
-  type ContractVersionInfo = { id: string; version: string; status: string; createdAt: string }
-  const [versions, setVersions] = useState<ContractVersionInfo[]>([])
+  const [certificationLevels, setCertificationLevels] = useState<CertificationLevel[]>([])
+  const [certifyDialogOpen, setCertifyDialogOpen] = useState(false)
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
+  const [selectedCertifyLevel, setSelectedCertifyLevel] = useState<number | null>(null)
+  const [selectedPublishScope, setSelectedPublishScope] = useState<PublicationScope>('organization')
+  const [lifecycleActionSubmitting, setLifecycleActionSubmitting] = useState(false)
 
   // Admin permission check — admins can edit/delete regardless of status
   const contractPermissionLevel = getPermissionLevel('data-contracts')
   const isContractAdmin = contractPermissionLevel === FeatureAccessLevel.ADMIN || contractPermissionLevel === FeatureAccessLevel.FULL
+  const canWriteContracts =
+    !permissionsLoading && hasPermission('data-contracts', FeatureAccessLevel.READ_WRITE)
+  const canApproveContractLifecycle = userHasApprovalPrivilege(
+    ApprovalEntity.CONTRACTS,
+    userInfo?.groups,
+    availableRoles,
+    appliedRoleId
+  )
 
   // Computed properties for status-based editability
   // Admins bypass status restrictions; others need draft/proposed
-  const canEditInPlace = isContractAdmin || (contract?.status && EDITABLE_STATUSES.includes(contract.status.toLowerCase()))
+  const canEditInPlace = isContractAdmin || !!(contract?.status && EDITABLE_STATUSES.includes(contract.status.toLowerCase()))
   // Personal drafts are editable since they have draft status
   const isPersonalDraft = contract?.draftOwnerId != null
   // Contract is read-only if it's not editable and not a personal draft
   const isReadOnly = !canEditInPlace
-
-  // Version navigation helpers
-  const currentVersionIndex = versions.findIndex(v => v.id === contractId)
-  const prevVersion = currentVersionIndex > 0 ? versions[currentVersionIndex - 1] : null
-  const nextVersion = currentVersionIndex >= 0 && currentVersionIndex < versions.length - 1 ? versions[currentVersionIndex + 1] : null
 
   // View mode state for filtering sections - initialize from localStorage
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -340,40 +394,6 @@ export default function DataContractDetails() {
     }
   }
 
-  const fetchLinkedDatasets = async () => {
-    if (!contractId) return
-    setLoadingDatasets(true)
-    try {
-      const response = await fetch(`/api/datasets/by-contract/${contractId}`)
-      if (response.ok) {
-        const data = await response.json()
-        setLinkedDatasets(Array.isArray(data) ? data : [])
-      } else {
-        setLinkedDatasets([])
-      }
-    } catch (e) {
-      console.warn('Failed to fetch linked datasets:', e)
-      setLinkedDatasets([])
-    } finally {
-      setLoadingDatasets(false)
-    }
-  }
-
-  const fetchVersions = async () => {
-    if (!contractId) return
-    try {
-      const response = await fetch(`/api/data-contracts/${contractId}/versions`)
-      if (response.ok) {
-        const data = await response.json()
-        setVersions(Array.isArray(data) ? data : [])
-      } else {
-        setVersions([])
-      }
-    } catch (e) {
-      console.warn('Failed to fetch contract versions:', e)
-      setVersions([])
-    }
-  }
 
   const fetchContractAuthDefs = async () => {
     if (!contractId) return
@@ -498,6 +518,17 @@ export default function DataContractDetails() {
       setContract(contractData)
       setDynamicTitle(contractData.name)
 
+      // Fetch team metadata (ODCS v3.1.0)
+      try {
+        const tmRes = await fetch(`/api/data-contracts/${contractId}/team-metadata`)
+        if (tmRes.ok) {
+          const tm = await tmRes.json()
+          setTeamMetadata(tm || {})
+          setTeamMetaName(tm?.name || '')
+          setTeamMetaDesc(tm?.description || '')
+        }
+      } catch { /* ignore */ }
+
       if (linksRes.ok) {
         const linksData = await linksRes.json()
         setLinks(Array.isArray(linksData) ? linksData : [])
@@ -512,6 +543,48 @@ export default function DataContractDetails() {
       setDynamicTitle('Error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDirectCertify = async () => {
+    if (!contractId || selectedCertifyLevel == null) return
+    setLifecycleActionSubmitting(true)
+    try {
+      const response = await post<unknown>(`/api/data-contracts/${contractId}/certify`, {
+        certification_level: selectedCertifyLevel,
+      })
+      if (response.error) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'Certify failed')
+      }
+      toast({ title: 'Certified', description: 'Certification level has been applied.' })
+      setCertifyDialogOpen(false)
+      await fetchDetails()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to certify'
+      toast({ title: 'Error', description: msg, variant: 'destructive' })
+    } finally {
+      setLifecycleActionSubmitting(false)
+    }
+  }
+
+  const handleDirectPublish = async () => {
+    if (!contractId) return
+    setLifecycleActionSubmitting(true)
+    try {
+      const response = await post<unknown>(`/api/data-contracts/${contractId}/set-publication-scope`, {
+        scope: selectedPublishScope,
+      })
+      if (response.error) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'Publish scope update failed')
+      }
+      toast({ title: 'Publication updated', description: 'Publication scope has been saved.' })
+      setPublishDialogOpen(false)
+      await fetchDetails()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to set publication scope'
+      toast({ title: 'Error', description: msg, variant: 'destructive' })
+    } finally {
+      setLifecycleActionSubmitting(false)
     }
   }
 
@@ -605,13 +678,17 @@ export default function DataContractDetails() {
   }, [viewMode])
 
   useEffect(() => {
+    get<CertificationLevel[]>('/api/certification-levels').then(({ data }) => {
+      if (Array.isArray(data)) setCertificationLevels(data)
+    })
+  }, [get])
+
+  useEffect(() => {
     setStaticSegments([{ label: 'Data Contracts', path: listPath }])
     fetchDetails()
     fetchLinkedProducts()
-    fetchLinkedDatasets()
     fetchContractAuthDefs()
     fetchProfileRuns()
-    fetchVersions()
 
     return () => {
       setStaticSegments([])
@@ -985,13 +1062,6 @@ export default function DataContractDetails() {
     updatedTeam[editingTeamMemberIndex] = member
     await updateContract({ team: updatedTeam })
     setEditingTeamMemberIndex(null)
-  }
-
-  const handleDeleteTeamMember = async (index: number) => {
-    if (!contract) return
-    if (!confirm('Remove this team member?')) return
-    const updatedTeam = (contract.team || []).filter((_, i) => i !== index)
-    await updateContract({ team: updatedTeam })
   }
 
   // Server Config CRUD handlers
@@ -1463,36 +1533,6 @@ export default function DataContractDetails() {
     fetchProfileRuns()
   }
 
-  const handleImportTeamMembers = async (members: TeamMember[]) => {
-    if (!contract) return
-    
-    try {
-      // Append to existing team array
-      const updatedTeam = [...(contract.team || []), ...members]
-      
-      // Store team assignment metadata in customProperties
-      const customProps = contract.customProperties || {}
-      const now = new Date().toISOString()
-      
-      await updateContract({
-        team: updatedTeam,
-        customProperties: {
-          ...customProps,
-          assignedTeamId: contract.owner_team_id,
-          assignedTeamName: contract.owner_team_name,
-          assignedTeamDate: now
-        }
-      }, false)  // Suppress generic toast, show custom one below
-      
-      toast({
-        title: 'Team Members Imported',
-        description: `Successfully imported ${members.length} team ${members.length === 1 ? 'member' : 'members'} to the contract.`
-      })
-    } catch (e) {
-      // Error already handled by updateContract
-      throw e
-    }
-  }
 
   // Helper functions for conditional rendering based on view mode
   const shouldShowSection = (section: string): boolean => {
@@ -1516,16 +1556,35 @@ export default function DataContractDetails() {
     return shouldShowSection('linked-products')
   }
 
-  // Special case for linked datasets in minimal mode
-  const shouldShowLinkedDatasets = (): boolean => {
-    if (viewMode === 'minimal') {
-      return linkedDatasets.length > 0
-    }
-    return shouldShowSection('linked-datasets')
-  }
-
   if (loading) {
-    return <DetailViewSkeleton cards={4} actionButtons={4} />
+    // Mirrors rendered shape: header with back + version navigator + view-mode
+    // toggle on the left, action buttons on the right; body shows ODCS sections
+    // and a schema property table.
+    return (
+      <div className="py-6 space-y-6">
+        <DetailHeaderSkeleton actionButtons={5} leftControls={2} />
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <SkeletonLine height="h-9" width="w-9" className="rounded" />
+            <SkeletonLine height="h-8" width="w-80" />
+            <SkeletonLine height="h-5" width="w-20" />
+          </div>
+          <SkeletonLine height="h-4" width="w-2/3" />
+        </div>
+        <PanelSkeleton rows={3} rowHeight="h-10" />
+        <div className="border rounded-lg">
+          <div className="p-6 border-b">
+            <div className="flex items-center gap-2">
+              <SkeletonLine height="h-5" width="w-5" />
+              <SkeletonLine height="h-5" width="w-32" />
+            </div>
+          </div>
+          <TableSkeleton columns={6} rows={5} bordered={false} />
+        </div>
+        <PanelSkeleton rows={2} rowHeight="h-12" />
+        <PanelSkeleton rows={2} rowHeight="h-10" />
+      </div>
+    )
   }
   if (error || !contract) {
     return (
@@ -1546,7 +1605,7 @@ export default function DataContractDetails() {
     const totalPages = Math.ceil(totalProps / PROPS_PAGE_SIZE)
 
     if (loadingSchemaProps && props.length === 0) {
-      return <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading columns...</div>
+      return <SkeletonBlock height="h-32" className="rounded-md" />
     }
     if (props.length === 0 && totalProps === 0) return null
     return (
@@ -1578,36 +1637,14 @@ export default function DataContractDetails() {
             Back to List
           </Button>
 
-          {/* Version Navigation */}
-          {versions.length > 1 && (
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                disabled={!prevVersion}
-                onClick={() => prevVersion && navigate(`${listPath}/${prevVersion.id}`)}
-                title={prevVersion ? `Previous version: ${prevVersion.version}` : 'No previous version'}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <VersionSelector
-                currentContractId={contractId!}
-                currentVersion={contract?.version}
-                onVersionChange={(id) => navigate(`${listPath}/${id}`)}
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                disabled={!nextVersion}
-                onClick={() => nextVersion && navigate(`${listPath}/${nextVersion.id}`)}
-                title={nextVersion ? `Next version: ${nextVersion.version}` : 'No next version'}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
+          {/* Version Navigation — unified across contracts and products (PRD #442). */}
+          <VersionNavigator
+            entityKind="contract"
+            currentEntityId={contractId!}
+            currentVersion={contract?.version}
+            onVersionChange={(id) => navigate(`${listPath}/${id}`)}
+          />
+
 
           {/* View Mode Toggle */}
           <div className="inline-flex items-stretch h-8 gap-px border rounded-md bg-background overflow-hidden">
@@ -1645,6 +1682,34 @@ export default function DataContractDetails() {
               <Button size="sm" variant="destructive" onClick={handleReject}>Reject</Button>
             </>
           )}
+          {contract && contract.status?.toLowerCase() === 'active' && canApproveContractLifecycle && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const first = certificationLevels[0]?.level_order ?? null
+                setSelectedCertifyLevel(first)
+                setCertifyDialogOpen(true)
+              }}
+            >
+              <ShieldCheck className="mr-2 h-4 w-4" /> Certify
+            </Button>
+          )}
+          {contract &&
+            ['active', 'approved'].includes((contract.status || '').toLowerCase()) &&
+            canWriteContracts && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const cur = (contract.publication_scope || 'none') as PublicationScope
+                  setSelectedPublishScope(cur === 'none' ? 'organization' : cur)
+                  setPublishDialogOpen(true)
+                }}
+              >
+                <Globe className="mr-2 h-4 w-4" /> Publish
+              </Button>
+            )}
           <Button variant="outline" onClick={() => setIsRequestDialogOpen(true)} size="sm"><KeyRound className="mr-2 h-4 w-4" /> Request...</Button>
           <CommentSidebar
             entityType="data_contract"
@@ -1720,114 +1785,142 @@ export default function DataContractDetails() {
       {/* Core Metadata Card */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl font-bold flex items-center">
-            <FileText className="mr-3 h-7 w-7 text-primary" />
-            {contract.name}
-          </CardTitle>
-          <CardDescription className="pt-1">
-            {contract.description?.purpose || 'No description provided'}
-          </CardDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-2xl font-bold flex items-center">
+                <FileText className="mr-3 h-7 w-7 text-primary shrink-0" />
+                <span className="truncate">{contract.name}</span>
+              </CardTitle>
+              <CardDescription className="pt-1">
+                {contract.description?.purpose || 'No description provided'}
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <Badge variant={getStatusColor(contract.status)}>
+                {contract.status || '—'}
+              </Badge>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid md:grid-cols-3 gap-x-6 gap-y-2">
             <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground min-w-[4rem]">Status:</Label>
-              <div className="flex items-center gap-1.5">
-                <Badge variant={getStatusColor(contract.status)} className="text-xs">
-                  {contract.status || t('common:states.notAvailable')}
-                </Badge>
-                {contract.published && (
-                  <Badge variant="default" className="bg-green-600 text-xs">Published</Badge>
-                )}
-              </div>
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
+              {contract.version ? (
+                <Badge variant="outline" className="text-xs">{contract.version}</Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
-              <Badge variant="outline" className="text-xs">{contract.version || t('common:states.notAvailable')}</Badge>
-            </div>
-            {/* Hide Domain if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.domainId || contract.domain) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
-                {(() => {
-                  const domainId = contract.domainId;
-                  const domainName = getDomainName(domainId) || contract.domain;
-                  return domainName && domainId ? (
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
+              {(() => {
+                const domainId = contract.domainId;
+                const domainName = getDomainName(domainId) || contract.domain;
+                if (domainName && domainId) {
+                  return (
                     <span
                       className="text-xs cursor-pointer text-primary hover:underline truncate"
                       onClick={() => navigate(`/settings/data-domains/${domainId}`)}
                     >
                       {domainName}
                     </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{contract.domain || t('common:states.notAssigned')}</span>
                   );
-                })()}
-              </div>
-            )}
-            {/* Hide Project if empty in minimal mode */}
-            {(viewMode !== 'minimal' || ((contract as any).project_id && contract.project_name)) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
-                {(contract as any).project_id && contract.project_name ? (
-                  <span
-                    className="text-xs cursor-pointer text-primary hover:underline truncate"
-                    onClick={() => navigate(`/projects/${(contract as any).project_id}`)}
-                    title={`Project ID: ${(contract as any).project_id}`}
-                  >
-                    {contract.project_name}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                )}
-              </div>
-            )}
-            {/* Hide Tenant if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.tenant) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
-                <span className="text-xs text-muted-foreground truncate">{contract.tenant || t('common:states.notAssigned')}</span>
-              </div>
-            )}
-            {/* Hide Owner if empty in minimal mode */}
-            {(viewMode !== 'minimal' || (contract.owner_team_id && contract.owner_team_name)) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Owner:</Label>
-                {contract.owner_team_id && contract.owner_team_name ? (
-                  <span
-                    className="text-xs cursor-pointer text-primary hover:underline truncate"
-                    onClick={() => navigate(`/teams/${contract.owner_team_id}`)}
-                    title={`Team ID: ${contract.owner_team_id}`}
-                  >
-                    {contract.owner_team_name}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                )}
-              </div>
-            )}
+                }
+                if (domainName) {
+                  return <span className="text-xs text-muted-foreground truncate">{domainName}</span>;
+                }
+                return <span className="text-xs text-muted-foreground">—</span>;
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
+              {(contract as any).project_id && contract.project_name ? (
+                <span
+                  className="text-xs cursor-pointer text-primary hover:underline truncate"
+                  onClick={() => navigate(`/projects/${(contract as any).project_id}`)}
+                  title={`Project ID: ${(contract as any).project_id}`}
+                >
+                  {contract.project_name}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
+              {contract.tenant ? (
+                <span className="text-xs text-muted-foreground truncate">{contract.tenant}</span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Team:</Label>
+              {contract.owner_team_id && contract.owner_team_name ? (
+                <span
+                  className="text-xs cursor-pointer text-primary hover:underline truncate"
+                  onClick={() => navigate(`/teams/${contract.owner_team_id}`)}
+                  title={`Team ID: ${contract.owner_team_id}`}
+                >
+                  {contract.owner_team_name}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
               {contract.apiVersion ? (
                 <Badge variant="outline" className="text-xs">{contract.apiVersion}</Badge>
               ) : (
-                <span className="text-xs text-muted-foreground">N/A</span>
+                <span className="text-xs text-muted-foreground">—</span>
               )}
             </div>
-            {/* Hide Created if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.created) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+              {contract.created ? (
                 <span className="text-xs text-muted-foreground truncate">{formatDate(contract.created)}</span>
-              </div>
-            )}
-            {/* Hide Updated if empty in minimal mode */}
-            {(viewMode !== 'minimal' || contract.updated) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+              {contract.updated ? (
                 <span className="text-xs text-muted-foreground truncate">{formatDate(contract.updated)}</span>
-              </div>
-            )}
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Cert:</Label>
+              {(contract.certification_level || contract.inherited_certification_level) ? (
+                <CertificationBadge
+                  certificationLevel={contract.certification_level}
+                  inheritedCertificationLevel={contract.inherited_certification_level}
+                  certifiedAt={contract.certified_at}
+                  certifiedBy={contract.certified_by}
+                  levels={certificationLevels}
+                  size="sm"
+                />
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground min-w-[4rem]">Published:</Label>
+              {contract.publication_scope && contract.publication_scope !== 'none' ? (
+                <PublicationScopeBadge
+                  scope={contract.publication_scope as PublicationScope}
+                  publishedAt={contract.published_at}
+                  publishedBy={contract.published_by}
+                  size="sm"
+                />
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
           </div>
 
           <div className="pt-2 border-t">
@@ -2135,6 +2228,15 @@ export default function DataContractDetails() {
                   <div className="flex items-center gap-4 justify-between">
                     <div>
                       <Label className="text-base font-semibold">{contract.schema[selectedSchemaIndex]?.name || `Table ${selectedSchemaIndex + 1}`}</Label>
+                      {contract.schema[selectedSchemaIndex]?.stableId && (
+                        <span className="ml-2 text-xs font-mono text-muted-foreground" title="ODCS StableId">{contract.schema[selectedSchemaIndex].stableId}</span>
+                      )}
+                      {contract.schema[selectedSchemaIndex]?.relationships && contract.schema[selectedSchemaIndex].relationships!.length > 0 && (
+                        <Badge variant="outline" className="ml-2 text-xs">
+                          <Link2 className="h-3 w-3 mr-1" />
+                          {contract.schema[selectedSchemaIndex].relationships!.length} FK{contract.schema[selectedSchemaIndex].relationships!.length > 1 ? 's' : ''}
+                        </Badge>
+                      )}
                       {contract.schema[selectedSchemaIndex]?.name && schemaLinks[contract.schema[selectedSchemaIndex].name] && schemaLinks[contract.schema[selectedSchemaIndex].name].length > 0 && (
                         <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                           {schemaLinks[contract.schema[selectedSchemaIndex].name].map((link, idx) => (
@@ -2276,6 +2378,15 @@ export default function DataContractDetails() {
                   <div className="flex items-center gap-4 justify-between">
                     <div>
                       <Label className="text-base font-semibold">{contract.schema[selectedSchemaIndex]?.name || `Table ${selectedSchemaIndex + 1}`}</Label>
+                      {contract.schema[selectedSchemaIndex]?.stableId && (
+                        <span className="ml-2 text-xs font-mono text-muted-foreground" title="ODCS StableId">{contract.schema[selectedSchemaIndex].stableId}</span>
+                      )}
+                      {contract.schema[selectedSchemaIndex]?.relationships && contract.schema[selectedSchemaIndex].relationships!.length > 0 && (
+                        <Badge variant="outline" className="ml-2 text-xs">
+                          <Link2 className="h-3 w-3 mr-1" />
+                          {contract.schema[selectedSchemaIndex].relationships!.length} FK{contract.schema[selectedSchemaIndex].relationships!.length > 1 ? 's' : ''}
+                        </Badge>
+                      )}
                       {contract.schema[selectedSchemaIndex]?.name && schemaLinks[contract.schema[selectedSchemaIndex].name] && schemaLinks[contract.schema[selectedSchemaIndex].name].length > 0 && (
                         <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                           {schemaLinks[contract.schema[selectedSchemaIndex].name].map((link, idx) => (
@@ -2492,90 +2603,6 @@ export default function DataContractDetails() {
       </Card>
       )}
 
-      {/* Linked Datasets Section */}
-      {shouldShowLinkedDatasets() && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-xl flex items-center gap-2">
-                  <Table2 className="h-5 w-5 text-primary" />
-                  Linked Datasets ({linkedDatasets.length})
-                </CardTitle>
-                <CardDescription>Datasets that implement this contract</CardDescription>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setIsLinkDatasetDialogOpen(true)}
-                >
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Link to Existing Dataset
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {loadingDatasets ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
-            ) : linkedDatasets.length === 0 ? (
-              <div className="text-center py-12 border-2 border-dashed border-muted-foreground/25 rounded-lg">
-                <Table2 className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-                <div className="text-muted-foreground mb-2">No linked datasets yet</div>
-                <div className="text-sm text-muted-foreground">
-                  Datasets can be linked to this contract from the Dataset details page
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {linkedDatasets.map((dataset) => (
-                  <div
-                    key={dataset.id}
-                    className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                    onClick={() => navigate(`/datasets/${dataset.id}`)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="font-medium text-base">{dataset.name || 'Unnamed Dataset'}</div>
-                        {dataset.description && (
-                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{dataset.description}</p>
-                        )}
-                        <div className="flex items-center gap-3 mt-2">
-                          {dataset.version && (
-                            <Badge variant="outline" className="text-xs">
-                              v{dataset.version}
-                            </Badge>
-                          )}
-                          <Badge 
-                            variant="secondary" 
-                            className={`text-xs ${DATASET_STATUS_COLORS[dataset.status] || ''}`}
-                          >
-                            {DATASET_STATUS_LABELS[dataset.status] || dataset.status}
-                          </Badge>
-                          {dataset.instance_count !== undefined && dataset.instance_count > 0 && (
-                            <span className="text-xs text-muted-foreground">
-                              {dataset.instance_count} instance{dataset.instance_count !== 1 ? 's' : ''}
-                            </span>
-                          )}
-                        </div>
-                        {dataset.owner_team_name && (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            Owner: {dataset.owner_team_name}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {/* Quality Rules Section */}
       {shouldShowSection('quality-rules') && (
         <Card>
@@ -2626,47 +2653,33 @@ export default function DataContractDetails() {
       </Card>
       )}
 
-      {/* Team & Roles Section */}
-      {shouldShowSection('team-members') && (
+      {/* ODCS Team Metadata (read-only provenance) */}
+      {shouldShowSection('team-members') && (contract.team?.length || teamMetaName || teamMetaDesc) && (
         <Card>
           <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl">Team Members ({contract.team?.length || 0})</CardTitle>
-              <CardDescription>Team responsible for this contract</CardDescription>
-            </div>
-            <div className="flex gap-2">
-              {(() => {
-                console.log('[DEBUG] Rendering Team Members buttons:', {
-                  owner_team_id: contract.owner_team_id,
-                  owner_team_name: contract.owner_team_name,
-                  hasOwnerTeamId: !!contract.owner_team_id,
-                  shouldShowButton: !!contract.owner_team_id
-                })
-                return null
-              })()}
-              {canEditInPlace && contract.owner_team_id && (
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => setIsImportTeamMembersOpen(true)}
-                  disabled={!contract.owner_team_name}
-                  title={contract.owner_team_name ? `Import members from ${contract.owner_team_name}` : 'No team assigned'}
-                >
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Import from Team
-                </Button>
-              )}
-              {canEditInPlace && (
-                <Button size="sm" onClick={() => { setEditingTeamMemberIndex(null); setIsTeamMemberFormOpen(true); }}>
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Add Member
-                </Button>
-              )}
+              <CardTitle className="text-xl">ODCS Team Metadata</CardTitle>
+              <CardDescription>Read-only provenance from imported contract YAML. Manage ownership via the Owners panel above.</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {/* Team metadata (ODCS v3.1.0) */}
+          {(teamMetaName || teamMetaDesc) && (
+            <div className="grid grid-cols-2 gap-4 border rounded-lg p-4 bg-muted/30">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Team Name</Label>
+                <p className="text-sm">{teamMetaName || '—'}</p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Team Description</Label>
+                <p className="text-sm">{teamMetaDesc || '—'}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Team members list (read-only) */}
           {contract.team && contract.team.length > 0 ? (
             <div className="space-y-2">
               {contract.team.map((member, idx) => (
@@ -2675,21 +2688,11 @@ export default function DataContractDetails() {
                     <Badge variant="outline">{member.role}</Badge>
                     <span className="text-sm">{member.name || member.username || member.email}</span>
                   </div>
-                  {canEditInPlace && (
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => { setEditingTeamMemberIndex(idx); setIsTeamMemberFormOpen(true); }}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleDeleteTeamMember(idx)} className="text-destructive hover:text-destructive">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground text-center py-8">No team members defined. Click "Add Member" to add one.</p>
+            <p className="text-sm text-muted-foreground text-center py-4">No imported team members.</p>
           )}
         </CardContent>
       </Card>
@@ -2999,9 +3002,26 @@ export default function DataContractDetails() {
       </Card>
       )}
 
-      {/* Ownership Panel */}
+      {/* Ownership Panel (with imported ODCS contacts) */}
       {shouldShowSection('metadata-panel') && contract.id && (
-        <OwnershipPanel objectType="data_contract" objectId={contract.id} canAssign={canEditInPlace} className="mb-6" />
+        <OwnershipPanel
+          objectType="data_contract"
+          objectId={contract.id}
+          canAssign={canEditInPlace}
+          className="mb-6"
+          importedContacts={contract.team?.map((m) => ({
+            username: m.username,
+            name: m.name,
+            email: m.email,
+            role: m.role,
+            description: m.description,
+            dateIn: m.dateIn,
+            dateOut: m.dateOut,
+          }))}
+          importedContactsLabel="Imported Contacts"
+          ownerTeamId={contract.owner_team_id}
+          ownerTeamName={contract.owner_team_name}
+        />
       )}
 
       {/* Entity Relationships Panel */}
@@ -3180,18 +3200,6 @@ export default function DataContractDetails() {
         level="property"
       />
 
-      {/* Import Team Members Dialog */}
-      {contract?.owner_team_id && (
-        <ImportTeamMembersDialog
-          isOpen={isImportTeamMembersOpen}
-          onOpenChange={setIsImportTeamMembersOpen}
-          entityId={contractId!}
-          entityType="contract"
-          teamId={contract.owner_team_id}
-          teamName={contract.owner_team_name || contract.owner_team_id}
-          onImport={handleImportTeamMembers}
-        />
-      )}
 
       {/* Link Product to Contract Dialog */}
       <LinkProductToContractDialog
@@ -3205,21 +3213,6 @@ export default function DataContractDetails() {
           toast({
             title: 'Contract Linked',
             description: 'Contract successfully linked to product deliverable.'
-          });
-        }}
-      />
-
-      {/* Link Dataset to Contract Dialog */}
-      <LinkDatasetToContractDialog
-        isOpen={isLinkDatasetDialogOpen}
-        onOpenChange={setIsLinkDatasetDialogOpen}
-        contractId={contractId!}
-        contractName={contract?.name || 'this contract'}
-        onSuccess={() => {
-          fetchLinkedDatasets();
-          toast({
-            title: 'Contract Linked',
-            description: 'Contract successfully linked to dataset.'
           });
         }}
       />
@@ -3251,6 +3244,24 @@ export default function DataContractDetails() {
         contractId={contractId!}
         contractName={contract?.name || 'this contract'}
         onSuccess={handleCommitSuccess}
+      />
+
+      <DirectCertifyDialog
+        open={certifyDialogOpen}
+        onOpenChange={setCertifyDialogOpen}
+        certificationLevels={certificationLevels}
+        selectedLevelOrder={selectedCertifyLevel}
+        onSelectedLevelOrderChange={setSelectedCertifyLevel}
+        isSubmitting={lifecycleActionSubmitting}
+        onConfirm={handleDirectCertify}
+      />
+      <DirectPublishDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        selectedScope={selectedPublishScope}
+        onSelectedScopeChange={setSelectedPublishScope}
+        isSubmitting={lifecycleActionSubmitting}
+        onConfirm={handleDirectPublish}
       />
     </div>
   )

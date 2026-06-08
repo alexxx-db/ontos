@@ -2,7 +2,7 @@
   "title": "Ricerca",
   "placeholder": "Cerca in tutti gli asset...",
   "tabs": {
-    "askOntos": "Chiedi a Ontos",
+    "askOntos": "Chiedi a {{shortName}}",
     "indexSearch": "Ricerca Indice",
     "viewGraph": "Visualizza Grafo",
     "searchGraph": "Cerca Grafo",
@@ -82,6 +82,7 @@
       "selectEntityType": "Seleziona tipo di entità...",
       "dataProduct": "Prodotto Dati",
       "dataContract": "Contratto Dati",
+      "asset": "Risorsa",
       "dataDomain": "Dominio Dati",
       "selectEntity": "Seleziona {{entityType}}..."
     },
@@ -93,7 +94,7 @@
     }
   },
   "llm": {
-    "title": "Chiedi a Ontos",
+    "title": "Chiedi a {{shortName}}",
     "subtitle": "Fai domande su prodotti dati, costi e analisi",
     "rerun": "Esegui di nuovo",
     "copyToInput": "Modifica e reinvia",

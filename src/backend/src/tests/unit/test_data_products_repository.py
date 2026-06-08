@@ -110,6 +110,32 @@ class TestDataProductRepository:
         assert result.id == minimal_model.id
         assert result.name == minimal_model.name
 
+    def test_create_product_preserves_project_id(self, db_session: Session):
+        """A POST that includes ``project_id`` must persist it.
+
+        Before this fix, the repository's ``create()`` hard-coded
+        ``project_id=None`` regardless of what the input schema carried, so
+        any product POSTed with a project association silently lost it.
+        """
+        # Arrange
+        project_uuid = str(uuid.uuid4())
+        model = DataProductCreate(
+            id=str(uuid.uuid4()),
+            name="Project-Bound Product",
+            version="1.0.0",
+            project_id=project_uuid,
+        )
+
+        # Act
+        result = data_product_repo.create(db=db_session, obj_in=model)
+        db_session.commit()
+        fetched = db_session.query(DataProductDb).filter_by(id=result.id).first()
+
+        # Assert — both the in-memory return and the DB row carry the value.
+        assert result.project_id == project_uuid
+        assert fetched is not None
+        assert fetched.project_id == project_uuid
+
     # =====================================================================
     # Get Tests
     # =====================================================================
@@ -161,8 +187,9 @@ class TestDataProductRepository:
 
     def test_get_multi_empty(self, db_session: Session):
         """Test listing products when none exist."""
-        # Act
-        result = data_product_repo.get_multi(db=db_session)
+        # Act — use is_admin=True to exercise the listing mechanics rather
+        # than the (separately-tested) ownership scope filter.
+        result = data_product_repo.get_multi(db=db_session, is_admin=True)
 
         # Assert
         assert isinstance(result, list)
@@ -181,7 +208,7 @@ class TestDataProductRepository:
             data_product_repo.create(db=db_session, obj_in=model)
 
         # Act
-        result = data_product_repo.get_multi(db=db_session)
+        result = data_product_repo.get_multi(db=db_session, is_admin=True)
 
         # Assert
         assert len(result) == 3
@@ -199,7 +226,7 @@ class TestDataProductRepository:
             data_product_repo.create(db=db_session, obj_in=model)
 
         # Act - Get second page (skip 5, limit 3)
-        result = data_product_repo.get_multi(db=db_session, skip=5, limit=3)
+        result = data_product_repo.get_multi(db=db_session, skip=5, limit=3, is_admin=True)
 
         # Assert
         assert len(result) == 3
@@ -217,7 +244,7 @@ class TestDataProductRepository:
             data_product_repo.create(db=db_session, obj_in=model)
 
         # Act
-        result = data_product_repo.get_multi(db=db_session, limit=5)
+        result = data_product_repo.get_multi(db=db_session, limit=5, is_admin=True)
 
         # Assert
         assert len(result) == 5

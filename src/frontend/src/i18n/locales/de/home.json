@@ -1,5 +1,5 @@
 {
-  "title": "Willkommen bei Ontos",
+  "title": "Willkommen bei {{appName}}",
   "tagline": "Verwalten Sie Konzepte, Datenverträge, Datenprodukte, Personas und mehr",
   "search": {
     "placeholder": "Suche nach Datenprodukten, Glossarbegriffen, Verträgen..."

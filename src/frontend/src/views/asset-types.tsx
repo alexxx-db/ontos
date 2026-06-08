@@ -175,7 +175,7 @@ export default function AssetTypesView() {
   ], [canWrite, canAdmin, t]);
 
   return (
-    <SettingsPageWrapper title={t('title')}>
+    <SettingsPageWrapper title={t('title')} permissionId="settings-asset-types">
       <div className="mb-6">
         <h1 className="text-3xl font-bold flex items-center gap-2">
           <Shapes className="w-8 h-8" />
@@ -185,7 +185,7 @@ export default function AssetTypesView() {
       </div>
 
       {(apiIsLoading || permissionsLoading) ? (
-        <ListViewSkeleton columns={5} rows={5} toolbarButtons={1} />
+        <ListViewSkeleton columns={7} rows={5} toolbarButtons={1} />
       ) : !canRead ? (
         <Alert variant="destructive" className="mb-4">
           <AlertCircle className="h-4 w-4" />

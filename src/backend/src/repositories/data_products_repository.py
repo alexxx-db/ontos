@@ -7,7 +7,7 @@ Handles mapping between API models (Pydantic) and DB models (SQLAlchemy).
 
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select, distinct, or_, and_
-from typing import List, Optional, Any, Dict, Union
+from typing import Iterable, List, Optional, Any, Dict, Set, Union
 import json
 
 from src.common.repository import CRUDBase
@@ -56,6 +56,21 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
 
         try:
             # 1. Create core DataProduct
+            # Persist consumer_principals as JSON-encoded TEXT for portability
+            # across SQLite/Postgres. None / empty list -> None. Each principal
+            # is dumped via model_dump() so we get plain {type, value} dicts.
+            cp_value = getattr(obj_in, 'consumer_principals', None)
+            cp_serializable = (
+                [p.model_dump() if hasattr(p, 'model_dump') else p for p in cp_value]
+                if cp_value
+                else None
+            )
+            cp_json: Optional[str] = json.dumps(cp_serializable) if cp_serializable else None
+
+            # Default version_family_id to self.id on initial creates
+            # (callers that clone new versions pass source.version_family_id
+            # explicitly so the whole family shares one key).
+            family_id = getattr(obj_in, 'version_family_id', None) or obj_in.id
             db_obj = self.model(
                 id=obj_in.id,
                 api_version=obj_in.apiVersion,
@@ -66,7 +81,20 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                 domain=obj_in.domain,
                 tenant=obj_in.tenant,
                 owner_team_id=obj_in.owner_team_id,
-                project_id=None  # Set via manager if needed
+                # Preserve project_id from the input schema. Historic
+                # comment claimed "Set via manager if needed", but the
+                # manager never populated it from this path, so any DP
+                # POSTed with a project_id silently lost it on create.
+                # (DataProductCreate / DataProduct both declare the
+                # field, so reading via attribute is safe.)
+                project_id=getattr(obj_in, 'project_id', None),
+                max_level_inheritance=obj_in.max_level_inheritance,
+                parent_product_id=getattr(obj_in, 'parent_product_id', None),
+                version_family_id=family_id,
+                base_name=getattr(obj_in, 'base_name', None),
+                change_summary=getattr(obj_in, 'change_summary', None),
+                draft_owner_id=getattr(obj_in, 'draft_owner_id', None),
+                consumer_principals=cp_json,
             )
 
             # 2. Create Structured Description (One-to-One)
@@ -246,6 +274,18 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                 db_obj.owner_team_id = update_data['owner_team_id']
             if 'project_id' in update_data:
                 db_obj.project_id = update_data['project_id']
+            if 'max_level_inheritance' in update_data:
+                db_obj.max_level_inheritance = update_data['max_level_inheritance']
+            # consumer_principals — incoming list-of-dicts from
+            # model_dump(by_alias=True) above; serialize as JSON TEXT.
+            if 'consumer_principals' in update_data:
+                cp_value = update_data['consumer_principals']
+                cp_serializable = (
+                    [p.model_dump() if hasattr(p, 'model_dump') else p for p in cp_value]
+                    if cp_value
+                    else None
+                )
+                db_obj.consumer_principals = json.dumps(cp_serializable) if cp_serializable else None
 
             # 2. Update Structured Description
             if 'description' in update_data:
@@ -321,7 +361,14 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                         port_obj.description = port_dict.get('description')
                         port_obj.port_type = port_dict.get('type')
                         port_obj.contract_id = port_dict.get('contract_id')
-                        port_obj.delivery_method_id = port_dict.get('delivery_method_id')
+                        # Preserve existing delivery_method_id on partial updates: only
+                        # write if the caller explicitly included the key. Caller can still
+                        # clear the FK by sending an explicit null. Without this guard, any
+                        # update payload built from a UI that does not surface the delivery
+                        # method field (e.g. a name/description edit) would silently NULL
+                        # the FK on every save.
+                        if 'delivery_method_id' in port_dict:
+                            port_obj.delivery_method_id = port_dict.get('delivery_method_id')
                         port_obj.asset_type = port_dict.get('asset_type')
                         port_obj.asset_identifier = port_dict.get('asset_identifier')
                         port_obj.status = port_dict.get('status')
@@ -486,21 +533,48 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
         skip: int = 0,
         limit: int = 100,
         project_id: Optional[str] = None,
-        is_admin: bool = False
+        is_admin: bool = False,
+        caller_email: Optional[str] = None,
+        caller_team_ids: Optional[List[str]] = None,
+        caller_project_ids: Optional[List[str]] = None,
     ) -> List[DataProductDb]:
         """Get multiple ODPS v1.0.0 Data Products with all relationships eagerly loaded.
+
+        Authorization cascade for non-admins (any condition grants visibility):
+          - ``project_id`` IN ``caller_project_ids``
+          - ``owner_team_id`` IN ``caller_team_ids``
+          - ``draft_owner_id`` == ``caller_email``  (creator ownership — works
+            for drafts AND non-drafts, so the same field serves "single-user
+            ownership" without a separate column)
+
+        If the caller is not admin AND none of the scope inputs are provided
+        (no email, no teams, no projects), this returns an empty list — i.e.
+        fail-closed. The same applies transitively to legacy / orphan rows
+        (no project_id, no owner_team_id, no draft_owner_id): a non-admin
+        never sees them. They can be promoted by an admin later.
 
         Args:
             db: Database session
             skip: Number of records to skip
             limit: Maximum number of records to return
-            project_id: Optional project ID to filter by (ignored if is_admin=True)
-            is_admin: If True, return all products regardless of project_id
+            project_id: Optional query-param project filter (applied AFTER
+                scoping, as a narrowing filter). Ignored when ``is_admin``.
+            is_admin: If True, return all products regardless of scope.
+            caller_email: Caller's email (matched against ``draft_owner_id``).
+            caller_team_ids: Caller's team memberships (matched against
+                ``owner_team_id``).
+            caller_project_ids: Caller's accessible project IDs (matched
+                against ``project_id``).
 
         Returns:
             List of DataProductDb objects
         """
-        logger.debug(f"Fetching multiple ODPS v1.0.0 DataProducts (skip: {skip}, limit: {limit}, project_id: {project_id}, is_admin: {is_admin})")
+        logger.debug(
+            f"Fetching multiple ODPS v1.0.0 DataProducts (skip: {skip}, limit: {limit}, "
+            f"project_id: {project_id}, is_admin: {is_admin}, caller_email: {caller_email}, "
+            f"teams: {len(caller_team_ids) if caller_team_ids else 0}, "
+            f"projects: {len(caller_project_ids) if caller_project_ids else 0})"
+        )
         try:
             query = db.query(self.model).options(
                 selectinload(self.model.description),
@@ -514,13 +588,53 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                 selectinload(self.model.team).selectinload(DataProductTeamDb.members)
             )
 
-            # Apply project filtering only if not admin and project_id is provided
-            if not is_admin and project_id:
-                logger.debug(f"Filtering products by project_id: {project_id}")
-                # Include products with matching project_id OR null project_id (legacy/unassigned)
+            if not is_admin:
+                # Build ownership-scope filter from caller context. Each clause
+                # is appended only when the corresponding input is populated so
+                # we never produce a SQL-level ``IN ()`` (which Postgres rejects
+                # and SQLite treats as always-false anyway).
+                scope_clauses = []
+                if caller_project_ids:
+                    scope_clauses.append(self.model.project_id.in_(caller_project_ids))
+                if caller_team_ids:
+                    scope_clauses.append(self.model.owner_team_id.in_(caller_team_ids))
+                if caller_email:
+                    scope_clauses.append(self.model.draft_owner_id == caller_email)
+
+                if not scope_clauses:
+                    # Fail-closed: non-admin with no resolvable scope sees
+                    # nothing. This is the safe behavior when route hasn't
+                    # plumbed scope through (back-compat call sites), or when
+                    # the caller genuinely owns no project/team/draft.
+                    logger.debug(
+                        "Non-admin caller has no scope (no email/teams/projects); "
+                        "returning empty list (fail-closed)"
+                    )
+                    return []
+
+                query = query.filter(or_(*scope_clauses))
+
+                # Optional fast-path narrowing by query-param project_id.
+                # Applied ON TOP of the scope filter (an AND), not in place of
+                # it. We keep the legacy "null project_id" allowance so users
+                # can still see legacy products they own via team/email even
+                # when filtering by a specific project.
+                if project_id:
+                    logger.debug(f"Additionally filtering products by project_id query param: {project_id}")
+                    query = query.filter(
+                        or_(
+                            self.model.project_id == project_id,
+                            self.model.project_id.is_(None),
+                        )
+                    )
+            elif project_id:
+                # Admin with explicit project filter — keep prior semantics
+                logger.debug(f"Admin filtering products by project_id: {project_id}")
                 query = query.filter(
-                    (self.model.project_id == project_id) |
-                    (self.model.project_id.is_(None))
+                    or_(
+                        self.model.project_id == project_id,
+                        self.model.project_id.is_(None),
+                    )
                 )
 
             return query.offset(skip).limit(limit).all()
@@ -579,6 +693,24 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
         except Exception as e:
             logger.error(f"Error querying distinct ODPS product types: {e}", exc_info=True)
             return []
+
+    def get_output_port_ids_for_products(
+        self, db: Session, *, product_ids: Iterable[str]
+    ) -> Set[str]:
+        """Return the set of OutputPort IDs belonging to the given DataProducts."""
+        pids = list(product_ids)
+        if not pids:
+            return set()
+        try:
+            rows = (
+                db.query(OutputPortDb.id)
+                .filter(OutputPortDb.product_id.in_(pids))
+                .all()
+            )
+            return {str(r[0]) for r in rows}
+        except Exception:
+            logger.exception("Failed to fetch output port IDs for product scoping")
+            return set()
 
     def get_distinct_owners(self, db: Session) -> List[str]:
         """Get distinct owner names from ODPS Data Product teams."""
@@ -695,7 +827,7 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
             return db.query(self.model).filter(
                 or_(
                     # Tier 3: Published to marketplace (everyone can see)
-                    self.model.published == True,
+                    self.model.publication_scope != "none",
                     # Tier 2: Team/project versions (no personal owner, in user's projects)
                     and_(
                         self.model.draft_owner_id.is_(None),
@@ -757,7 +889,7 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
                 return False
 
             # Tier 3: Published to marketplace
-            if product.published:
+            if (product.publication_scope or "none") != "none":
                 return True
             # Tier 1: User's own personal draft
             if product.draft_owner_id == current_user:
@@ -776,11 +908,14 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
         base_name: str
     ) -> List[DataProductDb]:
         """Get all versions of a product by base name.
-        
+
+        DEPRECATED: kept for back-compat. Prefer ``get_family_versions``
+        which uses the canonical ``version_family_id`` grouping key (PRD #442).
+
         Args:
             db: Database session
             base_name: Base name without version
-            
+
         Returns:
             List of DataProductDb objects representing all versions
         """
@@ -791,6 +926,135 @@ class DataProductRepository(CRUDBase[DataProductDb, DataProductCreate, DataProdu
             ).order_by(self.model.created_at.desc()).all()
         except Exception as e:
             logger.error(f"Error getting product versions: {e}", exc_info=True)
+            raise
+
+    # ---- Version-family lookups (PRD #442) ----
+
+    def get_family_versions(
+        self,
+        db: Session,
+        *,
+        family_id: str,
+        user_email: Optional[str] = None,
+        is_admin: bool = False,
+    ) -> List[DataProductDb]:
+        """Return every version in a family that's visible to the caller, newest first.
+
+        Visibility rules:
+          - Personal drafts (draft_owner_id IS NOT NULL) are visible only to
+            their owner, regardless of role.
+          - Admins see everything; other users see all non-personal-draft rows.
+
+        Args:
+            db: Database session
+            family_id: version_family_id to look up.
+            user_email: Caller's email/username (personal-draft owner check).
+            is_admin: If True, bypasses the personal-draft filter entirely.
+
+        Returns:
+            List of DataProductDb rows ordered by created_at DESC.
+        """
+        try:
+            query = db.query(self.model).filter(self.model.version_family_id == family_id)
+            if not is_admin:
+                query = query.filter(
+                    or_(
+                        self.model.draft_owner_id.is_(None),
+                        self.model.draft_owner_id == user_email,
+                    )
+                )
+            return query.order_by(self.model.created_at.desc()).all()
+        except Exception as e:
+            logger.error(f"Error fetching family versions for {family_id}: {e}", exc_info=True)
+            db.rollback()
+            raise
+
+    def list_family_representatives(
+        self,
+        db: Session,
+        *,
+        user_email: Optional[str] = None,
+        is_admin: bool = False,
+        project_id: Optional[str] = None,
+        include_history: bool = False,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[DataProductDb]:
+        """List one row per family (latest visible representative), or all
+        rows if include_history is True.
+
+        Representative-pick rules: for each family, choose the most recently
+        created row that passes the visibility filter (personal drafts hidden
+        from non-owners; project filter applied for non-admins).
+
+        Args:
+            db: Database session
+            user_email: Caller's email for personal-draft visibility
+            is_admin: If True, bypasses visibility filters
+            project_id: Optional project scope (non-admins see only project +
+                        unassigned rows)
+            include_history: If True, returns all visible rows flat
+            skip / limit: Pagination
+        """
+        from sqlalchemy import func
+
+        try:
+            base_filters = []
+            if not is_admin:
+                base_filters.append(
+                    or_(
+                        self.model.draft_owner_id.is_(None),
+                        self.model.draft_owner_id == user_email,
+                    )
+                )
+                if project_id:
+                    base_filters.append(
+                        or_(
+                            self.model.project_id == project_id,
+                            self.model.project_id.is_(None),
+                        )
+                    )
+
+            if include_history:
+                query = db.query(self.model)
+                if base_filters:
+                    query = query.filter(*base_filters)
+                return (
+                    query.order_by(
+                        self.model.version_family_id,
+                        self.model.created_at.desc(),
+                    )
+                    .offset(skip)
+                    .limit(limit)
+                    .all()
+                )
+
+            rn = (
+                func.row_number()
+                .over(
+                    partition_by=self.model.version_family_id,
+                    order_by=self.model.created_at.desc(),
+                )
+                .label("_family_rn")
+            )
+            ranked = db.query(self.model.id.label("_id"), rn)
+            if base_filters:
+                ranked = ranked.filter(*base_filters)
+            ranked_sq = ranked.subquery()
+            query = (
+                db.query(self.model)
+                .join(ranked_sq, self.model.id == ranked_sq.c._id)
+                .filter(ranked_sq.c._family_rn == 1)
+            )
+            return (
+                query.order_by(self.model.created_at.desc())
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
+        except Exception as e:
+            logger.error(f"Error listing family representatives: {e}", exc_info=True)
+            db.rollback()
             raise
 
 
@@ -810,9 +1074,17 @@ class DataProductSubscriptionRepository:
         *,
         product_id: str,
         subscriber_email: str,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        on_behalf_of_type: Optional[str] = None,
+        on_behalf_of_value: Optional[str] = None,
     ) -> DataProductSubscriptionDb:
-        """Create a new subscription."""
+        """Create a new subscription.
+
+        : when ``on_behalf_of_type`` is set, the
+        subscription was requested on behalf of a different principal (group
+        or service principal). Caller is responsible for validating the
+        principal exists in the workspace SCIM directory before calling.
+        """
         from uuid import uuid4
         logger.debug(f"Creating subscription for {subscriber_email} to product {product_id}")
         try:
@@ -820,7 +1092,9 @@ class DataProductSubscriptionRepository:
                 id=str(uuid4()),
                 product_id=product_id,
                 subscriber_email=subscriber_email,
-                subscription_reason=reason
+                subscription_reason=reason,
+                on_behalf_of_type=on_behalf_of_type,
+                on_behalf_of_value=on_behalf_of_value,
             )
             db.add(db_obj)
             db.flush()

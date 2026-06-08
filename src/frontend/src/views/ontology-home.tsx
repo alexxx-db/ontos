@@ -4,14 +4,15 @@ import i18n from 'i18next';
 import { useTranslation } from 'react-i18next';
 import {
   Network,
-  Loader2,
 } from 'lucide-react';
+import { GraphCanvasSkeleton } from '@/components/common/list-view-skeleton';
 import type {
   OntologyConcept,
   GroupedConcepts,
 } from '@/types/ontology';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { useGlossaryPreferencesStore } from '@/stores/glossary-preferences-store';
+import { useKnowledgeGraphStore } from '@/stores/knowledge-graph-store';
 import {
   GraphTab,
   GlossaryFilterPanel,
@@ -152,6 +153,15 @@ export default function OntologyHomeView() {
     fetchData();
   }, [fetchData]);
 
+  // Refetch when other views (Settings rebuild, ontology generator save,
+  // collection/concept edits) bump the global knowledge-graph nonce.
+  const knowledgeGraphRefreshNonce = useKnowledgeGraphStore((s) => s.refreshNonce);
+  useEffect(() => {
+    if (knowledgeGraphRefreshNonce > 0) {
+      fetchData();
+    }
+  }, [knowledgeGraphRefreshNonce, fetchData]);
+
   // Navigate to concept in Business Terms view on node click
   const handleNodeClick = useCallback((concept: OntologyConcept) => {
     navigate(`/semantic-models?concept=${encodeURIComponent(concept.iri)}`);
@@ -187,8 +197,8 @@ export default function OntologyHomeView() {
 
       {/* Loading state */}
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex-1">
+          <GraphCanvasSkeleton showFilterPanel showToolbar={false} height="h-[600px]" />
         </div>
       ) : (
         <div className="flex-1 flex flex-col">
@@ -220,6 +230,7 @@ export default function OntologyHomeView() {
             onToggleRoot={handleToggleRoot}
             onNodeClick={handleNodeClick}
             showRootBadges={!groupBySource}
+            selectedLanguage={selectedLanguage}
           />
         </div>
       )}

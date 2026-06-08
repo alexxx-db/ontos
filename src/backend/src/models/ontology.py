@@ -29,13 +29,13 @@ class SourceType(str, Enum):
 
 
 class ConceptStatus(str, Enum):
+    """Ontology concept status. Aligned with EntityStatus; CERTIFIED removed (separate dimension)."""
     DRAFT = "draft"
     UNDER_REVIEW = "under_review"
     APPROVED = "approved"
-    PUBLISHED = "published"
-    CERTIFIED = "certified"
+    ACTIVE = "active"
     DEPRECATED = "deprecated"
-    ARCHIVED = "archived"
+    RETIRED = "retired"
 
 
 class PromotionType(str, Enum):
@@ -173,6 +173,7 @@ class ConceptUpdate(BaseModel):
 class SemanticModel(BaseModel):
     """Represents a loaded semantic model (taxonomy/ontology source)"""
     name: str
+    display_name: Optional[str] = None
     description: Optional[str] = None
     source_type: str  # 'file' | 'database' | 'external' | 'schema'
     format: Optional[str] = None  # 'ttl' | 'rdf' | 'owl'

@@ -280,10 +280,213 @@ class TestAuthorizationManager:
             approval_privileges={},
         )
         mock_settings_manager.list_app_roles.return_value = [role_with_unknown]
-        
+
         result = manager.get_user_effective_permissions(["test"])
-        
+
         # Should process valid features and skip unknown ones
         assert result["data-products"] == FeatureAccessLevel.READ_WRITE
         assert "unknown-feature-xyz" not in result or result.get("unknown-feature-xyz") == FeatureAccessLevel.NONE
+
+
+class TestIsUserOntosAdmin:
+    """Tests for ``AuthorizationManager.is_user_ontos_admin``.
+
+    Regression coverage for #404 — verifies the admin gate uses role membership
+    (``AppRole.is_admin``) and is decoupled from ``settings:ADMIN``.
+    """
+
+    @pytest.fixture
+    def mock_settings_manager(self):
+        return Mock()
+
+    @pytest.fixture
+    def manager(self, mock_settings_manager):
+        return AuthorizationManager(settings_manager=mock_settings_manager)
+
+    @staticmethod
+    def _role(name, assigned_groups, is_admin=False, feature_permissions=None):
+        return AppRole(
+            id=uuid.uuid4(),
+            name=name,
+            description=f"{name} role",
+            assigned_groups=assigned_groups,
+            feature_permissions=feature_permissions or {},
+            home_sections=[],
+            approval_privileges={},
+            is_admin=is_admin,
+        )
+
+    def test_returns_false_for_empty_groups(self, manager, mock_settings_manager):
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role("Admin", ["admins"], is_admin=True),
+        ]
+        assert manager.is_user_ontos_admin([]) is False
+        assert manager.is_user_ontos_admin(None) is False
+
+    def test_returns_true_when_group_matches_is_admin_role(self, manager, mock_settings_manager):
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role("Admin", ["admins"], is_admin=True),
+            self._role("Producer", ["data-producers"]),
+        ]
+        assert manager.is_user_ontos_admin(["admins"]) is True
+
+    def test_group_match_is_case_insensitive(self, manager, mock_settings_manager):
+        # Mismatched casing on either side must still match — group sources differ
+        # (settings.yaml vs identity headers).
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role("Admin", ["Admins"], is_admin=True),
+        ]
+        assert manager.is_user_ontos_admin(["aDmInS"]) is True
+
+    def test_returns_false_when_only_non_admin_role_matches(self, manager, mock_settings_manager):
+        # User belongs to a role that has settings:ADMIN but is NOT flagged is_admin.
+        # This is the core #404 regression: settings:ADMIN must not imply Ontos admin.
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role(
+                "Settings Admin",
+                ["settings-admins"],
+                is_admin=False,
+                feature_permissions={"settings": FeatureAccessLevel.ADMIN},
+            ),
+            self._role("Admin", ["admins"], is_admin=True),
+        ]
+        assert manager.is_user_ontos_admin(["settings-admins"]) is False
+
+    def test_returns_false_when_no_role_matches(self, manager, mock_settings_manager):
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role("Admin", ["admins"], is_admin=True),
+        ]
+        assert manager.is_user_ontos_admin(["data-producers"]) is False
+
+    def test_returns_false_when_admin_role_has_no_assigned_groups(self, manager, mock_settings_manager):
+        # Defense-in-depth: a misconfigured admin role with empty assigned_groups
+        # must NOT grant admin to every user.
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role("Admin", [], is_admin=True),
+        ]
+        assert manager.is_user_ontos_admin(["anyone"]) is False
+
+    def test_handles_multiple_admin_roles(self, manager, mock_settings_manager):
+        mock_settings_manager.list_app_roles.return_value = [
+            self._role("Platform Admin", ["platform-admins"], is_admin=True),
+            self._role("Data Admin", ["data-admins"], is_admin=True),
+        ]
+        assert manager.is_user_ontos_admin(["data-admins"]) is True
+        assert manager.is_user_ontos_admin(["platform-admins"]) is True
+        assert manager.is_user_ontos_admin(["other"]) is False
+
+    def test_settings_manager_failure_denies_admin(self, manager, mock_settings_manager):
+        # If we can't load roles, fail closed — never silently elevate.
+        mock_settings_manager.list_app_roles.side_effect = RuntimeError("db down")
+        assert manager.is_user_ontos_admin(["admins"]) is False
+
+
+# =============================================================================
+# Issue #326 — get_user_effective_role_ids
+# =============================================================================
+
+_ROLE_A_ID = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001")
+_ROLE_B_ID = uuid.UUID("bbbbbbbb-0000-0000-0000-000000000002")
+
+
+def _make_role(role_id: uuid.UUID, name: str, groups: list[str]) -> AppRole:
+    return AppRole(
+        id=role_id,
+        name=name,
+        description=None,
+        assigned_groups=groups,
+        feature_permissions={},
+        home_sections=[],
+        approval_privileges={},
+    )
+
+
+class TestGetUserEffectiveRoleIds:
+    """Tests for AuthorizationManager.get_user_effective_role_ids (issue #326)."""
+
+    @pytest.fixture
+    def mock_settings_manager(self):
+        return Mock()
+
+    @pytest.fixture
+    def manager(self, mock_settings_manager):
+        return AuthorizationManager(settings_manager=mock_settings_manager)
+
+    def test_group_derived_single_role(self, manager, mock_settings_manager):
+        """Viewer's group matches one role → that role's ID is returned."""
+        role = _make_role(_ROLE_A_ID, "Data Producer", ["data-producers"])
+        mock_settings_manager.list_app_roles.return_value = [role]
+
+        result = manager.get_user_effective_role_ids(["data-producers"])
+
+        assert result == {str(_ROLE_A_ID)}
+
+    def test_group_derived_multiple_roles(self, manager, mock_settings_manager):
+        """Viewer belongs to groups that match two roles → both IDs returned."""
+        role_a = _make_role(_ROLE_A_ID, "Data Producer", ["producers"])
+        role_b = _make_role(_ROLE_B_ID, "Data Steward", ["stewards"])
+        mock_settings_manager.list_app_roles.return_value = [role_a, role_b]
+
+        result = manager.get_user_effective_role_ids(["producers", "stewards"])
+
+        assert result == {str(_ROLE_A_ID), str(_ROLE_B_ID)}
+
+    def test_group_derived_no_match(self, manager, mock_settings_manager):
+        """Viewer's groups don't match any role → empty set."""
+        role = _make_role(_ROLE_A_ID, "Data Producer", ["producers"])
+        mock_settings_manager.list_app_roles.return_value = [role]
+
+        result = manager.get_user_effective_role_ids(["consumers"])
+
+        assert result == set()
+
+    def test_empty_groups(self, manager, mock_settings_manager):
+        """Empty group list → empty set."""
+        mock_settings_manager.list_app_roles.return_value = [
+            _make_role(_ROLE_A_ID, "Data Producer", ["producers"])
+        ]
+        result = manager.get_user_effective_role_ids([])
+        assert result == set()
+
+    def test_none_groups(self, manager, mock_settings_manager):
+        """None group list → empty set."""
+        mock_settings_manager.list_app_roles.return_value = [
+            _make_role(_ROLE_A_ID, "Data Producer", ["producers"])
+        ]
+        result = manager.get_user_effective_role_ids(None)
+        assert result == set()
+
+    def test_applied_override_pins_to_single_role(self, manager, mock_settings_manager):
+        """Applied role override → exactly that one role UUID is returned."""
+        role_a = _make_role(_ROLE_A_ID, "Data Producer", ["producers"])
+        role_b = _make_role(_ROLE_B_ID, "Data Steward", ["stewards"])
+        mock_settings_manager.list_app_roles.return_value = [role_a, role_b]
+
+        # Viewer has groups matching role_a but override pins to role_b
+        result = manager.get_user_effective_role_ids(
+            ["producers"], applied_role_override_id=str(_ROLE_B_ID)
+        )
+
+        assert result == {str(_ROLE_B_ID)}
+
+    def test_applied_override_unknown_id_returns_empty(self, manager, mock_settings_manager):
+        """Applied override ID not found in roles list → empty set."""
+        mock_settings_manager.list_app_roles.return_value = [
+            _make_role(_ROLE_A_ID, "Data Producer", ["producers"])
+        ]
+        unknown_id = str(uuid.uuid4())
+
+        result = manager.get_user_effective_role_ids(["producers"], unknown_id)
+
+        assert result == set()
+
+    def test_case_insensitive_group_matching(self, manager, mock_settings_manager):
+        """Group matching is case-insensitive (role has 'Producers', user has 'PRODUCERS')."""
+        role = _make_role(_ROLE_A_ID, "Data Producer", ["Producers"])
+        mock_settings_manager.list_app_roles.return_value = [role]
+
+        result = manager.get_user_effective_role_ids(["PRODUCERS"])
+
+        assert result == {str(_ROLE_A_ID)}
+
 

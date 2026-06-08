@@ -7,7 +7,7 @@ Schema: https://github.com/bitol-io/open-data-product-standard/blob/main/schema/
 All models follow the ODPS v1.0.0 structure with Databricks-specific extensions where needed.
 """
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, func, ForeignKey, Date, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, func, ForeignKey, Date, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from uuid import uuid4
@@ -46,6 +46,14 @@ class DataProductDb(Base):
     # Default 99 means inherit almost everything that's marked inheritable.
     max_level_inheritance = Column(Integer, nullable=False, default=99)
 
+    # ==================== consumer_principals ====================
+    # JSON array of typed principals: [{type: "group"|..., value: "..."}, ...].
+    # Stored as JSON text for portability across SQLite (dev) + Postgres (prod).
+    # type defaults to "group"; the model is intentionally extensible to non-
+    # group identity methods (service principals, IdP roles, OAuth scopes)
+    # without a future breaking migration.
+    consumer_principals = Column(Text, nullable=True)
+
     # ==================== Audit Fields ====================
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -53,14 +61,30 @@ class DataProductDb(Base):
     # ==================== Versioning Fields ====================
     # Personal draft owner - if set, this is a personal draft visible only to owner/project team
     draft_owner_id = Column(String, nullable=True, index=True)
-    # Parent version reference for version lineage
+    # Parent version reference (lineage). One edge per row to predecessor; allows forks.
     parent_product_id = Column(String, ForeignKey("data_products.id", ondelete="SET NULL"), nullable=True, index=True)
-    # Base name without version (e.g., "customer_product" for "customer_product_v1.0.0")
+    # Canonical, immutable family grouping key. Copied from parent on every
+    # clone, or set to self.id on first creation. Single indexed equality
+    # lookup returns every version of the family. See PRD #442 in GH.
+    version_family_id = Column(String, nullable=False, index=True)
+    # Legacy base name; superseded by version_family_id. Kept for back-compat, no longer queried.
     base_name = Column(String, nullable=True, index=True)
     # Summary of changes in this version
     change_summary = Column(Text, nullable=True)
-    # Marketplace publication status
+    # Deprecated: legacy marketplace flag; use publication_scope. Column retained for DB compatibility.
     published = Column(Boolean, nullable=False, default=False, index=True)
+    # Publication scope (canonical visibility for marketplace / discovery)
+    publication_scope = Column(String, nullable=False, default="none", index=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    published_by = Column(String, nullable=True)
+
+    # ==================== Certification ====================
+    certification_level = Column(Integer, nullable=True, index=True)
+    inherited_certification_level = Column(Integer, nullable=True)
+    certified_at = Column(DateTime(timezone=True), nullable=True)
+    certified_by = Column(String, nullable=True)
+    certification_expires_at = Column(DateTime(timezone=True), nullable=True)
+    certification_notes = Column(Text, nullable=True)
 
     # ==================== ODPS v1.0.0 Relationships ====================
     description = relationship("DescriptionDb", back_populates="product", uselist=False, cascade="all, delete-orphan", lazy="selectin")
@@ -75,6 +99,17 @@ class DataProductDb(Base):
 
     def __repr__(self):
         return f"<DataProductDb(id='{self.id}', name='{self.name}', status='{self.status}')>"
+
+
+@event.listens_for(DataProductDb, "before_insert")
+def _seed_product_version_family_id(_mapper, _connection, target):
+    """Guarantee the version_family_id NOT NULL invariant regardless of
+    insert path. Mirrors the contract-side listener — see PRD #442.
+    """
+    if not getattr(target, "id", None):
+        target.id = str(uuid4())
+    if not getattr(target, "version_family_id", None):
+        target.version_family_id = target.id
 
 
 # ============================================================================
@@ -369,6 +404,11 @@ class DataProductSubscriptionDb(Base):
     subscriber_email = Column(String, nullable=False, index=True)
     subscribed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     subscription_reason = Column(Text, nullable=True)  # Optional: why they subscribed
+    # subscribe-on-behalf-of (approval workflow OBO) — when set, the request was
+    # initiated for a Databricks group or service principal rather than the
+    # subscriber themselves.
+    on_behalf_of_type = Column(String(50), nullable=True)  # 'group' | 'service_principal' | 'user'
+    on_behalf_of_value = Column(String(255), nullable=True)
 
     # Relationship to product
     product = relationship("DataProductDb", backref="subscriptions")

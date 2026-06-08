@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,6 +30,8 @@ import {
   RotateCcw,
   Power,
   PowerOff,
+  HelpCircle,
+  Eye,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -41,10 +43,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ColumnDef, Column } from "@tanstack/react-table";
 import { useApi } from '@/hooks/use-api';
 import SettingsPageWrapper from '@/components/settings/settings-page-wrapper';
 import { DataTable } from '@/components/ui/data-table';
+import { TableSkeleton } from '@/components/common/list-view-skeleton';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
 import type { 
@@ -55,6 +60,7 @@ import type {
 } from '@/types/process-workflow';
 import { getTriggerDisplay } from '@/lib/workflow-labels';
 import { WorkflowExecutionDialog } from '@/components/workflows/workflow-execution-dialog';
+import ApprovalWizardDialog from '@/components/workflows/approval-wizard-dialog';
 import { RelativeDate } from '@/components/common/relative-date';
 
 interface WorkflowExecutionsResponse {
@@ -107,7 +113,9 @@ export default function Workflows() {
   const canEdit = hasPermission('process-workflows', FeatureAccessLevel.ADMIN);
   
   // Workflow type filter: process (event-driven) | approval (wizard-driven)
-  const [workflowTypeFilter, setWorkflowTypeFilter] = useState<'process' | 'approval'>('process');
+  const [workflowTypeFilter, setWorkflowTypeFilter] = useState<'all' | 'process' | 'approval'>('all');
+  // Stats card filter
+  const [statsFilter, setStatsFilter] = useState<'all' | 'active' | 'inactive' | 'default' | 'running' | 'failed'>('all');
   // Workflow state
   const [workflows, setWorkflows] = useState<ProcessWorkflow[]>([]);
   const [isLoadingWorkflows, setIsLoadingWorkflows] = useState(true);
@@ -119,6 +127,10 @@ export default function Workflows() {
   // Executions state
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
   const [isLoadingExecutions, setIsLoadingExecutions] = useState(true);
+
+  // Approval sessions state
+  const [approvalSessions, setApprovalSessions] = useState<any[]>([]);
+  const [, setIsLoadingApprovalSessions] = useState(true);
   
   // Execution detail dialog state
   const [selectedExecution, setSelectedExecution] = useState<WorkflowExecution | null>(null);
@@ -128,13 +140,15 @@ export default function Workflows() {
   const [deleteExecutionDialogOpen, setDeleteExecutionDialogOpen] = useState(false);
   const [executionToDelete, setExecutionToDelete] = useState<WorkflowExecution | null>(null);
   const [isActionInProgress, setIsActionInProgress] = useState(false);
+  // Preview wizard (issue #405): launched from the row-action menu on any
+  // approval workflow. Pure FE dry-run — no API session, no audit.
+  const [previewingWorkflow, setPreviewingWorkflow] = useState<ProcessWorkflow | null>(null);
 
   const loadWorkflows = useCallback(async () => {
     setIsLoadingWorkflows(true);
     try {
-      const params = new URLSearchParams();
-      params.set('workflow_type', workflowTypeFilter);
-      const response = await apiGet<WorkflowListResponse>(`/api/workflows?${params.toString()}`);
+      // Always fetch all workflows — type filtering is done client-side for instant tab switching
+      const response = await apiGet<WorkflowListResponse>('/api/workflows');
       if (response.data) {
         setWorkflows(response.data.workflows || []);
       }
@@ -147,7 +161,7 @@ export default function Workflows() {
     } finally {
       setIsLoadingWorkflows(false);
     }
-  }, [apiGet, toast, t, workflowTypeFilter]);
+  }, [apiGet, toast, t]);
 
   const loadExecutions = useCallback(async () => {
     setIsLoadingExecutions(true);
@@ -164,10 +178,25 @@ export default function Workflows() {
     }
   }, [apiGet]);
 
+  const loadApprovalSessions = useCallback(async () => {
+    setIsLoadingApprovalSessions(true);
+    try {
+      const response = await apiGet<{ sessions: any[]; total: number }>('/api/approvals/sessions');
+      if (response.data) {
+        setApprovalSessions(response.data.sessions || []);
+      }
+    } catch {
+      // Silently handle — endpoint may not exist on older deployments
+    } finally {
+      setIsLoadingApprovalSessions(false);
+    }
+  }, [apiGet]);
+
   useEffect(() => {
     loadWorkflows();
     loadExecutions();
-  }, [loadWorkflows, loadExecutions]);
+    loadApprovalSessions();
+  }, [loadWorkflows, loadExecutions, loadApprovalSessions]);
 
   // Workflow handlers
   const handleToggleWorkflowActive = async (workflow: ProcessWorkflow) => {
@@ -748,6 +777,11 @@ export default function Workflows() {
           {row.original.is_default && (
             <Badge variant="secondary" className="text-xs">Default</Badge>
           )}
+          {row.original.workflow_type === 'approval' ? (
+            <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800">Approval</Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800">Process</Badge>
+          )}
         </div>
       ),
     },
@@ -821,6 +855,12 @@ export default function Workflows() {
               <Pencil className="h-4 w-4 mr-2" />
               {canEdit ? t('common:actions.edit') : t('common:actions.view')}
             </DropdownMenuItem>
+            {row.original.workflow_type === 'approval' && (
+              <DropdownMenuItem onClick={() => setPreviewingWorkflow(row.original)}>
+                <Eye className="h-4 w-4 mr-2" />
+                Preview wizard
+              </DropdownMenuItem>
+            )}
             {canEdit && (
               <>
                 <DropdownMenuItem onClick={() => {
@@ -857,12 +897,21 @@ export default function Workflows() {
           <ChevronDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2">
-          <GitBranch className="h-4 w-4 text-muted-foreground" />
-          <span className="font-medium">{row.original.workflow_name}</span>
-        </div>
-      ),
+      cell: ({ row }) => {
+        const wfMatch = workflows.find(w => w.name === row.original.workflow_name);
+        const wfType = wfMatch?.workflow_type || 'process';
+        return (
+          <div className="flex items-center gap-2">
+            <GitBranch className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium">{row.original.workflow_name}</span>
+            {wfType === 'approval' ? (
+              <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800">Approval</Badge>
+            ) : (
+              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800">Process</Badge>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: 'entity_name',
@@ -940,13 +989,53 @@ export default function Workflows() {
       accessorKey: 'error_message',
       header: 'Error',
       enableSorting: false,
-      cell: ({ row }) => (
-        row.original.error_message ? (
-          <span className="text-sm text-destructive truncate max-w-[200px]" title={row.original.error_message}>
-            {row.original.error_message}
-          </span>
-        ) : null
-      ),
+      cell: ({ row }) => {
+        const errorMessage = row.original.error_message;
+        if (!errorMessage) return null;
+        // `truncate` is a no-op on inline spans, so a multi-line stack trace
+        // used to expand the row vertically; clamp to 2 lines on a block button
+        // and hoist the full text into a Popover for inspection / copy.
+        return (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="text-left text-sm text-destructive line-clamp-2 max-w-[280px] hover:underline focus:outline-none focus:ring-1 focus:ring-destructive/40 rounded-sm"
+                onClick={(e) => e.stopPropagation()}
+                title="Click to see full error"
+              >
+                {errorMessage}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              side="bottom"
+              className="w-[480px] max-w-[90vw] p-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b px-3 py-2">
+                <span className="text-xs font-medium text-muted-foreground">Error details</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(errorMessage).then(() => {
+                      toast({ title: 'Copied', description: 'Error copied to clipboard.' });
+                    });
+                  }}
+                >
+                  <Copy className="h-3 w-3 mr-1" />
+                  Copy
+                </Button>
+              </div>
+              <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words p-3 text-xs text-destructive">
+                {errorMessage}
+              </pre>
+            </PopoverContent>
+          </Popover>
+        );
+      },
     },
     {
       id: 'actions',
@@ -1029,14 +1118,84 @@ export default function Workflows() {
     },
   ];
 
-  // Stats
-  const activeWorkflows = workflows.filter(w => w.is_active).length;
-  const totalWorkflows = workflows.length;
-  const runningExecutions = executions.filter(e => e.status === 'running' || e.status === 'paused').length;
-  const recentFailures = executions.filter(e => e.status === 'failed').length;
+  // Client-side type filtering (all data fetched once, tab switching is instant)
+  const typeFilteredWorkflows = useMemo(() => {
+    if (workflowTypeFilter === 'all') return workflows;
+    return workflows.filter(w => (w.workflow_type || 'process') === workflowTypeFilter);
+  }, [workflows, workflowTypeFilter]);
+
+  // Build a set of workflow IDs for the active type filter to filter executions
+  const typeFilteredWorkflowIds = useMemo(() => {
+    if (workflowTypeFilter === 'all') return null; // null = don't filter
+    return new Set(typeFilteredWorkflows.map(w => w.id));
+  }, [workflowTypeFilter, typeFilteredWorkflows]);
+
+  const typeFilteredExecutions = useMemo(() => {
+    if (!typeFilteredWorkflowIds) return executions;
+    return executions.filter(e => {
+      // Match execution to workflow by workflow_id (from trigger context or name)
+      const wfMatch = typeFilteredWorkflows.find(w => w.name === e.workflow_name);
+      return wfMatch != null;
+    });
+  }, [executions, typeFilteredWorkflowIds, typeFilteredWorkflows]);
+
+  // Transform approval sessions into execution-shaped rows for the unified table
+  const approvalSessionsAsExecutions = useMemo(() => {
+    if (workflowTypeFilter === 'process') return [];
+    return approvalSessions.map((s): WorkflowExecution => ({
+      id: s.id,
+      workflow_id: s.workflow_id,
+      workflow_name: s.workflow_name || 'Approval Workflow',
+      status: s.status === 'completed' ? 'succeeded' : s.status === 'abandoned' ? 'cancelled' : 'running',
+      entity_type: s.entity_type,
+      entity_id: s.entity_id,
+      entity_name: s.entity_id,
+      started_at: s.created_at,
+      finished_at: s.updated_at,
+      current_step_name: s.status === 'in_progress' ? `Step ${(s.current_step_index || 0) + 1}` : undefined,
+      success_count: s.status === 'completed' ? 1 : 0,
+      failure_count: s.status === 'abandoned' ? 1 : 0,
+      step_executions: [],
+    }));
+  }, [approvalSessions, workflowTypeFilter]);
+
+  // Stats (computed after allExecutions is defined below)
+
+  // Stats card filtered data (layered on top of type filtering)
+  const filteredWorkflows = useMemo(() => {
+    if (statsFilter === 'active') return typeFilteredWorkflows.filter(w => w.is_active);
+    if (statsFilter === 'inactive') return typeFilteredWorkflows.filter(w => !w.is_active);
+    if (statsFilter === 'default') return typeFilteredWorkflows.filter(w => w.is_default);
+    return typeFilteredWorkflows;
+  }, [typeFilteredWorkflows, statsFilter]);
+
+  // Merge process executions + approval sessions into one unified list
+  const allExecutions = useMemo(() => {
+    const merged = [...typeFilteredExecutions, ...approvalSessionsAsExecutions];
+    return merged.sort((a, b) => {
+      const da = a.started_at ? new Date(a.started_at).getTime() : 0;
+      const db = b.started_at ? new Date(b.started_at).getTime() : 0;
+      return db - da; // newest first
+    });
+  }, [typeFilteredExecutions, approvalSessionsAsExecutions]);
+
+  // Stats (computed from merged executions so they include approval sessions)
+  const activeWorkflows = typeFilteredWorkflows.filter(w => w.is_active).length;
+  const totalWorkflows = typeFilteredWorkflows.length;
+  const runningExecutions = allExecutions.filter(e => e.status === 'running' || e.status === 'paused').length;
+  const recentFailures = allExecutions.filter(e => e.status === 'failed' || e.status === 'cancelled').length;
+
+  const filteredExecutions = useMemo(() => {
+    if (statsFilter === 'running') return allExecutions.filter(e => e.status === 'running' || e.status === 'paused');
+    if (statsFilter === 'failed') return allExecutions.filter(e => e.status === 'failed' || e.status === 'cancelled');
+    return allExecutions;
+  }, [allExecutions, statsFilter]);
+
+  // Reset stats filter when workflow type changes
+  useEffect(() => { setStatsFilter('all'); }, [workflowTypeFilter]);
 
   return (
-    <SettingsPageWrapper title={t('common:labels.workflows', 'Workflows')}>
+    <SettingsPageWrapper title={t('common:labels.workflows', 'Workflows')} permissionId="settings-workflows">
       <div className="mb-6">
         <div className="flex justify-between items-start">
           <div>
@@ -1070,7 +1229,7 @@ export default function Workflows() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button onClick={() => navigate(`${pathname}/new`)}>
+              <Button onClick={() => navigate(`${pathname}/new${workflowTypeFilter !== 'all' ? `?type=${workflowTypeFilter}` : ''}`)}>
                 <Plus className="h-4 w-4 mr-2" />
                 Create Workflow
               </Button>
@@ -1078,36 +1237,78 @@ export default function Workflows() {
           )}
         </div>
         <div className="mt-4">
-          <Tabs value={workflowTypeFilter} onValueChange={(v) => setWorkflowTypeFilter(v as 'process' | 'approval')}>
-            <TabsList>
-              <TabsTrigger value="process">Process workflows</TabsTrigger>
-              <TabsTrigger value="approval">Approval workflows</TabsTrigger>
-            </TabsList>
+          <Tabs value={workflowTypeFilter} onValueChange={(v) => setWorkflowTypeFilter(v as 'all' | 'process' | 'approval')}>
+            <div className="flex items-center gap-3">
+              <TabsList className="h-auto p-1">
+                <TabsTrigger value="all" className="px-4 py-2">
+                  <span>All</span>
+                </TabsTrigger>
+                <TabsTrigger value="process" className="px-4 py-2">
+                  <span>Process</span>
+                </TabsTrigger>
+                <TabsTrigger value="approval" className="px-4 py-2">
+                  <span>Approval</span>
+                </TabsTrigger>
+              </TabsList>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-xs">
+                    <ul className="text-xs space-y-1 list-disc pl-3">
+                      <li>Process: runs after events (notify, tag, validate)</li>
+                      <li>Approval: pops up before actions (consent, terms)</li>
+                      <li>They chain: approval first, then process</li>
+                    </ul>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </Tabs>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 min-h-[120px]">
+        <Card
+          className={`cursor-pointer transition-colors hover:border-primary ${statsFilter === 'active' ? 'border-primary bg-primary/5' : statsFilter === 'inactive' ? 'border-amber-500 bg-amber-500/5' : ''}`}
+          onClick={() => setStatsFilter(prev => prev === 'active' ? 'all' : 'active')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">Active Workflows</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-green-600 dark:text-green-400">{activeWorkflows}</div>
-            <p className="text-sm text-muted-foreground mt-1">of {totalWorkflows} total</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              of {totalWorkflows} total
+              {totalWorkflows - activeWorkflows > 0 && (
+                <button
+                  className="ml-1 text-amber-600 hover:underline"
+                  onClick={(e) => { e.stopPropagation(); setStatsFilter(prev => prev === 'inactive' ? 'all' : 'inactive'); }}
+                >
+                  ({totalWorkflows - activeWorkflows} inactive)
+                </button>
+              )}
+            </p>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-colors hover:border-primary ${statsFilter === 'default' ? 'border-primary bg-primary/5' : ''}`}
+          onClick={() => setStatsFilter(prev => prev === 'default' ? 'all' : 'default')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">Default Workflows</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{workflows.filter(w => w.is_default).length}</div>
+            <div className="text-3xl font-bold">{typeFilteredWorkflows.filter(w => w.is_default).length}</div>
             <p className="text-sm text-muted-foreground mt-1">built-in workflows</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-colors hover:border-primary ${statsFilter === 'running' ? 'border-primary bg-primary/5' : ''}`}
+          onClick={() => setStatsFilter(prev => prev === 'running' ? 'all' : 'running')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">In Progress</CardTitle>
           </CardHeader>
@@ -1116,7 +1317,10 @@ export default function Workflows() {
             <p className="text-sm text-muted-foreground mt-1">running or paused</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-colors hover:border-primary ${statsFilter === 'failed' ? 'border-primary bg-primary/5' : ''}`}
+          onClick={() => setStatsFilter(prev => prev === 'failed' ? 'all' : 'failed')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">Recent Failures</CardTitle>
           </CardHeader>
@@ -1128,6 +1332,18 @@ export default function Workflows() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Stats filter indicator */}
+      {statsFilter !== 'all' && (
+        <div className="flex items-center gap-2 mb-4">
+          <Badge variant="outline" className="text-sm">
+            Filtered: {statsFilter === 'active' ? 'Active workflows' : statsFilter === 'inactive' ? 'Inactive workflows' : statsFilter === 'default' ? 'Default workflows' : statsFilter === 'running' ? 'Running executions' : 'Failed executions'}
+          </Badge>
+          <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setStatsFilter('all')}>
+            Clear filter
+          </button>
+        </div>
+      )}
 
       {/* Workflows Table */}
       <Card className="mb-8">
@@ -1147,9 +1363,7 @@ export default function Workflows() {
         </CardHeader>
         <CardContent>
           {isLoadingWorkflows ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-            </div>
+            <TableSkeleton columns={5} rows={5} bordered={false} />
           ) : workflows.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <GitBranch className="h-12 w-12 mx-auto mb-4 opacity-20" />
@@ -1159,9 +1373,9 @@ export default function Workflows() {
               )}
             </div>
           ) : (
-            <DataTable 
-              columns={workflowColumns} 
-              data={workflows}
+            <DataTable
+              columns={workflowColumns}
+              data={filteredWorkflows}
               searchColumn="name"
               storageKey="workflows-sort"
               bulkActions={canEdit ? (selectedRows) => (
@@ -1215,9 +1429,7 @@ export default function Workflows() {
         </CardHeader>
         <CardContent>
           {isLoadingExecutions ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-            </div>
+            <TableSkeleton columns={8} rows={5} bordered={false} />
           ) : executions.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Play className="h-12 w-12 mx-auto mb-4 opacity-20" />
@@ -1225,9 +1437,9 @@ export default function Workflows() {
               <p className="text-sm">Executions will appear here when workflows are triggered.</p>
             </div>
           ) : (
-            <DataTable 
-              columns={executionColumns} 
-              data={executions}
+            <DataTable
+              columns={executionColumns}
+              data={filteredExecutions}
               searchColumn="workflow_name"
               storageKey="workflow-executions-sort"
               onRowClick={(row) => {
@@ -1270,6 +1482,8 @@ export default function Workflows() {
         </CardContent>
       </Card>
 
+      {/* Approval Sessions are merged into the Recent Executions table above */}
+
       {/* Duplicate Workflow Dialog */}
       <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
         <DialogContent>
@@ -1304,6 +1518,21 @@ export default function Workflows() {
         open={executionDialogOpen}
         onOpenChange={setExecutionDialogOpen}
       />
+
+      {/* Approval Wizard Preview (issue #405) — synthetic dry-run, no API
+          session, no agreement, no notifications. */}
+      {previewingWorkflow && (
+        <ApprovalWizardDialog
+          isOpen={!!previewingWorkflow}
+          onOpenChange={(open) => { if (!open) setPreviewingWorkflow(null); }}
+          entityType="preview"
+          entityId="preview"
+          entityName={previewingWorkflow.name}
+          preselectedWorkflowId={previewingWorkflow.id}
+          autoStartWithPreselected
+          previewMode
+        />
+      )}
 
       {/* Delete Execution Confirmation Dialog */}
       <Dialog open={deleteExecutionDialogOpen} onOpenChange={setDeleteExecutionDialogOpen}>

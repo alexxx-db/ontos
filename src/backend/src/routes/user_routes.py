@@ -18,7 +18,7 @@ from src.controller.settings_manager import SettingsManager
 from pydantic import BaseModel
 from src.controller.notifications_manager import NotificationsManager
 from src.common.features import FeatureAccessLevel
-from src.common.authorization import get_user_details_from_sdk
+from src.common.authorization import get_user_details_from_sdk, _try_resolve_test_override
 from sqlalchemy.orm import Session # Import Session
 
 from src.common.logging import get_logger
@@ -35,6 +35,14 @@ router = APIRouter(prefix="/api", tags=["User"])
 async def get_user_info_from_headers(request: Request, settings: Settings = Depends(get_settings)):
     """Get basic user information directly from request headers, or mock data if local dev."""
     logger.info("Request received for /api/user/info")
+
+    # Per-request test-user override takes precedence over both mock-mode and headers.
+    override = _try_resolve_test_override(
+        request, settings, manager=None, real_ip=request.headers.get("X-Real-Ip")
+    )
+    if override is not None:
+        logger.info(f"/user/info: returning test override identity for {override.email}")
+        return override
 
     # Check for local development environment
     if settings.ENV.upper().startswith("LOCAL") or getattr(settings, "MOCK_USER_DETAILS", False):
@@ -81,6 +89,34 @@ async def get_user_details(
     return user_info
 
 # --- User Permissions Endpoint --- 
+
+@router.get("/user/pending-approvals")
+async def get_pending_approvals(
+    request: Request,
+    db: DBSessionDep,
+    user_details: UserInfo = Depends(get_user_details_from_sdk),
+):
+    """Active ``on_first_access`` workflows the current user has not yet
+    accepted at the workflow's current version.
+
+    Used by the frontend on app mount: the welcome / ToU dialog is rendered
+    as a real Approval Workflow wizard rather than a hardcoded settings
+    dialog. Each entry triggers an ApprovalWizardDialog flow against
+    ``entity_type='user'`` and ``entity_id=<user_email>``. When the user
+    completes the wizard, an ``agreements`` row is persisted and the
+    endpoint returns one fewer item on the next reload. If an admin edits
+    the workflow text, ``workflow.version`` increments and every user is
+    re-prompted on next mount.
+
+    Returns ``{"workflows": [{workflow_id, workflow_name, workflow_version}, ...]}``.
+    """
+    from src.controller.agreement_wizard_manager import AgreementWizardManager
+    user_email = user_details.email or user_details.user
+    if not user_email:
+        return {"workflows": []}
+    manager = AgreementWizardManager(db)
+    return {"workflows": manager.get_pending_first_access_workflows(user_email)}
+
 
 @router.get("/user/permissions", response_model=UserPermissions)
 async def get_current_user_permissions(
@@ -157,16 +193,31 @@ async def set_role_override(
     audit_manager: AuditManagerDep,
     payload: RoleOverrideRequest,
     user_details: UserInfo = Depends(get_user_details_from_sdk),
+    auth_manager: AuthorizationManager = Depends(get_auth_manager),
     settings_manager: SettingsManager = Depends(get_settings_manager)
 ):
     """Set or clear the applied role override for the current user.
 
     Body: { "role_id": "<uuid>" } or { "role_id": null } to clear.
+
+    Authorization: admins may override to any role (impersonation). Non-admins may only
+    override to a role whose assigned_groups intersect their own groups. Clearing is
+    always allowed.
     """
     role_id = payload.role_id
+    # Determine if caller is an Ontos admin (member of an AppRole flagged is_admin).
+    # Computed from groups so the override cannot bootstrap admin, and intentionally
+    # decoupled from settings:ADMIN (see issue #404).
+    caller_is_admin = auth_manager.is_user_ontos_admin(user_details.groups)
+
     try:
-        settings_manager.set_applied_role_override_for_user(user_details.email, role_id)
-        
+        settings_manager.set_applied_role_override_for_user(
+            user_details.email,
+            role_id,
+            caller_groups=user_details.groups,
+            caller_is_admin=caller_is_admin,
+        )
+
         audit_manager.log_action(
             db=db,
             username=user_details.username if user_details else 'unknown',
@@ -176,8 +227,23 @@ async def set_role_override(
             success=True,
             details={'role_id': role_id}
         )
-        
+
         return {"status": "ok"}
+    except PermissionError as e:
+        logger.warning(
+            "Forbidden role override for user %s -> role_id=%s: %s",
+            user_details.email, role_id, e,
+        )
+        audit_manager.log_action(
+            db=db,
+            username=user_details.username if user_details else 'unknown',
+            ip_address=request.client.host if request.client else None,
+            feature='user',
+            action='SET_ROLE_OVERRIDE',
+            success=False,
+            details={'role_id': role_id, 'reason': 'not_a_member'},
+        )
+        raise HTTPException(status_code=403, detail="Not a member of the requested role")
     except ValueError as e:
         logger.error("Invalid role override request for user %s: %s", user_details.email, e)
         raise HTTPException(status_code=400, detail="Invalid role override request")

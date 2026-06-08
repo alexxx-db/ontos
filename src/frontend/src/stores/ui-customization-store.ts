@@ -1,23 +1,40 @@
 import { create } from 'zustand';
+import {
+  applyBranding,
+  DEFAULT_APP_NAME,
+  resolveAppName,
+  resolveShortName,
+} from '@/lib/branding';
 
 export interface UICustomizationSettings {
   i18nEnabled: boolean;
   customLogoUrl: string | null;
   aboutContent: string | null;
   customCss: string | null;
+  // Branding (issue #240)
+  appDisplayName: string | null;
+  appShortName: string | null;
+  faviconUrl: string | null;
   isLoaded: boolean;
 }
 
 interface UICustomizationStore extends UICustomizationSettings {
   setSettings: (settings: Partial<UICustomizationSettings>) => void;
   fetchSettings: () => Promise<void>;
+  /** Resolved app name (display name or default). Safe to use in render. */
+  getAppName: () => string;
+  /** Resolved short name (short name -> display name -> default). */
+  getShortName: () => string;
 }
 
-export const useUICustomizationStore = create<UICustomizationStore>((set) => ({
+export const useUICustomizationStore = create<UICustomizationStore>((set, get) => ({
   i18nEnabled: true,
   customLogoUrl: null,
   aboutContent: null,
   customCss: null,
+  appDisplayName: null,
+  appShortName: null,
+  faviconUrl: null,
   isLoaded: false,
 
   setSettings: (settings) => set((state) => ({ ...state, ...settings })),
@@ -32,13 +49,20 @@ export const useUICustomizationStore = create<UICustomizationStore>((set) => ({
           customLogoUrl: data.custom_logo_url || null,
           aboutContent: data.about_content || null,
           customCss: data.custom_css || null,
+          appDisplayName: data.app_display_name || null,
+          appShortName: data.app_short_name || null,
+          faviconUrl: data.favicon_url || null,
           isLoaded: true,
         });
 
-        // Inject custom CSS if present
         injectCustomCss(data.custom_css);
 
-        // Update localStorage for i18n
+        // Apply branding side effects (title + favicon)
+        applyBranding({
+          displayName: data.app_display_name,
+          faviconUrl: data.favicon_url,
+        });
+
         if (data.i18n_enabled === false) {
           localStorage.setItem('i18n-disabled', 'true');
         } else {
@@ -50,7 +74,12 @@ export const useUICustomizationStore = create<UICustomizationStore>((set) => ({
       set({ isLoaded: true });
     }
   },
+
+  getAppName: () => resolveAppName(get().appDisplayName),
+  getShortName: () => resolveShortName(get().appShortName, get().appDisplayName),
 }));
+
+export { DEFAULT_APP_NAME };
 
 /**
  * Inject custom CSS into the document head.
@@ -61,7 +90,6 @@ function injectCustomCss(css: string | null): void {
   let styleElement = document.getElementById(styleId) as HTMLStyleElement | null;
 
   if (!css) {
-    // Remove existing custom CSS if cleared
     if (styleElement) {
       styleElement.remove();
     }
@@ -81,4 +109,3 @@ function injectCustomCss(css: string | null): void {
 if (typeof window !== 'undefined') {
   useUICustomizationStore.getState().fetchSettings();
 }
-

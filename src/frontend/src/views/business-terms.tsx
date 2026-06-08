@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import i18n from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -15,8 +15,11 @@ import {
   Plus,
   ChevronDown,
   Upload,
-  Loader2,
 } from 'lucide-react';
+import {
+  FilterBarSkeleton,
+  HierarchyTreeSkeleton,
+} from '@/components/common/list-view-skeleton';
 import type {
   OntologyConcept,
   KnowledgeCollection,
@@ -25,6 +28,7 @@ import type {
 } from '@/types/ontology';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
 import { useGlossaryPreferencesStore } from '@/stores/glossary-preferences-store';
+import { useKnowledgeGraphStore } from '@/stores/knowledge-graph-store';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/feature-access-levels';
 import { useToast } from '@/hooks/use-toast';
@@ -38,9 +42,11 @@ import {
 
 export default function BusinessTermsView() {
   const { t } = useTranslation(['semantic-models', 'common']);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
+  const bumpKnowledgeGraphRefresh = useKnowledgeGraphStore((s) => s.bumpRefreshNonce);
 
   const canWrite = hasPermission('semantic-models', FeatureAccessLevel.READ_WRITE);
 
@@ -49,14 +55,12 @@ export default function BusinessTermsView() {
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
   const [groupedConcepts, setGroupedConcepts] = useState<GroupedConcepts>({});
   const [groupedProperties, setGroupedProperties] = useState<Record<string, OntologyConcept[]>>({});
-  const [selectedConcept, setSelectedConcept] = useState<OntologyConcept | null>(null);
   const [stats, setStats] = useState<TaxonomyStats | null>(null);
 
   // Dialog state
   const [collectionEditorOpen, setCollectionEditorOpen] = useState(false);
   const [editingCollection, setEditingCollection] = useState<KnowledgeCollection | null>(null);
   const [conceptEditorOpen, setConceptEditorOpen] = useState(false);
-  const [editingConcept, setEditingConcept] = useState<OntologyConcept | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   // Language selection - defaults to UI language
@@ -77,6 +81,19 @@ export default function BusinessTermsView() {
     setGroupByDomain,
     setFilterExpanded,
   } = useGlossaryPreferencesStore();
+
+  // Backwards-compat: the old single-page view tracked the selected concept
+  // via ?concept=IRI. New layout uses /concepts/browser/:iri, so any old
+  // deep link gets redirected once at mount.
+  useEffect(() => {
+    const conceptIri = searchParams.get('concept');
+    if (!conceptIri) return;
+    const decoded = (() => {
+      try { return decodeURIComponent(conceptIri); } catch { return conceptIri; }
+    })();
+    navigate(`/concepts/browser/${encodeURIComponent(decoded)}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Extract unique source contexts
   const availableSources = useMemo(() => {
@@ -127,9 +144,9 @@ export default function BusinessTermsView() {
 
   useEffect(() => {
     setStaticSegments([
-      { label: t('semantic-models:title'), path: '/ontology' },
-      { label: t('semantic-models:tabs.concepts'), path: '/semantic-models' },
+      { label: t('semantic-models:title'), path: '/concepts/browser' },
     ]);
+    return () => { setStaticSegments([]); };
   }, [setStaticSegments, t]);
 
   // Fetch data
@@ -162,6 +179,22 @@ export default function BusinessTermsView() {
       setIsLoading(false);
     }
   }, []);
+
+  // Handle source URL parameter for filtering
+  useEffect(() => {
+    const sourceParam = searchParams.get('source');
+    if (sourceParam && availableSources.length > 0) {
+      const sourcesToHide = availableSources.filter(s => s !== sourceParam);
+      sourcesToHide.forEach(source => {
+        if (!hiddenSources.includes(source)) {
+          toggleSource(source);
+        }
+      });
+      if (hiddenSources.includes(sourceParam)) {
+        toggleSource(sourceParam);
+      }
+    }
+  }, [searchParams, availableSources, hiddenSources, toggleSource]);
 
   // Fetch properties when toggle is enabled
   const fetchProperties = useCallback(async () => {
@@ -197,42 +230,30 @@ export default function BusinessTermsView() {
     fetchData();
   }, [fetchData]);
 
-  // Handle concept from URL
+  // Refetch when any other view (Settings/RDF Sources rebuild, ontology
+  // generator save, etc.) bumps the global knowledge-graph nonce.
+  const knowledgeGraphRefreshNonce = useKnowledgeGraphStore((s) => s.refreshNonce);
   useEffect(() => {
-    const conceptIri = searchParams.get('concept');
-    if (conceptIri && filteredConcepts.length > 0) {
-      const decoded = decodeURIComponent(conceptIri);
-      const found = filteredConcepts.find((c) => c.iri === decoded);
-      if (found) setSelectedConcept(found);
+    if (knowledgeGraphRefreshNonce > 0) {
+      fetchData();
     }
-  }, [searchParams, filteredConcepts]);
+  }, [knowledgeGraphRefreshNonce, fetchData]);
 
-  // Concept selection handler
-  const handleSelectConcept = (concept: OntologyConcept) => {
-    setSelectedConcept(concept);
-    const newParams = new URLSearchParams(searchParams);
-    newParams.set('concept', encodeURIComponent(concept.iri));
-    setSearchParams(newParams, { replace: true });
-  };
+  // Concept selection handler — navigates to dedicated detail page.
+  const handleSelectConcept = useCallback((concept: OntologyConcept) => {
+    navigate(`/concepts/browser/${encodeURIComponent(concept.iri)}`);
+  }, [navigate]);
 
-  // Concept CRUD handlers
+  // Concept CRUD handlers (creation flow only; edit/delete now live on the
+  // detail page itself).
   const handleCreateConcept = () => {
-    setEditingConcept(null);
-    setConceptEditorOpen(true);
-  };
-
-  const handleEditConcept = (concept: OntologyConcept) => {
-    setEditingConcept(concept);
     setConceptEditorOpen(true);
   };
 
   const handleSaveConcept = async (data: any, isNew: boolean) => {
     try {
-      const url = isNew
-        ? '/api/knowledge/concepts'
-        : `/api/knowledge/concepts/${encodeURIComponent(editingConcept!.iri)}`;
-      const method = isNew ? 'POST' : 'PATCH';
-
+      const url = '/api/knowledge/concepts';
+      const method = 'POST';
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -253,6 +274,7 @@ export default function BusinessTermsView() {
 
       setConceptEditorOpen(false);
       await fetchData();
+      bumpKnowledgeGraphRefresh(isNew ? 'concept-create' : 'concept-update');
     } catch (error: any) {
       toast({
         title: t('common:toast.error'),
@@ -260,34 +282,6 @@ export default function BusinessTermsView() {
         variant: 'destructive',
       });
       throw error;
-    }
-  };
-
-  const handleDeleteConcept = async (concept: OntologyConcept) => {
-    try {
-      const response = await fetch(
-        `/api/knowledge/concepts/${encodeURIComponent(concept.iri)}`,
-        { method: 'DELETE' }
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to delete concept');
-      }
-
-      toast({
-        title: t('common:toast.success'),
-        description: t('semantic-models:messages.conceptDeleted'),
-      });
-
-      if (selectedConcept?.iri === concept.iri) setSelectedConcept(null);
-      await fetchData();
-    } catch (error: any) {
-      toast({
-        title: t('common:toast.error'),
-        description: error.message,
-        variant: 'destructive',
-      });
     }
   };
 
@@ -324,6 +318,7 @@ export default function BusinessTermsView() {
 
       setCollectionEditorOpen(false);
       await fetchData();
+      bumpKnowledgeGraphRefresh(isNew ? 'collection-create' : 'collection-update');
     } catch (error: any) {
       toast({
         title: t('common:toast.error'),
@@ -392,11 +387,12 @@ export default function BusinessTermsView() {
 
       {/* Loading state */}
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex-1 flex flex-col gap-4">
+          <FilterBarSkeleton filterCount={3} />
+          <HierarchyTreeSkeleton groups={4} itemsPerGroup={4} />
         </div>
       ) : (
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col gap-4">
           {/* Filter Panel */}
           <GlossaryFilterPanel
             filteredConcepts={filteredConcepts}
@@ -418,17 +414,14 @@ export default function BusinessTermsView() {
             onSetFilterExpanded={setFilterExpanded}
           />
 
-          {/* Concepts Tree + Detail */}
+          {/* Concepts list — full-width tree, navigates to detail page on row click */}
           <ConceptsTab
             collections={collections}
             groupedConcepts={groupedConcepts}
             filteredConcepts={filteredConcepts}
-            selectedConcept={selectedConcept}
+            selectedConcept={null}
             onSelectConcept={handleSelectConcept}
             onCreateConcept={handleCreateConcept}
-            onEditConcept={handleEditConcept}
-            onDeleteConcept={handleDeleteConcept}
-            onRefresh={fetchData}
             canEdit={canWrite}
             groupBySource={groupBySource}
             showProperties={showProperties}
@@ -447,11 +440,11 @@ export default function BusinessTermsView() {
         onSave={handleSaveCollection}
       />
 
-      {/* Concept Editor Dialog */}
+      {/* Concept Editor Dialog (create-only from this view) */}
       <ConceptEditorDialog
         open={conceptEditorOpen}
         onOpenChange={setConceptEditorOpen}
-        concept={editingConcept}
+        concept={null}
         collection={selectedCollection || editableCollections[0]}
         collections={editableCollections}
         onSave={handleSaveConcept}

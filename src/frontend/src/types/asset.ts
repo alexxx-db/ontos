@@ -45,7 +45,7 @@ export interface AssetTypeUpdate {
 }
 
 // --- Assets ---
-export type AssetStatus = 'draft' | 'active' | 'deprecated' | 'archived';
+export type AssetStatus = 'draft' | 'active' | 'deprecated' | 'retired';
 
 export interface AssetRelationship {
   id: string;
@@ -69,6 +69,12 @@ export interface AssetRead {
   properties?: Record<string, any> | null;
   tags?: string[] | null;
   status: AssetStatus;
+  certification_level?: number | null;
+  inherited_certification_level?: number | null;
+  certified_at?: string | null;
+  certified_by?: string | null;
+  certification_expires_at?: string | null;
+  certification_notes?: string | null;
   parent_id?: string | null;
   parent_name?: string | null;
   relationships: AssetRelationship[];

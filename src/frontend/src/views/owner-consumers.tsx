@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Skeleton } from '@/components/ui/skeleton';
+import {
+  ListItemSkeleton,
+  SkeletonLine,
+} from '@/components/common/list-view-skeleton';
 import { Package, Users, Search, User, Calendar, MessageSquare } from 'lucide-react';
 import { useApi } from '@/hooks/use-api';
 import { cn } from '@/lib/utils';
@@ -20,9 +22,7 @@ interface ProductWithSubscribers {
 }
 
 export default function OwnerConsumersView() {
-  const { t } = useTranslation(['data-products', 'common']);
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { t: _t } = useTranslation(['data-products', 'common']);
   const api = useApi();
   const setStaticSegments = useBreadcrumbStore((s) => s.setStaticSegments);
 
@@ -39,8 +39,8 @@ export default function OwnerConsumersView() {
   const fetchProducts = useCallback(async () => {
     setProductsLoading(true);
     try {
-      const data = await api.get('/api/data-products');
-      setProducts(data);
+      const resp = await api.get<DataProduct[]>('/api/data-products');
+      setProducts(resp.data ?? []);
     } catch (err) {
       console.error('Failed to fetch products:', err);
     } finally {
@@ -56,12 +56,12 @@ export default function OwnerConsumersView() {
       [productId]: { ...prev[productId], loading: true },
     }));
     try {
-      const data = await api.get(`/api/data-products/${productId}/subscribers`);
+      const resp = await api.get<{ subscribers: SubscriberInfo[] }>(`/api/data-products/${productId}/subscribers`);
       setProductSubscribers((prev) => ({
         ...prev,
         [productId]: {
           product: products.find((p) => p.id === productId)!,
-          subscribers: data.subscribers ?? [],
+          subscribers: resp.data?.subscribers ?? [],
           loading: false,
         },
       }));
@@ -133,7 +133,7 @@ export default function OwnerConsumersView() {
               <div>
                 <p className="text-sm text-muted-foreground">Total Products</p>
                 <p className="text-2xl font-bold">
-                  {productsLoading ? <Skeleton className="h-8 w-12" /> : products.length}
+                  {productsLoading ? <SkeletonLine height="h-8" width="w-12" /> : products.length}
                 </p>
               </div>
             </div>
@@ -148,7 +148,7 @@ export default function OwnerConsumersView() {
               <div>
                 <p className="text-sm text-muted-foreground">Active Products</p>
                 <p className="text-2xl font-bold">
-                  {productsLoading ? <Skeleton className="h-8 w-12" /> : activeProducts.length}
+                  {productsLoading ? <SkeletonLine height="h-8" width="w-12" /> : activeProducts.length}
                 </p>
               </div>
             </div>
@@ -163,7 +163,7 @@ export default function OwnerConsumersView() {
               <div>
                 <p className="text-sm text-muted-foreground">Total Subscribers</p>
                 <p className="text-2xl font-bold">
-                  {productsLoading ? <Skeleton className="h-8 w-12" /> : totalSubscribers}
+                  {productsLoading ? <SkeletonLine height="h-8" width="w-12" /> : totalSubscribers}
                 </p>
               </div>
             </div>
@@ -180,9 +180,7 @@ export default function OwnerConsumersView() {
           </CardHeader>
           <CardContent className="space-y-1 max-h-[600px] overflow-y-auto">
             {productsLoading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-14 w-full rounded-md" />
-              ))
+              <ListItemSkeleton count={4} height="h-14" />
             ) : products.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">No products found</p>
             ) : (
@@ -244,11 +242,7 @@ export default function OwnerConsumersView() {
                 <p className="text-sm">Select a product to view its subscribers</p>
               </div>
             ) : selectedData?.loading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
-                ))}
-              </div>
+              <ListItemSkeleton count={3} height="h-12" className="space-y-2" />
             ) : filteredSubscribers.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Users className="h-10 w-10 mb-3 opacity-40" />

@@ -18,14 +18,21 @@ from ..common.dependencies import (
     get_search_manager,
     AuditManagerDep,
     AuditCurrentUserDep,
+    CurrentUserDep,
     DBSessionDep,
 )
+from ..common.authorization import get_user_details_from_sdk
+from ..common.manager_dependencies import get_auth_manager
+from ..controller.authorization_manager import AuthorizationManager
+from ..models.users import UserInfo
 from ..models.settings import HandleRoleRequest
 from ..models.notifications import Notification, NotificationType
 from ..controller.notifications_manager import NotificationsManager
 from ..common.config import get_settings
 from ..common.sanitization import sanitize_markdown_input
 from ..common.search_config_loader import get_search_config_loader
+from ..common.authorization import PermissionChecker
+from ..common.features import FeatureAccessLevel
 
 # Configure logging
 from src.common.logging import get_logger
@@ -35,9 +42,13 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["Settings"])
 
 SETTINGS_FEATURE_ID = "settings" # Define a feature ID for settings
+ROLE_NOT_FOUND = "Role not found"
 
 @router.get('/settings')
-async def get_settings_route(manager: SettingsManager = Depends(get_settings_manager)):
+async def get_settings_route(
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-general', FeatureAccessLevel.READ_ONLY)),
+):
     """Get all settings including available job clusters"""
     try:
         settings_data = manager.get_settings() # Renamed variable to avoid conflict
@@ -54,7 +65,8 @@ async def update_settings(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     settings_payload: dict, # Renamed to avoid conflict with module
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-general', FeatureAccessLevel.READ_WRITE)),
 ):
     """Update settings"""
     success = False
@@ -76,6 +88,11 @@ async def update_settings(
         updated = manager.update_settings(settings_payload)
         success = True
         return updated.to_dict()
+    except ValueError as e:
+        # Validation errors from manager (e.g. invalid branding URL, name too long)
+        logger.warning(f"Settings validation error: {e}")
+        details['exception'] = str(e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Error updating settings", exc_info=True)
         details['exception'] = str(e)
@@ -92,8 +109,8 @@ async def update_settings(
         )
 
 @router.get('/settings/llm')
-async def get_llm_config():
-    """Get LLM configuration (publicly accessible for UI)"""
+async def get_llm_config(_current_user: CurrentUserDep):
+    """Get LLM configuration (any authenticated user; consumed by frontend bootstrap)."""
     try:
         app_settings = get_settings()
         return {
@@ -108,14 +125,17 @@ async def get_llm_config():
 
 
 @router.get('/settings/ui-customization')
-async def get_ui_customization():
-    """Get UI customization settings (publicly accessible for UI theming and branding).
-    
+async def get_ui_customization(_current_user: CurrentUserDep):
+    """Get UI customization settings (any authenticated user; drives UI theming and branding).
+
     Returns settings for:
     - i18n_enabled: Whether internationalization is enabled (disable forces English)
     - custom_logo_url: URL to custom logo image
     - about_content: Custom Markdown content for About page
     - custom_css: Custom CSS to inject into the app
+    - app_display_name: Global application display name (overrides default product name)
+    - app_short_name: Optional short/abbreviated name for compact UI surfaces
+    - favicon_url: URL to custom favicon image
     """
     try:
         app_settings = get_settings()
@@ -124,6 +144,9 @@ async def get_ui_customization():
             "custom_logo_url": app_settings.UI_CUSTOM_LOGO_URL,
             "about_content": sanitize_markdown_input(app_settings.UI_ABOUT_CONTENT) if app_settings.UI_ABOUT_CONTENT else None,
             "custom_css": app_settings.UI_CUSTOM_CSS,
+            "app_display_name": app_settings.UI_APP_DISPLAY_NAME,
+            "app_short_name": app_settings.UI_APP_SHORT_NAME,
+            "favicon_url": app_settings.UI_FAVICON_URL,
         }
     except Exception as e:
         logger.error("Error getting UI customization settings", exc_info=True)
@@ -143,7 +166,10 @@ async def health_check(manager: SettingsManager = Depends(get_settings_manager))
         raise HTTPException(status_code=500, detail=error_msg)
 
 @router.get('/settings/job-clusters', response_model=List[JobCluster])
-async def list_job_clusters(manager: SettingsManager = Depends(get_settings_manager)):
+async def list_job_clusters(
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-jobs', FeatureAccessLevel.READ_ONLY)),
+):
     """List all available job clusters"""
     try:
         return manager.get_job_clusters()
@@ -154,8 +180,16 @@ async def list_job_clusters(manager: SettingsManager = Depends(get_settings_mana
 # --- RBAC Routes ---
 
 @router.get("/settings/features", response_model=Dict[str, Dict[str, Any]])
-async def get_features_config(manager: SettingsManager = Depends(get_settings_manager)):
-    """Get the application feature configuration including allowed access levels."""
+async def get_features_config(
+    _current_user: CurrentUserDep,
+    manager: SettingsManager = Depends(get_settings_manager),
+):
+    """Get the application feature configuration including allowed access levels.
+
+    Any authenticated user can read the feature catalog (it is permission
+    metadata, not sensitive data, and is consumed by role-request flows that
+    every user must be able to use).
+    """
     try:
         features = manager.get_features_with_access_levels()
         return features
@@ -164,18 +198,55 @@ async def get_features_config(manager: SettingsManager = Depends(get_settings_ma
         raise HTTPException(status_code=500, detail="Failed to get features configuration")
 
 @router.get("/settings/roles", response_model=List[AppRole])
-async def list_roles(manager: SettingsManager = Depends(get_settings_manager)):
-    """List all application roles."""
+async def list_roles(
+    manager: SettingsManager = Depends(get_settings_manager),
+    user_details: UserInfo = Depends(get_user_details_from_sdk),
+    auth_manager: AuthorizationManager = Depends(get_auth_manager),
+):
+    """List application roles.
+
+    Ontos admins (members of an AppRole with ``is_admin=True``) receive the
+    full role catalog — required for the admin role-switcher impersonation
+    path and for Settings admin UI. Non-admins receive only roles whose
+    ``assigned_groups`` intersect their own groups (case-insensitive); this
+    is the set they may legitimately switch to via the membership-scoped
+    role switcher, and avoids leaking the full role catalog (see #404).
+
+    Note: this endpoint intentionally does NOT use
+    ``PermissionChecker('settings-roles', READ_ONLY)``. The frontend role
+    switcher (``permissions-store.fetchAvailableRoles`` /
+    ``user-info.tsx``) calls this endpoint for every authenticated user;
+    access control is enforced via the group-scoping above rather than via
+    a feature permission.
+    """
     try:
         roles = manager.list_app_roles()
-        return roles
+        if auth_manager.is_user_ontos_admin(user_details.groups):
+            return roles
+
+        user_group_set = {(g or '').lower() for g in (user_details.groups or [])}
+        if not user_group_set:
+            return []
+        scoped: List[AppRole] = []
+        for role in roles:
+            role_groups = {(g or '').lower() for g in (role.assigned_groups or [])}
+            if role_groups and role_groups.intersection(user_group_set):
+                scoped.append(role)
+        return scoped
     except Exception as e:
         logger.error("Error listing roles", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list roles")
 
 @router.get("/settings/roles/summary", response_model=List[dict])
-async def list_roles_summary(manager: SettingsManager = Depends(get_settings_manager)):
-    """Get a simple summary list of role names for dropdowns/selection."""
+async def list_roles_summary(
+    _current_user: CurrentUserDep,
+    manager: SettingsManager = Depends(get_settings_manager),
+):
+    """Get a simple summary list of role names for dropdowns/selection.
+
+    Available to any authenticated user since this powers the role-request
+    dropdown that everyone must be able to use.
+    """
     try:
         roles = manager.list_app_roles()
         return [{"name": role.name} for role in roles]
@@ -191,7 +262,8 @@ async def create_role(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     role_data: AppRoleCreate = Body(..., embed=False),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Create a new application role."""
     success = False
@@ -230,13 +302,14 @@ async def create_role(
 @router.get("/settings/roles/{role_id}", response_model=AppRole)
 async def get_role(
     role_id: str,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get a specific application role by ID."""
     try:
         role = manager.get_app_role(role_id)
         if role is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ROLE_NOT_FOUND)
         return role
     except Exception as e:
         logger.error("Error getting role %s", role_id, exc_info=True)
@@ -251,7 +324,8 @@ async def update_role(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     role_data: AppRole = Body(..., embed=False),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Update an existing application role."""
     success = False
@@ -265,8 +339,8 @@ async def update_role(
             background_tasks=background_tasks,
         )
         if updated_role is None:
-            details["exception"] = "Role not found"
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+            details["exception"] = ROLE_NOT_FOUND
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ROLE_NOT_FOUND)
         success = True
         
         return updated_role
@@ -299,7 +373,8 @@ async def delete_role(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Delete an application role."""
     success = False
@@ -307,8 +382,8 @@ async def delete_role(
     try:
         deleted = manager.delete_app_role(role_id)
         if not deleted:
-            details["exception"] = "Role not found"
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+            details["exception"] = ROLE_NOT_FOUND
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ROLE_NOT_FOUND)
         success = True
         return None # Return None for 204
     except ValueError as e: # Catch potential error like deleting admin role
@@ -342,7 +417,8 @@ async def handle_role_request_decision(
     request_data: HandleRoleRequest = Body(...),
     settings_manager: SettingsManager = Depends(get_settings_manager),
     notifications_manager: NotificationsManager = Depends(get_notifications_manager),
-    change_log_manager = Depends(get_change_log_manager)
+    change_log_manager = Depends(get_change_log_manager),
+    _: bool = Depends(PermissionChecker('settings-roles', FeatureAccessLevel.ADMIN)),
 ):
     """Handles the admin decision (approve/deny) for a role access request."""
     try:
@@ -361,7 +437,7 @@ async def handle_role_request_decision(
             feature='settings',
             action='HANDLE_ROLE_REQUEST',
             success=True,
-            details={'role_id': request_data.role_id, 'approved': request_data.approved, 'user_email': request_data.user_email}
+            details={'role_id': request_data.role_id, 'approved': request_data.approved, 'user_email': request_data.requester_email}
         )
         
         return result
@@ -375,6 +451,10 @@ async def handle_role_request_decision(
 
 # --- Demo Data Loading ---
 
+# Allowed presets — one self-contained SQL file per preset.
+DEMO_DATA_PRESETS = ("retail", "hls", "fsi", "mfg", "auto")
+
+
 @router.post("/settings/demo-data/load", status_code=status.HTTP_200_OK)
 async def load_demo_data(
     request: Request,
@@ -383,116 +463,120 @@ async def load_demo_data(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     manager: SettingsManager = Depends(get_settings_manager),
-    industry: Optional[List[str]] = Query(
-        default=None,
-        description="Optional industry-specific demo data to load (e.g. 'hls', 'fsi', 'mfg', 'auto'). "
-                    "Loads demo_data_{industry}.sql in addition to the base demo_data.sql. "
-                    "Pass multiple values to load several industries.",
+    # NOTE: intentionally NOT gated by PermissionChecker — invoked from the
+    # Swagger UI during demo setup, which does not propagate app-level auth
+    # headers. Tracked for a follow-up that introduces a Swagger-friendly
+    # admin path. Edge auth still blocks anonymous callers in prod.
+    preset: str = Query(
+        default="retail",
+        description=(
+            "Demo preset to load. Each preset is a fully self-contained vertical demo "
+            "(no implicit content from other packs). Allowed values: "
+            f"{', '.join(DEMO_DATA_PRESETS)}. Defaults to 'retail'."
+        ),
     ),
 ):
     """
-    Load demo data from SQL file(s) into the database.
-    
-    Always loads the base `demo_data.sql`. When one or more `industry` query
-    parameters are supplied, the corresponding `demo_data_{industry}.sql`
-    files are loaded afterwards (additive overlay).
-    
-    Example: POST /api/settings/demo-data/load?industry=hls&industry=fsi
-    
-    The SQL uses ON CONFLICT DO NOTHING to avoid duplicate key errors on re-runs.
+    Load a single demo preset from its self-contained SQL file.
+
+    Each preset maps to exactly one SQL file (`demo_data_{preset}.sql`) and is
+    designed to be loaded standalone on an empty database. Loading a preset does
+    not pull in content from any other preset.
+
+    Example: POST /api/settings/demo-data/load?preset=hls
+
+    The SQL uses ON CONFLICT DO NOTHING to make re-runs and clear+reload safe.
     """
     success = False
-    details: Dict[str, Any] = {"action": "load_demo_data", "industries": industry or []}
-    
+    preset_slug = (preset or "").strip().lower()
+    details: Dict[str, Any] = {"action": "load_demo_data", "preset": preset_slug}
+
+    if preset_slug not in DEMO_DATA_PRESETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid preset '{preset}'. Allowed values: "
+                f"{', '.join(DEMO_DATA_PRESETS)}."
+            ),
+        )
+
     try:
         from pathlib import Path
         from sqlalchemy import text
-        import re
-        
+
         data_dir = Path(__file__).parent.parent / "data"
-        
-        # Build ordered list of SQL files: base first, then per-industry
-        sql_files: List[Path] = [data_dir / "demo_data.sql"]
-        if industry:
-            for ind in industry:
-                slug = re.sub(r'[^a-z0-9_]', '', ind.lower())
-                if not slug:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid industry identifier: '{ind}'",
-                    )
-                sql_files.append(data_dir / f"demo_data_{slug}.sql")
-        
-        # Validate all files exist before executing anything
-        for sql_file in sql_files:
-            if not sql_file.exists():
-                details["exception"] = f"{sql_file.name} not found"
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Demo data SQL file not found: {sql_file.name}",
-                )
-        
+        sql_file: Path = data_dir / f"demo_data_{preset_slug}.sql"
+
+        if not sql_file.exists():
+            details["exception"] = f"{sql_file.name} not found"
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Demo data SQL file not found: {sql_file.name}",
+            )
+
         connection = db.connection()
-        total_executed = 0
-        file_results: List[Dict[str, Any]] = []
-        
-        for sql_file in sql_files:
-            sql_content = sql_file.read_text(encoding="utf-8")
-            
-            statements = []
-            current_statement = []
-            in_dollar_quote = False
-            
-            for line in sql_content.split('\n'):
-                stripped = line.strip()
-                
-                if not stripped or stripped.startswith('--'):
-                    if current_statement:
-                        current_statement.append(line)
-                    continue
-                
-                if "E'" in line or "$$" in line:
-                    in_dollar_quote = not in_dollar_quote if "$$" in line else in_dollar_quote
-                
-                current_statement.append(line)
-                
-                if stripped.endswith(';') and not in_dollar_quote:
-                    full_statement = '\n'.join(current_statement).strip()
-                    if full_statement and not full_statement.startswith('--'):
-                        if full_statement.upper() not in ('BEGIN;', 'COMMIT;'):
-                            statements.append(full_statement)
-                    current_statement = []
-            
-            executed_count = 0
-            for stmt in statements:
-                if stmt.strip():
-                    try:
-                        nested = connection.begin_nested()
-                        connection.execute(text(stmt))
-                        nested.commit()
-                        executed_count += 1
-                    except Exception as stmt_error:
-                        nested.rollback()
-                        logger.warning(f"Statement execution warning ({sql_file.name}): {stmt_error}")
-            
-            total_executed += executed_count
-            file_results.append({"file": sql_file.name, "statements_executed": executed_count})
-        
+        sql_content = sql_file.read_text(encoding="utf-8")
+
+        statements = []
+        current_statement = []
+        in_dollar_quote = False
+
+        for line in sql_content.split('\n'):
+            stripped = line.strip()
+
+            if not stripped or stripped.startswith('--'):
+                if current_statement:
+                    current_statement.append(line)
+                continue
+
+            if "E'" in line or "$$" in line:
+                in_dollar_quote = not in_dollar_quote if "$$" in line else in_dollar_quote
+
+            current_statement.append(line)
+
+            if stripped.endswith(';') and not in_dollar_quote:
+                full_statement = '\n'.join(current_statement).strip()
+                if full_statement and not full_statement.startswith('--'):
+                    if full_statement.upper() not in ('BEGIN;', 'COMMIT;'):
+                        statements.append(full_statement)
+                current_statement = []
+
+        executed_count = 0
+        for stmt in statements:
+            if stmt.strip():
+                try:
+                    nested = connection.begin_nested()
+                    connection.execute(text(stmt))
+                    nested.commit()
+                    executed_count += 1
+                except Exception as stmt_error:
+                    nested.rollback()
+                    logger.warning(
+                        f"Statement execution warning ({sql_file.name}): {stmt_error}"
+                    )
+
         db.commit()
-        
+
         success = True
-        details["statements_executed"] = total_executed
-        details["files"] = file_results
-        
-        logger.info(f"Demo data loaded successfully. Executed {total_executed} statements across {len(sql_files)} file(s).")
-        
+        details["statements_executed"] = executed_count
+        details["file"] = sql_file.name
+
+        logger.info(
+            f"Demo data loaded successfully. Preset='{preset_slug}', "
+            f"file='{sql_file.name}', statements={executed_count}."
+        )
+
         return {
             "status": "success",
-            "message": f"Demo data loaded successfully. Executed {total_executed} SQL statements across {len(sql_files)} file(s).",
-            "statements_executed": total_executed,
-            "files": file_results,
+            "message": (
+                f"Demo data loaded successfully (preset='{preset_slug}'). "
+                f"Executed {executed_count} SQL statements from {sql_file.name}."
+            ),
+            "preset": preset_slug,
+            "file": sql_file.name,
+            "statements_executed": executed_count,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -522,7 +606,9 @@ async def clear_demo_data(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    # NOTE: intentionally NOT gated by PermissionChecker — see load_demo_data
+    # above. Swagger-driven demo teardown; gate added in a follow-up.
 ):
     """
     Clear all demo data from the database.
@@ -539,8 +625,11 @@ async def clear_demo_data(
         from sqlalchemy import text
         
         # Delete in reverse dependency order
-        # UUID patterns use type codes in first 3 hex chars (see demo_data.sql for mapping)
-        # Pattern: {type:3}{seq:5}-0000-4000-8000-...
+        # UUID patterns use type codes in first 3 hex chars (see demo_data_retail.sql for mapping)
+        # Pattern: {type:3}{seq:5}-{dataset:4}-4000-8000-...
+        # Dataset segments: 0000=retail, 0001=hls, 0002=fsi, 0003=mfg, 0004=auto.
+        # The LIKE patterns below match by type-code prefix only, so they remove rows
+        # from every preset (the dataset segment is in chars 9-12, not the prefix).
         delete_statements = [
             # Suggested quality checks (02e%) - before data_profiling_runs
             "DELETE FROM suggested_quality_checks WHERE id::text LIKE '02e%'",
@@ -588,27 +677,39 @@ async def clear_demo_data(
             # Entity relationships (0f6%) — hasColumn
             "DELETE FROM entity_relationships WHERE id::text LIKE '0f6%'",
             
-            # Legacy: dataset subscriptions/custom properties (if old tables still exist)
-            "DELETE FROM dataset_subscriptions WHERE id::text LIKE '022%'",
-            "DELETE FROM dataset_subscriptions WHERE id::text LIKE '0260%'",
-            "DELETE FROM dataset_custom_properties WHERE id::text LIKE '024%'",
-            
             # Physical assets (025%) — migrated from dataset_instances
             "DELETE FROM assets WHERE id::text LIKE '025%'",
             
             # Dataset assets (021%) — migrated from datasets table
             "DELETE FROM assets WHERE id::text LIKE '021%'",
             
+            # Policy assets (0f1%)
+            "DELETE FROM assets WHERE id::text LIKE '0f1%'",
+            # General catalog assets (0f3%) — Tables, Views, Dashboards, Streams,
+            # Patient Cohorts, ICSR cases, etc. (covers all preset packs).
+            "DELETE FROM assets WHERE id::text LIKE '0f3%'",
+            # Column assets (0f5%)
+            "DELETE FROM assets WHERE id::text LIKE '0f5%'",
             # Business Term assets (0f7%)
             "DELETE FROM assets WHERE id::text LIKE '0f7%'",
             # Logical Entity/Attribute assets (0f8%)
             "DELETE FROM assets WHERE id::text LIKE '0f8%'",
             # Delivery Channel assets (0f9%)
             "DELETE FROM assets WHERE id::text LIKE '0f9%'",
-            
-            # Legacy: dataset instances (025) and datasets (021) (if old tables still exist)
-            "DELETE FROM dataset_instances WHERE id::text LIKE '025%'",
-            "DELETE FROM datasets WHERE id::text LIKE '021%'",
+            # Business Owners — must be removed before business_roles because
+            # of the role_id FK. Retail uses the 0f6% prefix; the vertical
+            # packs (hls/fsi/mfg/auto) use 0fb%.
+            "DELETE FROM business_owners WHERE id::text LIKE '0f6%'",
+            "DELETE FROM business_owners WHERE id::text LIKE '0fb%'",
+            # Vertical-specific demo asset types (0f2%, is_system=false)
+            "DELETE FROM asset_types WHERE id::text LIKE '0f2%' AND is_system = false AND created_by = 'system@demo'",
+            # Demo-inserted business_roles and delivery_methods — scoped by
+            # created_by to avoid touching app-seeded reference rows.
+            "DELETE FROM business_roles WHERE id::text LIKE '0f0%' AND created_by = 'system@demo'",
+            "DELETE FROM delivery_methods WHERE id::text LIKE '0f4%' AND created_by = 'system@demo'",
+            # Note: legacy dataset_subscriptions / dataset_custom_properties /
+            # dataset_instances / datasets tables were dropped by migration
+            # c1_drop_legacy_dataset_tables.py — no DELETEs needed.
             
             # Data contract servers (srv pattern for server IDs)
             "DELETE FROM data_contract_servers WHERE id::text LIKE 'srv%'",
@@ -673,27 +774,47 @@ async def clear_demo_data(
             "DELETE FROM data_domains WHERE id::text LIKE '000%'",
         ]
         
-        deleted_counts = {}
+        # Wrap each statement in a SAVEPOINT so that a single failing
+        # DELETE (e.g. against a table dropped by a later migration) does
+        # not poison the surrounding transaction and silently abort all
+        # subsequent deletes. Accumulate rowcounts per table since several
+        # patterns target the same table (e.g. entity_relationships).
+        deleted_counts: Dict[str, int] = {}
+        skipped: List[Dict[str, str]] = []
         for stmt in delete_statements:
+            table_name = stmt.split("FROM ")[1].split(" ")[0]
             try:
-                result = db.execute(text(stmt))
-                table_name = stmt.split("FROM ")[1].split(" ")[0]
-                deleted_counts[table_name] = result.rowcount
+                with db.begin_nested():
+                    result = db.execute(text(stmt))
+                rowcount = result.rowcount or 0
+                if rowcount > 0:
+                    deleted_counts[table_name] = deleted_counts.get(table_name, 0) + rowcount
             except Exception as e:
-                logger.warning(f"Delete statement warning: {e}")
+                err_short = str(e).splitlines()[0][:200]
+                logger.warning(
+                    f"Delete statement FAILED ({table_name}): {err_short} | stmt={stmt}"
+                )
+                skipped.append({
+                    "table": table_name,
+                    "statement": stmt,
+                    "error": err_short,
+                })
         
         db.commit()
-        
+
         success = True
         details["deleted_counts"] = deleted_counts
-        
+        details["skipped"] = skipped
+
         total_deleted = sum(deleted_counts.values())
-        logger.info(f"Demo data cleared. Deleted {total_deleted} records.")
-        
+        skipped_msg = f", {len(skipped)} statements skipped" if skipped else ""
+        logger.info(f"Demo data cleared. Deleted {total_deleted} records{skipped_msg}.")
+
         return {
-            "status": "success",
-            "message": f"Demo data cleared. Deleted {total_deleted} records.",
-            "deleted_counts": deleted_counts
+            "status": "success" if not skipped else "partial",
+            "message": f"Demo data cleared. Deleted {total_deleted} records{skipped_msg}.",
+            "deleted_counts": deleted_counts,
+            "skipped": skipped,
         }
         
     except Exception as e:
@@ -727,7 +848,9 @@ def register_routes(app):
 # --- Compliance mapping (object-type policies) ---
 
 @router.get('/settings/compliance-mapping')
-async def get_compliance_mapping():
+async def get_compliance_mapping(
+    _: bool = Depends(PermissionChecker('compliance', FeatureAccessLevel.READ_ONLY)),
+):
     """Return compliance mapping YAML content as JSON.
 
     See structure documented in self_service_routes._load_compliance_mapping.
@@ -751,7 +874,8 @@ async def save_compliance_mapping(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     payload: Dict[str, Any] = Body(...),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('compliance', FeatureAccessLevel.ADMIN)),
 ):
     """Persist compliance mapping to YAML."""
     try:
@@ -821,7 +945,10 @@ async def get_user_guide(manager: SettingsManager = Depends(get_settings_manager
 # --- Database Schema ERD ---
 
 @router.get('/database-schema')
-async def get_database_schema(manager: SettingsManager = Depends(get_settings_manager)):
+async def get_database_schema(
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-general', FeatureAccessLevel.READ_ONLY)),
+):
     """Extract database schema from SQLAlchemy models for ERD visualization"""
     try:
         return manager.extract_database_schema()
@@ -833,7 +960,9 @@ async def get_database_schema(manager: SettingsManager = Depends(get_settings_ma
 # --- Search Configuration ---
 
 @router.get('/settings/search-config', response_model=SearchConfigResponse)
-async def get_search_config():
+async def get_search_config(
+    _: bool = Depends(PermissionChecker('settings-search', FeatureAccessLevel.READ_ONLY)),
+):
     """
     Get the current search configuration.
     
@@ -859,7 +988,8 @@ async def update_search_config(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     config_update: SearchConfigUpdate = Body(...),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-search', FeatureAccessLevel.ADMIN)),
 ):
     """
     Update the search configuration.
@@ -947,7 +1077,8 @@ async def rebuild_search_index(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-search', FeatureAccessLevel.ADMIN)),
 ):
     """
     Rebuild the search index.
@@ -1020,7 +1151,8 @@ def _field_config_to_dict(field) -> dict:
 @router.get('/settings/git/status')
 async def get_git_status(
     include_diffs: bool = False,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get the current status of the Git repository.
     
@@ -1052,7 +1184,8 @@ async def clone_git_repository(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_WRITE)),
 ):
     """Clone the Git repository to the UC Volume.
     
@@ -1105,7 +1238,8 @@ async def pull_git_repository(
     db: DBSessionDep,
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_WRITE)),
 ):
     """Pull latest changes from the remote Git repository."""
     success = False
@@ -1145,7 +1279,8 @@ async def pull_git_repository(
 
 @router.get('/settings/git/diff')
 async def get_git_diff(
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get detailed diff of all pending changes in the Git repository."""
     try:
@@ -1178,7 +1313,8 @@ async def push_git_repository(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     commit_message: Optional[str] = Body(None, embed=True),
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-git', FeatureAccessLevel.READ_WRITE)),
 ):
     """Commit and push all pending changes to the remote Git repository.
     
@@ -1225,7 +1361,8 @@ async def push_git_repository(
 
 @router.get('/settings/delivery/status')
 async def get_delivery_status(
-    manager: SettingsManager = Depends(get_settings_manager)
+    manager: SettingsManager = Depends(get_settings_manager),
+    _: bool = Depends(PermissionChecker('settings-delivery', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get the current delivery mode configuration and status."""
     try:
@@ -1263,7 +1400,8 @@ async def get_delivery_status(
 async def get_pending_delivery_tasks(
     db: DBSessionDep,
     change_type: Optional[str] = None,
-    notifications_manager = Depends(get_notifications_manager)
+    notifications_manager = Depends(get_notifications_manager),
+    _: bool = Depends(PermissionChecker('settings-delivery', FeatureAccessLevel.READ_ONLY)),
 ):
     """Get pending manual delivery tasks (notifications)."""
     try:
@@ -1289,7 +1427,8 @@ async def complete_delivery_task(
     audit_manager: AuditManagerDep,
     current_user: AuditCurrentUserDep,
     notes: Optional[str] = Body(None, embed=True),
-    notifications_manager = Depends(get_notifications_manager)
+    notifications_manager = Depends(get_notifications_manager),
+    _: bool = Depends(PermissionChecker('settings-delivery', FeatureAccessLevel.READ_WRITE)),
 ):
     """Mark a manual delivery task as completed.
     

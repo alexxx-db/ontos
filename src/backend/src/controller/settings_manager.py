@@ -12,6 +12,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import func
 
 from src.common.config import Settings
+from src.common.sanitization import (
+    APP_SHORT_NAME_MAX_LEN,
+    sanitize_app_display_name,
+    validate_branding_url,
+)
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.controller.notifications_manager import NotificationsManager
@@ -37,14 +42,39 @@ ROLES_YAML_PATH = Path(__file__).parent.parent / 'data' / 'settings.yaml'
 
 # --- Default Role Definitions --- 
 
-# Define default roles structure
+# Define default roles structure.
+# Non-Admin roles ship with `assigned_groups` that match the personas in
+# src/backend/src/data/test_personas.yaml, so the runtime impersonation flow
+# (TEST_USER_TOKEN) lands users in the matching role out of the box. Admin's
+# groups still come from APP_ADMIN_DEFAULT_GROUPS so production deployments
+# keep full control of who gets admin without depending on this default list.
 DEFAULT_ROLES = [
     {"name": "Admin", "description": "Default role: Admin"},
-    {"name": "Data Governance Officer", "description": "Default role: Data Governance Officer"},
-    {"name": "Data Steward", "description": "Default role: Data Steward"},
-    {"name": "Data Consumer", "description": "Default role: Data Consumer"},
-    {"name": "Data Producer", "description": "Default role: Data Producer"},
-    {"name": "Security Officer", "description": "Default role: Security Officer"},
+    {
+        "name": "Data Governance Officer",
+        "description": "Default role: Data Governance Officer",
+        "assigned_groups": ["data-governance-officers"],
+    },
+    {
+        "name": "Data Steward",
+        "description": "Default role: Data Steward",
+        "assigned_groups": ["data-stewards"],
+    },
+    {
+        "name": "Data Consumer",
+        "description": "Default role: Data Consumer",
+        "assigned_groups": ["data-consumers"],
+    },
+    {
+        "name": "Data Producer",
+        "description": "Default role: Data Producer",
+        "assigned_groups": ["data-producers"],
+    },
+    {
+        "name": "Security Officer",
+        "description": "Default role: Security Officer",
+        "assigned_groups": ["security-officers"],
+    },
 ]
 
 # Define desired default permissions for non-Admin roles
@@ -179,98 +209,111 @@ class SettingsManager:
             # WORKSPACE_DEPLOYMENT_PATH
             if 'WORKSPACE_DEPLOYMENT_PATH' in all_settings and all_settings['WORKSPACE_DEPLOYMENT_PATH'] is not None:
                 self._settings.WORKSPACE_DEPLOYMENT_PATH = all_settings['WORKSPACE_DEPLOYMENT_PATH']
-                logger.info(f"Loaded WORKSPACE_DEPLOYMENT_PATH from database: {all_settings['WORKSPACE_DEPLOYMENT_PATH']}")
+                logger.debug(f"Loaded WORKSPACE_DEPLOYMENT_PATH from database: {all_settings['WORKSPACE_DEPLOYMENT_PATH']}")
             
             # Databricks Unity Catalog settings
             if 'DATABRICKS_CATALOG' in all_settings and all_settings['DATABRICKS_CATALOG']:
                 self._settings.DATABRICKS_CATALOG = all_settings['DATABRICKS_CATALOG']
-                logger.info(f"Loaded DATABRICKS_CATALOG from database: {all_settings['DATABRICKS_CATALOG']}")
+                logger.debug(f"Loaded DATABRICKS_CATALOG from database: {all_settings['DATABRICKS_CATALOG']}")
             
             if 'DATABRICKS_SCHEMA' in all_settings and all_settings['DATABRICKS_SCHEMA']:
                 self._settings.DATABRICKS_SCHEMA = all_settings['DATABRICKS_SCHEMA']
-                logger.info(f"Loaded DATABRICKS_SCHEMA from database: {all_settings['DATABRICKS_SCHEMA']}")
+                logger.debug(f"Loaded DATABRICKS_SCHEMA from database: {all_settings['DATABRICKS_SCHEMA']}")
             
             if 'DATABRICKS_VOLUME' in all_settings and all_settings['DATABRICKS_VOLUME']:
                 self._settings.DATABRICKS_VOLUME = all_settings['DATABRICKS_VOLUME']
-                logger.info(f"Loaded DATABRICKS_VOLUME from database: {all_settings['DATABRICKS_VOLUME']}")
+                logger.debug(f"Loaded DATABRICKS_VOLUME from database: {all_settings['DATABRICKS_VOLUME']}")
             
             # Audit log directory
             if 'APP_AUDIT_LOG_DIR' in all_settings and all_settings['APP_AUDIT_LOG_DIR']:
                 self._settings.APP_AUDIT_LOG_DIR = all_settings['APP_AUDIT_LOG_DIR']
-                logger.info(f"Loaded APP_AUDIT_LOG_DIR from database: {all_settings['APP_AUDIT_LOG_DIR']}")
+                logger.debug(f"Loaded APP_AUDIT_LOG_DIR from database: {all_settings['APP_AUDIT_LOG_DIR']}")
             
             # LLM settings
             if 'LLM_ENABLED' in all_settings and all_settings['LLM_ENABLED'] is not None:
                 self._settings.LLM_ENABLED = all_settings['LLM_ENABLED'].lower() == 'true'
-                logger.info(f"Loaded LLM_ENABLED from database: {self._settings.LLM_ENABLED}")
+                logger.debug(f"Loaded LLM_ENABLED from database: {self._settings.LLM_ENABLED}")
             
             if 'LLM_ENDPOINT' in all_settings and all_settings['LLM_ENDPOINT'] is not None:
                 self._settings.LLM_ENDPOINT = all_settings['LLM_ENDPOINT']
-                logger.info(f"Loaded LLM_ENDPOINT from database: {all_settings['LLM_ENDPOINT']}")
+                logger.debug(f"Loaded LLM_ENDPOINT from database: {all_settings['LLM_ENDPOINT']}")
             
             if 'LLM_SYSTEM_PROMPT' in all_settings and all_settings['LLM_SYSTEM_PROMPT'] is not None:
                 self._settings.LLM_SYSTEM_PROMPT = all_settings['LLM_SYSTEM_PROMPT']
-                logger.info("Loaded LLM_SYSTEM_PROMPT from database")
+                logger.debug("Loaded LLM_SYSTEM_PROMPT from database")
             
             if 'LLM_DISCLAIMER_TEXT' in all_settings and all_settings['LLM_DISCLAIMER_TEXT'] is not None:
                 self._settings.LLM_DISCLAIMER_TEXT = all_settings['LLM_DISCLAIMER_TEXT']
-                logger.info("Loaded LLM_DISCLAIMER_TEXT from database")
+                logger.debug("Loaded LLM_DISCLAIMER_TEXT from database")
             
             # Tag display format setting (stored in DB only, not in Settings model)
             # Valid values: 'short' (default), 'long'
             if 'TAG_DISPLAY_FORMAT' in all_settings and all_settings['TAG_DISPLAY_FORMAT'] is not None:
-                logger.info(f"Loaded TAG_DISPLAY_FORMAT from database: {all_settings['TAG_DISPLAY_FORMAT']}")
+                logger.debug(f"Loaded TAG_DISPLAY_FORMAT from database: {all_settings['TAG_DISPLAY_FORMAT']}")
             
             # Delivery mode settings
             if 'DELIVERY_MODE_DIRECT' in all_settings and all_settings['DELIVERY_MODE_DIRECT'] is not None:
                 self._settings.DELIVERY_MODE_DIRECT = all_settings['DELIVERY_MODE_DIRECT'].lower() == 'true'
-                logger.info(f"Loaded DELIVERY_MODE_DIRECT from database: {self._settings.DELIVERY_MODE_DIRECT}")
+                logger.debug(f"Loaded DELIVERY_MODE_DIRECT from database: {self._settings.DELIVERY_MODE_DIRECT}")
             
             if 'DELIVERY_MODE_INDIRECT' in all_settings and all_settings['DELIVERY_MODE_INDIRECT'] is not None:
                 self._settings.DELIVERY_MODE_INDIRECT = all_settings['DELIVERY_MODE_INDIRECT'].lower() == 'true'
-                logger.info(f"Loaded DELIVERY_MODE_INDIRECT from database: {self._settings.DELIVERY_MODE_INDIRECT}")
+                logger.debug(f"Loaded DELIVERY_MODE_INDIRECT from database: {self._settings.DELIVERY_MODE_INDIRECT}")
             
             if 'DELIVERY_MODE_MANUAL' in all_settings and all_settings['DELIVERY_MODE_MANUAL'] is not None:
                 self._settings.DELIVERY_MODE_MANUAL = all_settings['DELIVERY_MODE_MANUAL'].lower() == 'true'
-                logger.info(f"Loaded DELIVERY_MODE_MANUAL from database: {self._settings.DELIVERY_MODE_MANUAL}")
+                logger.debug(f"Loaded DELIVERY_MODE_MANUAL from database: {self._settings.DELIVERY_MODE_MANUAL}")
             
             if 'DELIVERY_DIRECT_DRY_RUN' in all_settings and all_settings['DELIVERY_DIRECT_DRY_RUN'] is not None:
                 self._settings.DELIVERY_DIRECT_DRY_RUN = all_settings['DELIVERY_DIRECT_DRY_RUN'].lower() == 'true'
-                logger.info(f"Loaded DELIVERY_DIRECT_DRY_RUN from database: {self._settings.DELIVERY_DIRECT_DRY_RUN}")
+                logger.debug(f"Loaded DELIVERY_DIRECT_DRY_RUN from database: {self._settings.DELIVERY_DIRECT_DRY_RUN}")
             
             # Git settings for indirect mode
             if 'GIT_REPO_URL' in all_settings and all_settings['GIT_REPO_URL'] is not None:
                 self._settings.GIT_REPO_URL = all_settings['GIT_REPO_URL']
-                logger.info("Loaded GIT_REPO_URL from database")
+                logger.debug("Loaded GIT_REPO_URL from database")
             
             if 'GIT_BRANCH' in all_settings and all_settings['GIT_BRANCH'] is not None:
                 self._settings.GIT_BRANCH = all_settings['GIT_BRANCH']
-                logger.info(f"Loaded GIT_BRANCH from database: {all_settings['GIT_BRANCH']}")
+                logger.debug(f"Loaded GIT_BRANCH from database: {all_settings['GIT_BRANCH']}")
             
             if 'GIT_USERNAME' in all_settings and all_settings['GIT_USERNAME'] is not None:
                 self._settings.GIT_USERNAME = all_settings['GIT_USERNAME']
-                logger.info("Loaded GIT_USERNAME from database")
+                logger.debug("Loaded GIT_USERNAME from database")
             
             if 'GIT_PASSWORD' in all_settings and all_settings['GIT_PASSWORD'] is not None:
                 self._settings.GIT_PASSWORD = all_settings['GIT_PASSWORD']
-                logger.info("Loaded GIT_PASSWORD from database (masked)")
+                logger.debug("Loaded GIT_PASSWORD from database (masked)")
             
             # UI Customization settings
             if 'UI_I18N_ENABLED' in all_settings and all_settings['UI_I18N_ENABLED'] is not None:
                 self._settings.UI_I18N_ENABLED = all_settings['UI_I18N_ENABLED'].lower() == 'true'
-                logger.info(f"Loaded UI_I18N_ENABLED from database: {self._settings.UI_I18N_ENABLED}")
+                logger.debug(f"Loaded UI_I18N_ENABLED from database: {self._settings.UI_I18N_ENABLED}")
             
             if 'UI_CUSTOM_LOGO_URL' in all_settings and all_settings['UI_CUSTOM_LOGO_URL'] is not None:
                 self._settings.UI_CUSTOM_LOGO_URL = all_settings['UI_CUSTOM_LOGO_URL']
-                logger.info("Loaded UI_CUSTOM_LOGO_URL from database")
+                logger.debug("Loaded UI_CUSTOM_LOGO_URL from database")
             
             if 'UI_ABOUT_CONTENT' in all_settings and all_settings['UI_ABOUT_CONTENT'] is not None:
                 self._settings.UI_ABOUT_CONTENT = all_settings['UI_ABOUT_CONTENT']
-                logger.info("Loaded UI_ABOUT_CONTENT from database")
+                logger.debug("Loaded UI_ABOUT_CONTENT from database")
             
             if 'UI_CUSTOM_CSS' in all_settings and all_settings['UI_CUSTOM_CSS'] is not None:
                 self._settings.UI_CUSTOM_CSS = all_settings['UI_CUSTOM_CSS']
-                logger.info("Loaded UI_CUSTOM_CSS from database")
+                logger.debug("Loaded UI_CUSTOM_CSS from database")
+
+            # Branding settings (issue #240)
+            if 'UI_APP_DISPLAY_NAME' in all_settings and all_settings['UI_APP_DISPLAY_NAME'] is not None:
+                self._settings.UI_APP_DISPLAY_NAME = all_settings['UI_APP_DISPLAY_NAME']
+                logger.debug("Loaded UI_APP_DISPLAY_NAME from database")
+
+            if 'UI_APP_SHORT_NAME' in all_settings and all_settings['UI_APP_SHORT_NAME'] is not None:
+                self._settings.UI_APP_SHORT_NAME = all_settings['UI_APP_SHORT_NAME']
+                logger.debug("Loaded UI_APP_SHORT_NAME from database")
+
+            if 'UI_FAVICON_URL' in all_settings and all_settings['UI_FAVICON_URL'] is not None:
+                self._settings.UI_FAVICON_URL = all_settings['UI_FAVICON_URL']
+                logger.debug("Loaded UI_FAVICON_URL from database")
 
             # Connector configurations are now managed via the `connections`
             # table and loaded by ConnectionsManager at startup.
@@ -279,11 +322,29 @@ class SettingsManager:
             logger.warning(f"Failed to load persisted settings from database: {e}")
 
     # --- Role override helpers (in-memory persistence) ---
-    def set_applied_role_override_for_user(self, user_email: Optional[str], role_id: Optional[str]) -> None:
+    def set_applied_role_override_for_user(
+        self,
+        user_email: Optional[str],
+        role_id: Optional[str],
+        caller_groups: Optional[List[str]] = None,
+        caller_is_admin: bool = False,
+    ) -> None:
         """Sets or clears the applied role override for a user.
 
         When role_id is None, the override is cleared and the user's actual group-based
         permissions are used. This stores state in-memory for the backend process lifetime.
+
+        Defense-in-depth: when caller_is_admin is False, the target role_id must intersect
+        with caller_groups (i.e., the user must be a member of a group assigned to that role).
+        Admins retain the impersonation power and may set any role_id. Clearing the override
+        (role_id=None) is always allowed.
+
+        Args:
+            user_email: target user's email.
+            role_id: role identifier to set, or None to clear.
+            caller_groups: groups for membership validation (non-admin path). If omitted on
+                a non-admin call, validation cannot pass and a PermissionError is raised.
+            caller_is_admin: when True, skip membership validation.
         """
         if not user_email:
             raise ValueError("User email is required to set role override")
@@ -293,6 +354,16 @@ class SettingsManager:
         role = self.get_app_role(role_id)
         if not role:
             raise ValueError(f"Role with id '{role_id}' not found")
+
+        # Membership validation for non-admin callers
+        if not caller_is_admin:
+            group_set = {(g or '').lower() for g in (caller_groups or [])}
+            role_groups = {(g or '').lower() for g in (role.assigned_groups or [])}
+            if not group_set or not role_groups.intersection(group_set):
+                raise PermissionError(
+                    f"User is not a member of any group assigned to role '{role.name}'"
+                )
+
         self._applied_role_overrides[user_email] = role_id
 
     def get_applied_role_override_for_user(self, user_email: Optional[str]) -> Optional[str]:
@@ -423,7 +494,7 @@ class SettingsManager:
                 )
                 self._installations[db_inst.workflow_id] = installation
 
-            logger.info(f"Loaded {len(self._installations)} workflow installations from database")
+            logger.debug(f"Loaded {len(self._installations)} workflow installations from database")
         except Exception as e:
             logger.error(f"Error loading installations from database: {e}")
 
@@ -462,6 +533,12 @@ class SettingsManager:
                                 'name': name,
                                 'description': role_def.get('description'),
                             }
+                            # Propagate group bindings declared on the in-code defaults
+                            # (e.g. data-producers -> Data Producer) so the generated
+                            # YAML matches the canned test personas out of the box.
+                            default_groups = role_def.get('assigned_groups')
+                            if default_groups:
+                                base['assigned_groups'] = list(default_groups)
                             # Only include non-admin explicit permissions; admin will be expanded at runtime
                             if name != 'Admin':
                                 base['feature_permissions'] = {
@@ -659,6 +736,74 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"Unexpected error during default role check/creation: {e}", exc_info=True)
             raise # Re-raise other unexpected errors
+
+    def upgrade_admin_role_for_new_features(self):
+        """Idempotent migration: ensure the built-in Admin role has ADMIN on every feature.
+
+        Runs on startup. When new feature IDs are added to ``APP_FEATURES`` (e.g.,
+        the ``settings-*`` sub-page permissions introduced by the Settings
+        permissions refactor), the existing Admin role in the database will be
+        missing entries for them. This method backfills those entries with
+        ``FeatureAccessLevel.ADMIN`` so administrators don't need to manually
+        re-grant access after every release.
+
+        Only the built-in Admin role (``is_admin=True``) is touched. Non-admin
+        roles are left untouched so their explicit grants are preserved — admins
+        must explicitly delegate the new sub-permissions.
+        """
+        try:
+            all_features_config = get_feature_config()
+            roles_db = self.app_role_repo.get_all_roles(db=self._db)
+            updated_count = 0
+
+            for role_db in roles_db:
+                if not getattr(role_db, 'is_admin', False):
+                    continue
+                try:
+                    existing_perms_raw = json.loads(getattr(role_db, 'feature_permissions', '{}') or '{}')
+                except Exception:
+                    logger.warning(
+                        "Admin role '%s' has unparseable feature_permissions; resetting to ADMIN on all features.",
+                        role_db.name,
+                    )
+                    existing_perms_raw = {}
+
+                existing_perms: Dict[str, str] = {
+                    k: v for k, v in existing_perms_raw.items() if isinstance(k, str) and isinstance(v, str)
+                }
+                missing_ids = [
+                    feat_id for feat_id in all_features_config.keys()
+                    if feat_id not in existing_perms
+                ]
+                if not missing_ids:
+                    continue
+
+                for feat_id in missing_ids:
+                    allowed_levels = all_features_config[feat_id].get('allowed_levels', [])
+                    target = FeatureAccessLevel.ADMIN if FeatureAccessLevel.ADMIN in allowed_levels else (
+                        allowed_levels[-1] if allowed_levels else FeatureAccessLevel.NONE
+                    )
+                    existing_perms[feat_id] = target.value
+
+                role_db.feature_permissions = json.dumps(existing_perms)
+                self._db.add(role_db)
+                updated_count += 1
+                logger.info(
+                    "Backfilled Admin role '%s' with ADMIN on %d new feature ids: %s",
+                    role_db.name, len(missing_ids), missing_ids,
+                )
+
+            if updated_count > 0:
+                self._db.flush()
+                logger.info("Upgraded %d Admin role(s) with new feature permissions.", updated_count)
+            else:
+                logger.info("No Admin roles needed upgrade for new feature permissions.")
+
+        except SQLAlchemyError as e:
+            logger.error(f"Database error during Admin role upgrade: {e}", exc_info=True)
+            self._db.rollback()
+        except Exception as e:
+            logger.error(f"Unexpected error during Admin role upgrade: {e}", exc_info=True)
 
     def _setup_default_role_hierarchy(self):
         """Sets up the default role request/approval hierarchy.
@@ -1056,6 +1201,12 @@ class SettingsManager:
             'relationships': relationships
         }
 
+    def list_available_workflows(self) -> list:
+        """Delegate to JobsManager to list available workflows."""
+        if getattr(self, '_jobs', None):
+            return self._jobs.list_available_workflows()
+        return []
+
     def get_settings(self) -> dict:
         """Get current settings"""
         # Refresh available jobs from filesystem to reflect changes
@@ -1103,6 +1254,9 @@ class SettingsManager:
             'ui_custom_logo_url': self._settings.UI_CUSTOM_LOGO_URL,
             'ui_about_content': self._settings.UI_ABOUT_CONTENT,
             'ui_custom_css': self._settings.UI_CUSTOM_CSS,
+            'ui_app_display_name': self._settings.UI_APP_DISPLAY_NAME,
+            'ui_app_short_name': self._settings.UI_APP_SHORT_NAME,
+            'ui_favicon_url': self._settings.UI_FAVICON_URL,
         }
 
     def update_settings(self, settings: dict) -> Settings:
@@ -1392,7 +1546,9 @@ class SettingsManager:
             logger.info(f"Updated UI_I18N_ENABLED to: {value}")
         
         if 'ui_custom_logo_url' in settings:
-            value = settings.get('ui_custom_logo_url') or None
+            value = validate_branding_url(
+                settings.get('ui_custom_logo_url') or None, field='custom logo URL'
+            )
             app_settings_repo.set(self._db, 'UI_CUSTOM_LOGO_URL', value)
             self._settings.UI_CUSTOM_LOGO_URL = value
             logger.info(f"Updated UI_CUSTOM_LOGO_URL")
@@ -1408,7 +1564,34 @@ class SettingsManager:
             app_settings_repo.set(self._db, 'UI_CUSTOM_CSS', value)
             self._settings.UI_CUSTOM_CSS = value
             logger.info(f"Updated UI_CUSTOM_CSS")
-        
+
+        # Branding (issue #240)
+        if 'ui_app_display_name' in settings:
+            value = sanitize_app_display_name(
+                settings.get('ui_app_display_name'), field='application display name'
+            )
+            app_settings_repo.set(self._db, 'UI_APP_DISPLAY_NAME', value)
+            self._settings.UI_APP_DISPLAY_NAME = value
+            logger.info(f"Updated UI_APP_DISPLAY_NAME")
+
+        if 'ui_app_short_name' in settings:
+            value = sanitize_app_display_name(
+                settings.get('ui_app_short_name'),
+                max_len=APP_SHORT_NAME_MAX_LEN,
+                field='application short name',
+            )
+            app_settings_repo.set(self._db, 'UI_APP_SHORT_NAME', value)
+            self._settings.UI_APP_SHORT_NAME = value
+            logger.info(f"Updated UI_APP_SHORT_NAME")
+
+        if 'ui_favicon_url' in settings:
+            value = validate_branding_url(
+                settings.get('ui_favicon_url') or None, field='favicon URL'
+            )
+            app_settings_repo.set(self._db, 'UI_FAVICON_URL', value)
+            self._settings.UI_FAVICON_URL = value
+            logger.info(f"Updated UI_FAVICON_URL")
+
         # Reinitialize Git service if any Git settings were changed
         git_settings_changed = any(key in settings for key in ['git_repo_url', 'git_branch', 'git_username', 'git_password'])
         if git_settings_changed:
@@ -1586,14 +1769,21 @@ class SettingsManager:
         )
 
     def get_features_with_access_levels(self) -> Dict[str, Dict[str, str | List[str]]]:
-        """Returns a dictionary of features and their allowed access levels."""
+        """Returns a dictionary of features and their allowed access levels.
+
+        Each entry contains:
+        - name: human-readable label
+        - allowed_levels: list of allowed FeatureAccessLevel values (as strings)
+        - group: one of Discover/Build/Govern/Deploy/Settings/Other for UI grouping
+        """
         features_config = get_feature_config()
         all_levels = get_all_access_levels()
         # Convert enum members to their string values for API response
         return {
             feature_id: {
                 'name': config['name'],
-                'allowed_levels': [level.value for level in config['allowed_levels']]
+                'allowed_levels': [level.value for level in config['allowed_levels']],
+                'group': config.get('group', 'Other'),
             }
             for feature_id, config in features_config.items()
         }
@@ -1648,17 +1838,32 @@ class SettingsManager:
                         updated_any = True
 
             if updated_any:
-                # Flush once after backfill
                 try:
-                    self._db.flush()
+                    self._db.commit()
                 except Exception:
-                    pass
+                    self._db.rollback()
 
             return [self._map_db_to_api(role_db) for role_db in roles_db]
         except SQLAlchemyError as e:
             logger.error(f"Database error listing roles: {e}", exc_info=True)
             self._db.rollback()
             return [] # Return empty list on error
+
+    def list_app_roles_for_approval(self, approval_entity: Optional[str] = None) -> List[AppRole]:
+        """Lists app roles filtered by approval privilege for a given entity type.
+
+        When *approval_entity* is provided (e.g. ``"CONTRACTS"``), only roles
+        where ``approval_privileges[approval_entity]`` is ``True`` are returned.
+        When omitted, all roles are returned (backward-compatible behaviour).
+        """
+        all_roles = self.list_app_roles()
+        if approval_entity is None:
+            return all_roles
+        entity_key = approval_entity.upper()
+        return [
+            role for role in all_roles
+            if role.approval_privileges.get(ApprovalEntity(entity_key)) is True  # type: ignore[arg-type]
+        ]
 
     def get_app_role(self, role_id: str) -> Optional[AppRole]:
         """Retrieves a specific application role by ID."""
@@ -1720,9 +1925,7 @@ class SettingsManager:
                     self._db, str(role_db.id), role.approver_roles
                 )
             
-            # Commit is handled by the request lifecycle or calling function
-            # self._db.commit() # Remove commit from manager method
-            # self._db.refresh(role_db) # Refresh is handled in repo
+            self._db.commit()
             logger.info(f"Successfully created role '{role.name}' with ID {role_db.id}")
             result = self._map_db_to_api(role_db)
             
@@ -1745,11 +1948,36 @@ class SettingsManager:
             raise
 
     def _validate_permissions(self, permissions: Dict[str, FeatureAccessLevel]):
-        """Validates that assigned permission levels are allowed for each feature."""
+        """Validate (and clean) the permissions dict assigned to a role.
+
+        Behavior:
+          * Unknown feature IDs (e.g. features that have been renamed or
+            removed since this role was last saved) are dropped from
+            ``permissions`` in place and logged as a warning. The role can
+            still be saved — the next persisted state will no longer carry
+            the stale key. This is the path that historically 400'd with
+            "Invalid role data" on any role that predated a feature rename
+            (e.g. the legacy ``datasets`` feature ID lingering on roles
+            installed before the rename to ``data-products``).
+          * Unknown access levels for a known feature remain a hard error
+            (this indicates a client bug or schema mismatch, not drift
+            between releases, so it should not be silently swallowed).
+
+        Mutates ``permissions`` in place so the caller's subsequent
+        ``repository.update`` writes the cleaned dict and the stale key
+        does not survive the round-trip.
+        """
         feature_config = get_feature_config()
+        # Iterate over a snapshot — we delete keys during the loop.
+        stale_feature_ids = [fid for fid in permissions if fid not in feature_config]
+        for fid in stale_feature_ids:
+            logger.warning(
+                "Dropping unknown feature_id '%s' from role permissions "
+                "(feature was likely renamed or removed in a prior release).",
+                fid,
+            )
+            permissions.pop(fid)
         for feature_id, level in permissions.items():
-            if feature_id not in feature_config:
-                raise ValueError(f"Invalid feature ID provided in permissions: '{feature_id}'")
             allowed_levels = feature_config[feature_id].get('allowed_levels', [])
             if level not in allowed_levels:
                 allowed_str = [lvl.value for lvl in allowed_levels]
@@ -1867,7 +2095,7 @@ class SettingsManager:
                     self._db, role_id, role_update.approver_roles
                 )
             
-            # Commit handled by request lifecycle
+            self._db.commit()
             logger.info(f"Successfully updated role (ID: {role_id})")
             result = self._map_db_to_api(updated_role_db)
             
@@ -1907,8 +2135,7 @@ class SettingsManager:
             #    raise ValueError("Cannot delete the default Admin role.")
 
             self.app_role_repo.remove(db=self._db, id=role_id)
-            # Commit handled by request lifecycle
-            # self._db.commit()
+            self._db.commit()
             logger.info(f"Successfully deleted role with ID: {role_id}")
             return True
         except SQLAlchemyError as e:

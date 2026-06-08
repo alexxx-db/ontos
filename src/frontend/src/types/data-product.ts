@@ -7,6 +7,17 @@ import { AssignedTag } from '@/components/ui/tag-chip';
  */
 
 // ============================================================================
+// Consumer Principal (typed identity reference)
+// ============================================================================
+
+// Default `type` is "group" today — extensible to non-group identity methods
+// (service principals, IdP roles, OAuth scopes) without a breaking migration.
+export interface ConsumerPrincipal {
+  type: string;
+  value: string;
+}
+
+// ============================================================================
 // ODPS v1.0.0 Enums
 // ============================================================================
 
@@ -17,7 +28,6 @@ export enum DataProductStatus {
   UNDER_REVIEW = 'under_review',
   APPROVED = 'approved',
   ACTIVE = 'active',
-  CERTIFIED = 'certified',
   DEPRECATED = 'deprecated',
   RETIRED = 'retired'
 }
@@ -260,16 +270,38 @@ export interface DataProduct {
   created_at?: string;
   updated_at?: string;
 
+  // Typed list of principals representing the expected consumers of this
+  // product. Default `type: "group"` covers the common case; the shape is
+  // extensible to service principals, roles, scopes, etc. Surfaced in
+  // publish/edit form and exposed to webhook bodies via
+  // `${entity.consumer_principals}`.
+  consumer_principals?: ConsumerPrincipal[];
+
   // Databricks extension
   project_id?: string;
   project_name?: string; // Resolved project name
 
   // Versioning fields
   draftOwnerId?: string; // Personal draft owner - if set, visible only to owner
-  parentProductId?: string; // Parent version ID for version lineage
-  baseName?: string; // Base name without version for grouping versions
+  parentProductId?: string; // Parent version ID for version lineage (edge)
+  versionFamilyId?: string; // PRD #442 — canonical family grouping key carried unchanged on every clone
+  baseName?: string; // Legacy base name; superseded by versionFamilyId
   changeSummary?: string; // Summary of changes in this version
-  published?: boolean; // Whether published to marketplace
+  // Number of visible versions in this row's family — only populated on the
+  // collapsed list view (include_history=false). See PRD #442.
+  versionCount?: number;
+
+  publication_scope?: string | null;
+  published_at?: string | null;
+  published_by?: string | null;
+
+  // Certification
+  certification_level?: number | null;
+  inherited_certification_level?: number | null;
+  certified_at?: string | null;
+  certified_by?: string | null;
+  certification_expires_at?: string | null;
+  certification_notes?: string | null;
 
   // UI form fields (for form handling)
   dataProductSpecification?: string; // Spec version

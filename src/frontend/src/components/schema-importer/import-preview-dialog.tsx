@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Loader2,
   CheckCircle2,
@@ -12,9 +12,10 @@ import {
   Box,
   FolderOpen,
   Database,
-  Braces,
   Library,
   Server,
+  Link2,
+  Unlink,
 } from 'lucide-react';
 import {
   Dialog,
@@ -26,7 +27,14 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { AssetSelector, type SelectedAsset } from '@/components/common/asset-selector';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import type {
@@ -110,6 +118,15 @@ function getAssetIcon(assetType: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Mapped asset info (id + display name)
+// ---------------------------------------------------------------------------
+
+interface MappedAsset {
+  id: string;
+  name: string;
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -138,6 +155,11 @@ export default function ImportPreviewDialog({
   const [hasLoaded, setHasLoaded] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
+  // Toggle / map-to-existing state
+  const [excludedPaths, setExcludedPaths] = useState<Set<string>>(new Set());
+  const [pathMappings, setPathMappings] = useState<Record<string, MappedAsset>>({});
+  const [selectorOpenForPath, setSelectorOpenForPath] = useState<string | null>(null);
+
   const loadPreview = async () => {
     setIsLoadingPreview(true);
     setImportResult(null);
@@ -164,10 +186,16 @@ export default function ImportPreviewDialog({
   const executeImport = async () => {
     setIsImporting(true);
     try {
+      const mappingsForApi: Record<string, string> = {};
+      for (const [path, asset] of Object.entries(pathMappings)) {
+        mappingsForApi[path] = asset.id;
+      }
       const payload: ImportRequest = {
         connection_id: connectionId,
         selected_paths: selectedPaths,
         depth,
+        excluded_paths: Array.from(excludedPaths),
+        path_mappings: Object.keys(mappingsForApi).length > 0 ? mappingsForApi : undefined,
       };
       const resp = await apiPost<ImportResult>('/api/schema-import/import', payload);
       if (resp.data) {
@@ -192,6 +220,9 @@ export default function ImportPreviewDialog({
       setImportResult(null);
       setHasLoaded(false);
       setCollapsed(new Set());
+      setExcludedPaths(new Set());
+      setPathMappings({});
+      setSelectorOpenForPath(null);
     }
     onOpenChange(nextOpen);
   };
@@ -221,8 +252,63 @@ export default function ImportPreviewDialog({
     });
   };
 
-  const toCreate = previewItems.filter((i) => i.will_create).length;
-  const toSkip = previewItems.filter((i) => !i.will_create).length;
+  const toggleExclude = useCallback((path: string) => {
+    setExcludedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        setPathMappings((pm) => {
+          if (path in pm) {
+            const { [path]: _, ...rest } = pm;
+            return rest;
+          }
+          return pm;
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleAssetSelected = useCallback((assets: SelectedAsset[]) => {
+    if (!selectorOpenForPath || assets.length === 0) return;
+    const picked = assets[0];
+    setPathMappings((prev) => ({
+      ...prev,
+      [selectorOpenForPath]: { id: picked.id, name: picked.name },
+    }));
+    setExcludedPaths((prev) => {
+      if (prev.has(selectorOpenForPath)) {
+        const next = new Set(prev);
+        next.delete(selectorOpenForPath);
+        return next;
+      }
+      return prev;
+    });
+    setSelectorOpenForPath(null);
+  }, [selectorOpenForPath]);
+
+  const clearMapping = useCallback((path: string) => {
+    setPathMappings((prev) => {
+      const { [path]: _, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  const activeItems = useMemo(
+    () => previewItems.filter((i) => !excludedPaths.has(i.path)),
+    [previewItems, excludedPaths],
+  );
+  const toCreate = activeItems.filter((i) => i.will_create && !(i.path in pathMappings)).length;
+  const toSkip = activeItems.filter((i) => !i.will_create || i.path in pathMappings).length;
+
+  // Resolve the asset type for the selector target
+  const selectorTargetType = useMemo(() => {
+    if (!selectorOpenForPath) return undefined;
+    const item = previewItems.find((i) => i.path === selectorOpenForPath);
+    return item ? [item.asset_type] : undefined;
+  }, [selectorOpenForPath, previewItems]);
 
   // ---------------------------------------------------------------------------
   // Tree renderers
@@ -232,11 +318,15 @@ export default function ImportPreviewDialog({
     const { item, children, level } = node;
     const hasKids = children.length > 0;
     const isCollapsed = collapsed.has(item.path);
+    const isExcluded = excludedPaths.has(item.path);
+    const mapped = pathMappings[item.path];
+    const isMapped = !!mapped;
+    const canLink = item.is_ancestor && item.will_create && !isExcluded;
 
     return (
       <div key={item.path}>
         <div
-          className="flex items-center gap-2 py-1.5 px-3 text-sm rounded-sm hover:bg-muted/50"
+          className={`flex items-center gap-2 py-1.5 px-3 text-sm rounded-sm hover:bg-muted/50 ${isExcluded ? 'opacity-40' : ''}`}
           style={{ paddingLeft: `${level * 20 + 12}px` }}
         >
           {hasKids ? (
@@ -254,21 +344,79 @@ export default function ImportPreviewDialog({
             <span className="w-[22px] shrink-0" />
           )}
 
-          {item.will_create ? (
+          {item.is_ancestor && (
+            <Checkbox
+              checked={!isExcluded}
+              onCheckedChange={() => toggleExclude(item.path)}
+              className="shrink-0"
+            />
+          )}
+
+          {isExcluded ? (
+            <MinusCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+          ) : isMapped ? (
+            <Link2 className="h-4 w-4 text-blue-500 shrink-0" />
+          ) : item.will_create ? (
             <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
           ) : (
             <MinusCircle className="h-4 w-4 text-yellow-500 shrink-0" />
           )}
 
           {getAssetIcon(item.asset_type)}
-          <span className="truncate flex-1">{item.name}</span>
+
+          {isMapped ? (
+            <span className="truncate flex-1 text-blue-500">
+              {mapped.name}
+            </span>
+          ) : (
+            <span className={`truncate flex-1 ${item.is_ancestor ? 'text-muted-foreground' : ''}`}>
+              {item.name}
+            </span>
+          )}
+
+          {/* Link / unlink icon for ancestors that would be created */}
+          {canLink && !isMapped && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setSelectorOpenForPath(item.path)}
+                  className="p-1 rounded hover:bg-muted shrink-0"
+                >
+                  <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Link to existing asset</TooltipContent>
+            </Tooltip>
+          )}
+          {isMapped && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => clearMapping(item.path)}
+                  className="p-1 rounded hover:bg-muted shrink-0"
+                >
+                  <Unlink className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Unlink — create new instead</TooltipContent>
+            </Tooltip>
+          )}
 
           <Badge variant="outline" className="text-xs shrink-0">
             {item.asset_type}
           </Badge>
-          <span className="text-xs text-muted-foreground shrink-0">
-            {item.will_create ? 'new' : 'exists'}
-          </span>
+
+          {isExcluded ? (
+            <span className="text-xs text-muted-foreground shrink-0">skip</span>
+          ) : isMapped ? (
+            <span className="text-xs text-blue-500 shrink-0">linked</span>
+          ) : (
+            <span className="text-xs text-muted-foreground shrink-0">
+              {item.will_create
+                ? (item.is_ancestor ? 'auto' : 'new')
+                : 'exists'}
+            </span>
+          )}
         </div>
 
         {hasKids && !isCollapsed && children.map(renderPreviewNode)}
@@ -340,69 +488,82 @@ export default function ImportPreviewDialog({
   // ---------------------------------------------------------------------------
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
-            {importResult ? 'Import Results' : 'Import Preview'}
-          </DialogTitle>
-          <DialogDescription>
-            {importResult
-              ? `${importResult.created} created, ${importResult.skipped} skipped, ${importResult.errors} errors`
-              : `${toCreate} to create, ${toSkip} already exist`}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {importResult ? 'Import Results' : 'Import Preview'}
+            </DialogTitle>
+            <DialogDescription>
+              {importResult
+                ? `${importResult.created} created, ${importResult.skipped} skipped, ${importResult.errors} errors`
+                : `${toCreate} to create, ${toSkip} already exist`}
+            </DialogDescription>
+          </DialogHeader>
 
-        {isLoadingPreview ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            <span className="ml-2 text-sm text-muted-foreground">Analyzing resources...</span>
-          </div>
-        ) : importResult ? (
-          <ScrollArea className="max-h-[400px]">
-            <div className="space-y-0.5 py-1">
-              {resultTree.map(renderResultNode)}
-              {resultTree.length === 0 && (
-                <div className="text-center py-8 text-sm text-muted-foreground">
-                  No items in import result
-                </div>
-              )}
+          {isLoadingPreview ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span className="ml-2 text-sm text-muted-foreground">Analyzing resources...</span>
             </div>
-          </ScrollArea>
-        ) : (
-          <ScrollArea className="max-h-[400px]">
-            <div className="space-y-0.5 py-1">
-              {previewTree.map(renderPreviewNode)}
-              {previewTree.length === 0 && (
-                <div className="text-center py-8 text-sm text-muted-foreground">
-                  No importable resources found at the selected paths
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        )}
-
-        <DialogFooter>
-          {importResult ? (
-            <Button variant="outline" onClick={() => handleOpenChange(false)}>
-              Close
-            </Button>
+          ) : importResult ? (
+            <ScrollArea className="max-h-[400px]">
+              <div className="space-y-0.5 py-1">
+                {resultTree.map(renderResultNode)}
+                {resultTree.length === 0 && (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    No items in import result
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           ) : (
-            <>
-              <Button variant="outline" onClick={() => handleOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={executeImport}
-                disabled={isImporting || toCreate === 0}
-              >
-                {isImporting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Import {toCreate} asset{toCreate !== 1 ? 's' : ''}
-              </Button>
-            </>
+            <ScrollArea className="max-h-[400px]">
+              <div className="space-y-0.5 py-1">
+                {previewTree.map(renderPreviewNode)}
+                {previewTree.length === 0 && (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    No importable resources found at the selected paths
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+
+          <DialogFooter>
+            {importResult ? (
+              <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                Close
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={executeImport}
+                  disabled={isImporting || toCreate === 0}
+                >
+                  {isImporting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Import {toCreate} asset{toCreate !== 1 ? 's' : ''}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Asset selector opened from a link icon */}
+      <AssetSelector
+        isOpen={!!selectorOpenForPath}
+        onOpenChange={(open) => { if (!open) setSelectorOpenForPath(null); }}
+        onConfirm={handleAssetSelected}
+        targetAssetTypes={selectorTargetType}
+        title="Link to existing asset"
+        description="Pick an existing asset to use instead of creating a new one"
+        confirmLabel="Use selected"
+      />
+    </>
   );
 }

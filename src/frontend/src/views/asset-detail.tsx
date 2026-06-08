@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Loader2, AlertCircle, Pencil, Trash2,
+  ArrowLeft, AlertCircle, Pencil, Trash2,
   MapPin, Globe, Calendar, User, Tag, FileJson, Network, GitBranch,
   LayoutGrid, Share2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
+import { TabsDetailSkeleton } from '@/components/common/list-view-skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AssetDeleteDialog } from '@/components/assets/asset-delete-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -21,8 +21,8 @@ import { BusinessLineageGraph } from '@/components/common/business-lineage-graph
 import { ImpactAnalysisPanel } from '@/components/common/impact-analysis-panel';
 import { BusinessLineageView } from '@/components/lineage';
 import { LineageEditor } from '@/components/common/lineage-editor';
+import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/use-api';
-import { useToast } from '@/hooks/use-toast';
 import { RelativeDate } from '@/components/common/relative-date';
 import { EntityTreePanel } from '@/components/common/entity-tree-panel';
 import { OwnershipPanel } from '@/components/common/ownership-panel';
@@ -31,6 +31,10 @@ import { RatingPanel } from '@/components/ratings';
 import EntityMetadataPanel from '@/components/metadata/entity-metadata-panel';
 import EntityCostsPanel from '@/components/costs/entity-costs-panel';
 import EntityQualityPanel from '@/components/quality/entity-quality-panel';
+import ConceptSelectDialog from '@/components/semantic/concept-select-dialog';
+import LinkedConceptChips from '@/components/semantic/linked-concept-chips';
+import type { EntitySemanticLink } from '@/types/semantic-link';
+import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/stores/permissions-store';
 import { FeatureAccessLevel } from '@/types/settings';
 import useBreadcrumbStore from '@/stores/breadcrumb-store';
@@ -103,8 +107,11 @@ export default function AssetDetailView() {
   const [ontologyIri, setOntologyIri] = useState<string | null>(null);
   const [isLineageEditorOpen, setIsLineageEditorOpen] = useState(false);
   const [relViewMode, setRelViewMode] = useState<'table' | 'graph'>('table');
+  const [semanticLinks, setSemanticLinks] = useState<EntitySemanticLink[]>([]);
+  const [iriDialogOpen, setIriDialogOpen] = useState(false);
 
-  const { get: apiGet, loading: apiIsLoading } = useApi();
+  const { get: apiGet, post: apiPost, delete: apiDelete } = useApi();
+  const { i18n } = useTranslation();
   const { toast } = useToast();
   const { hasPermission, isLoading: permissionsLoading } = usePermissions();
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
@@ -113,6 +120,7 @@ export default function AssetDetailView() {
   const featureId = 'assets';
   const canWrite = !permissionsLoading && hasPermission(featureId, FeatureAccessLevel.READ_WRITE);
   const canAdmin = !permissionsLoading && hasPermission(featureId, FeatureAccessLevel.ADMIN);
+  const canEditSemanticLinks = !permissionsLoading && hasPermission('semantic-models', FeatureAccessLevel.READ_WRITE);
 
   const entityType = asset?.asset_type_name || 'Asset';
 
@@ -142,9 +150,13 @@ export default function AssetDetailView() {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiGet<AssetRead>(`/api/assets/${assetId}`);
-      if (response.error) throw new Error(response.error);
-      setAsset(response.data ?? null);
+      const [assetRes, linksRes] = await Promise.all([
+        apiGet<AssetRead>(`/api/assets/${assetId}`),
+        apiGet<EntitySemanticLink[]>(`/api/semantic-links/entity/asset/${assetId}`),
+      ]);
+      if (assetRes.error) throw new Error(assetRes.error);
+      setAsset(assetRes.data ?? null);
+      setSemanticLinks(Array.isArray(linksRes.data) ? linksRes.data : []);
     } catch (err: any) {
       setError(err.message || 'Failed to load asset');
     } finally {
@@ -156,16 +168,48 @@ export default function AssetDetailView() {
     fetchAsset();
   }, [fetchAsset]);
 
+  const addSemanticLink = useCallback(async (iri: string) => {
+    if (!assetId) return;
+    try {
+      const res = await apiPost<EntitySemanticLink>(`/api/semantic-links/`, {
+        entity_id: assetId,
+        entity_type: 'asset',
+        iri,
+      });
+      if (res.error) throw new Error(res.error);
+      // Optimistically refresh just the links rather than re-loading the whole asset
+      const refreshed = await apiGet<EntitySemanticLink[]>(`/api/semantic-links/entity/asset/${assetId}`);
+      setSemanticLinks(Array.isArray(refreshed.data) ? refreshed.data : []);
+      setIriDialogOpen(false);
+      toast({ title: 'Linked', description: 'Concept linked to asset.' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Failed to link concept', variant: 'destructive' });
+    }
+  }, [assetId, apiPost, apiGet, toast]);
+
+  const removeSemanticLink = useCallback(async (linkId: string) => {
+    if (!assetId) return;
+    try {
+      const res = await apiDelete(`/api/semantic-links/${linkId}`);
+      if (res.error) throw new Error(res.error);
+      const refreshed = await apiGet<EntitySemanticLink[]>(`/api/semantic-links/entity/asset/${assetId}`);
+      setSemanticLinks(Array.isArray(refreshed.data) ? refreshed.data : []);
+      toast({ title: 'Removed', description: 'Concept link removed.' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Failed to remove link', variant: 'destructive' });
+    }
+  }, [assetId, apiDelete, apiGet, toast]);
+
   useEffect(() => {
     if (asset) {
       setStaticSegments([
-        { label: 'Asset Explorer', href: '/assets' },
+        { label: 'Asset Explorer', path: '/assets' },
       ]);
       setDynamicTitle(asset.name);
       // Resolve ontology IRI for the asset type
       (async () => {
         try {
-          const resp = await apiGet<EntityTypeDefinition[]>('/api/ontology/entity-types?tier=asset');
+          const resp = await apiGet<EntityTypeDefinition[]>(`/api/ontology/entity-types?tier=asset&lang=${encodeURIComponent(i18n.language)}`);
           if (!resp.error && Array.isArray(resp.data)) {
             const match = resp.data.find(
               (t) => t.label === asset.asset_type_name || t.local_name === asset.asset_type_name
@@ -179,21 +223,9 @@ export default function AssetDetailView() {
   }, [asset, setStaticSegments, setDynamicTitle]);
 
   if (loading) {
-    return (
-      <div className="py-6 space-y-6">
-        <div className="flex items-center gap-4">
-          <Skeleton className="h-10 w-10 rounded-md" />
-          <div className="space-y-2">
-            <Skeleton className="h-7 w-64" />
-            <Skeleton className="h-4 w-40" />
-          </div>
-        </div>
-        <div className="grid gap-6">
-          <Skeleton className="h-48 w-full rounded-lg" />
-          <Skeleton className="h-32 w-full rounded-lg" />
-        </div>
-      </div>
-    );
+    // Asset Detail uses a tabbed layout (Overview / Relationships / Lineage /
+    // Impact) above a hero title row. Match that structure.
+    return <TabsDetailSkeleton tabs={4} actionButtons={5} contentVariant="two-col" />;
   }
 
   if (error || !asset) {
@@ -363,6 +395,23 @@ export default function AssetDetailView() {
                         <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
                       ))}
                     </div>
+                  </div>
+                </>
+              )}
+
+              {/* Linked Business Concepts */}
+              {(semanticLinks.length > 0 || canEditSemanticLinks) && (
+                <>
+                  <Separator className="my-4" />
+                  <div>
+                    <Label className="text-xs text-muted-foreground mb-2 block">Linked Business Concepts</Label>
+                    <LinkedConceptChips
+                      links={semanticLinks}
+                      onRemove={canEditSemanticLinks ? removeSemanticLink : undefined}
+                      trailing={canEditSemanticLinks ? (
+                        <Button size="sm" variant="outline" onClick={() => setIriDialogOpen(true)} className="h-6 text-xs">Add</Button>
+                      ) : undefined}
+                    />
                   </div>
                 </>
               )}
@@ -580,6 +629,13 @@ export default function AssetDetailView() {
           onDeleted={() => navigate(-1)}
         />
       )}
+
+      {/* Concept linker */}
+      <ConceptSelectDialog
+        isOpen={iriDialogOpen}
+        onOpenChange={setIriDialogOpen}
+        onSelect={addSemanticLink}
+      />
     </div>
   );
 }

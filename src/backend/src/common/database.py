@@ -64,24 +64,56 @@ _token_refresh_thread: Optional[threading.Thread] = None
 _token_refresh_stop_event = threading.Event()
 
 
-def get_lakebase_instance_name(app_name: str, ws_client) -> Optional[str]:
-    """Get the Lakebase instance name from the Databricks App resources.
-    
-    Args:
-        app_name: Name of the Databricks App
-        ws_client: Workspace client instance
-        
-    Returns:
-        The database instance name, or None if not found
+@dataclass
+class LakebaseInfo:
+    """Connection info for a Lakebase database resource (provisioned or autoscale)."""
+    lakebase_type: str  # "provisioned" or "autoscale"
+    identifier: str     # instance_name (provisioned) or endpoint resource name (autoscale)
+
+
+# Cached LakebaseInfo to avoid repeated API calls during token refreshes
+_lakebase_info: Optional[LakebaseInfo] = None
+
+
+def get_lakebase_info(app_name: str, ws_client) -> Optional[LakebaseInfo]:
+    """Detect the Lakebase type (provisioned or autoscale) from the Databricks App resources
+    and return the identifier needed for credential generation.
+
+    For provisioned Lakebase, returns the instance name from ``resource.database``.
+    For autoscale Lakebase, discovers the endpoint via ``resource.postgres.branch``
+    and ``ws_client.postgres.list_endpoints``.
+
+    The result is cached globally so subsequent token refreshes skip the API calls.
     """
+    global _lakebase_info
+    if _lakebase_info is not None:
+        return _lakebase_info
+
     try:
         app_info = ws_client.apps.get(app_name)
         if app_info.resources:
             for resource in app_info.resources:
+                # Provisioned Lakebase — resource.database with instance_name
                 if resource.database is not None:
-                    return resource.database.instance_name
+                    _lakebase_info = LakebaseInfo("provisioned", resource.database.instance_name)
+                    logger.info(f"Detected provisioned Lakebase instance: {_lakebase_info.identifier}")
+                    return _lakebase_info
+
+                # Autoscale Lakebase — resource.postgres with branch
+                # Use hasattr for SDK compatibility (postgres attr added in SDK >=0.95.0)
+                if hasattr(resource, 'postgres') and resource.postgres is not None:
+                    branch = resource.postgres.branch
+                    logger.info(f"Detected autoscale Lakebase resource on branch: {branch}")
+                    endpoints = list(ws_client.postgres.list_endpoints(parent=branch))
+                    if endpoints:
+                        endpoint_name = endpoints[0].name
+                        _lakebase_info = LakebaseInfo("autoscale", endpoint_name)
+                        logger.info(f"Resolved autoscale Lakebase endpoint: {endpoint_name}")
+                        return _lakebase_info
+                    else:
+                        logger.error(f"No endpoints found for autoscale Lakebase branch: {branch}")
     except Exception as e:
-        logger.error(f"Failed to get instance name for app {app_name}: {e}")
+        logger.error(f"Failed to get Lakebase info for app {app_name}: {e}")
     return None
 
 
@@ -256,16 +288,42 @@ def refresh_oauth_token(settings: Settings) -> str:
     
     with _token_refresh_lock:
         ws_client = get_workspace_client(settings)
-        instance_name = get_lakebase_instance_name(settings.DATABRICKS_APP_NAME, ws_client)
+        info = get_lakebase_info(settings.DATABRICKS_APP_NAME, ws_client)
         
-        if not instance_name:
-            raise ValueError(f"Could not determine Lakebase instance name for app '{settings.DATABRICKS_APP_NAME}'")
+        if not info and settings.LAKEBASE_INSTANCE_NAME:
+            # Fallback: use LAKEBASE_INSTANCE_NAME env var when app resource lookup fails
+            identifier = settings.LAKEBASE_INSTANCE_NAME
+            logger.info(f"Using LAKEBASE_INSTANCE_NAME fallback: {identifier}")
+            if identifier.startswith("projects/"):
+                # If it's a branch path (no /endpoints/), discover the endpoint
+                if "/endpoints/" not in identifier:
+                    try:
+                        endpoints = list(ws_client.postgres.list_endpoints(parent=identifier))
+                        if endpoints:
+                            identifier = endpoints[0].name
+                            logger.info(f"Resolved fallback branch to endpoint: {identifier}")
+                        else:
+                            logger.error(f"No endpoints found for fallback branch: {identifier}")
+                    except Exception as ep_err:
+                        logger.error(f"Failed to list endpoints for fallback: {ep_err}")
+                info = LakebaseInfo("autoscale", identifier)
+            else:
+                info = LakebaseInfo("provisioned", identifier)
+
+        if not info:
+            raise ValueError(f"Could not determine Lakebase info for app '{settings.DATABRICKS_APP_NAME}'")
         
-        logger.info(f"Generating OAuth token for Lakebase instance: {instance_name}")
-        cred = ws_client.database.generate_database_credential(
-            request_id=str(uuid.uuid4()),
-            instance_names=[instance_name],
-        )
+        logger.info(f"Generating OAuth token for Lakebase ({info.lakebase_type}): {info.identifier}")
+
+        if info.lakebase_type == "provisioned":
+            cred = ws_client.database.generate_database_credential(
+                request_id=str(uuid.uuid4()),
+                instance_names=[info.identifier],
+            )
+        else:
+            cred = ws_client.postgres.generate_database_credential(
+                endpoint=info.identifier,
+            )
         
         _oauth_token = cred.token
         _token_last_refresh = time.time()
@@ -514,7 +572,7 @@ def ensure_database_and_schema_exist(settings: Settings):
                 if not schema_exists:
                     logger.info(f"Creating schema: {target_schema}")
                     # CREATE SCHEMA cannot be parameterized, but identifier is validated
-                    conn.execute(text(f'CREATE SCHEMA "{target_schema}"'))
+                    conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{target_schema}"'))
                     logger.info(f"✓ Schema created: {target_schema} (owner: {username})")
                     
                     # Set default privileges for future objects (OAuth mode only)

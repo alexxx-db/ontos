@@ -9,12 +9,17 @@ import ManagementPortFormDialog from '@/components/data-products/management-port
 import TeamMemberFormDialog from '@/components/data-products/team-member-form-dialog';
 import SupportChannelFormDialog from '@/components/data-products/support-channel-form-dialog';
 import ImportExportDialog from '@/components/data-products/import-export-dialog';
-import ImportTeamMembersDialog from '@/components/data-contracts/import-team-members-dialog';
 import { useApi } from '@/hooks/use-api';
+import { useApprovalWizardTrigger } from '@/hooks/use-approval-wizard-trigger';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Loader2, Pencil, Trash2, AlertCircle, Sparkles, CopyPlus, ArrowLeft, Package, KeyRound, Plus, FileText, Download, Bell, BellOff, Users } from 'lucide-react';
-import { DetailViewSkeleton } from '@/components/common/list-view-skeleton';
+import { Loader2, Pencil, Trash2, AlertCircle, Sparkles, CopyPlus, ArrowLeft, Package, KeyRound, Plus, FileText, Download, Bell, BellOff, Users, ShieldCheck, Globe } from 'lucide-react';
+import {
+  DetailHeaderSkeleton,
+  PanelSkeleton,
+  SkeletonLine,
+  TableSkeleton,
+} from '@/components/common/list-view-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import TagChip from '@/components/ui/tag-chip';
@@ -43,6 +48,7 @@ import EntityCostsPanel from '@/components/costs/entity-costs-panel';
 import EntityQualityPanel from '@/components/quality/entity-quality-panel';
 import LinkContractToPortDialog from '@/components/data-products/link-contract-to-port-dialog';
 import VersioningRecommendationDialog from '@/components/common/versioning-recommendation-dialog';
+import VersionNavigator from '@/components/common/version-navigator';
 import { Link2, Unlink, GitBranch } from 'lucide-react';
 import { AssetSelector } from '@/components/common/asset-selector';
 import { EntityTreePanel } from '@/components/common/entity-tree-panel';
@@ -51,8 +57,13 @@ import { ReadinessChecklist } from '@/components/data-products/readiness-checkli
 import { LineageEditor } from '@/components/common/lineage-editor';
 import { useCopilotContext } from '@/hooks/use-copilot-context';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Progress } from '@/components/ui/progress';
 import type { QualitySummary } from '@/types/quality';
+import CertificationBadge from '@/components/common/certification-badge';
+import PublicationScopeBadge from '@/components/common/publication-scope-badge';
+import { DirectCertifyDialog, DirectPublishDialog } from '@/components/common/direct-lifecycle-dialogs';
+import type { CertificationLevel, PublicationScope } from '@/types/lifecycle';
+import { userHasApprovalPrivilege } from '@/lib/permissions';
+import { ApprovalEntity } from '@/types/settings';
 
 /**
  * ODPS v1.0.0 Data Product Details View
@@ -63,6 +74,220 @@ import type { QualitySummary } from '@/types/quality';
 
 type ViewMode = 'minimal' | 'medium' | 'large'
 const VIEW_MODE_STORAGE_KEY = 'data-product-view-mode'
+
+const VIEW_MODES: ReadonlyArray<ViewMode> = ['minimal', 'medium', 'large'];
+
+/**
+ * Parse a value retrieved from `localStorage[VIEW_MODE_STORAGE_KEY]`. Returns
+ * the value when it's one of the known modes, otherwise `null` so the caller
+ * can apply its default.
+ */
+export function parseStoredViewMode(stored: string | null | undefined): ViewMode | null {
+  if (!stored) return null;
+  return (VIEW_MODES as ReadonlyArray<string>).includes(stored) ? (stored as ViewMode) : null;
+}
+
+/**
+ * Pure helper that maps (product owner team membership, permission level)
+ * to the default ViewMode. Owner-team members get the full 'large' view;
+ * write/admin users get 'medium'; everyone else 'minimal'.
+ */
+export function computeDefaultViewMode(args: {
+  ownerTeamId?: string | null;
+  userGroups?: ReadonlyArray<string> | null;
+  permissionLevel?: FeatureAccessLevel | null;
+}): ViewMode {
+  const { ownerTeamId, userGroups, permissionLevel } = args;
+  if (ownerTeamId && userGroups && userGroups.includes(ownerTeamId)) {
+    return 'large';
+  }
+  if (
+    permissionLevel === FeatureAccessLevel.READ_WRITE ||
+    permissionLevel === FeatureAccessLevel.ADMIN ||
+    permissionLevel === FeatureAccessLevel.FULL
+  ) {
+    return 'medium';
+  }
+  return 'minimal';
+}
+
+/**
+ * Pure ViewMode → section visibility predicate. The component-level wrapper
+ * just closes over the current `viewMode`.
+ */
+export function shouldShowSectionForViewMode(viewMode: ViewMode, section: string): boolean {
+  switch (viewMode) {
+    case 'minimal':
+      return ['deliverables', 'description', 'hierarchy'].includes(section);
+    case 'medium':
+      return !['management-ports', 'support-channels', 'metadata-panel', 'ratings', 'costs', 'quality'].includes(section);
+    case 'large':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Format an ISO date string for display. Falls back to `fallback` when input
+ * is empty / undefined, and to a literal `Invalid Date` when `Date` rejects it.
+ */
+export function formatDateString(dateString: string | undefined | null, fallback: string = 'N/A'): string {
+  if (!dateString) return fallback;
+  try {
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return 'Invalid Date';
+    return d.toLocaleString();
+  } catch {
+    return 'Invalid Date';
+  }
+}
+
+/**
+ * Map a Data Product status string to a Shadcn Badge variant.
+ * Lower-cased internally so `Active`, `ACTIVE`, `active` all map identically.
+ */
+export function getStatusBadgeVariant(
+  status: string | undefined | null,
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  const lowerStatus = status?.toLowerCase() || '';
+  if (lowerStatus === 'active') return 'default';
+  if (lowerStatus === 'draft' || lowerStatus === 'proposed') return 'secondary';
+  if (lowerStatus === 'retired' || lowerStatus === 'deprecated') return 'outline';
+  return 'default';
+}
+
+/**
+ * Statuses where a Data Product can still be edited in-place. Anything with a
+ * higher lifecycle status (`active`, `retired`, `deprecated`) must be cloned
+ * for editing instead.
+ */
+export const IN_PLACE_EDITABLE_STATUSES: ReadonlyArray<string> = [
+  'draft',
+  'sandbox',
+  'proposed',
+  'under_review',
+  'approved',
+];
+
+export function isStatusEditableInPlace(status: string | undefined | null): boolean {
+  if (!status) return false;
+  return IN_PLACE_EDITABLE_STATUSES.includes(status.toLowerCase());
+}
+
+/**
+ * A "personal draft" is a product owned by a single user (not a team) — these
+ * stay editable for that user even when the product status would otherwise be
+ * locked. The signal is a non-null `draftOwnerId` on the product.
+ */
+export function isPersonalDraftProduct(product: { draftOwnerId?: string | null } | null | undefined): boolean {
+  return product != null && product.draftOwnerId != null;
+}
+
+/**
+ * Read-only iff the user is not an admin AND the product is neither
+ * editable-in-place nor a personal draft. Pure function over the three flags.
+ */
+export function isProductReadOnly(args: {
+  canAdmin: boolean;
+  canEditInPlace: boolean;
+  isPersonalDraft: boolean;
+}): boolean {
+  return !args.canAdmin && !args.canEditInPlace && !args.isPersonalDraft;
+}
+
+/**
+ * Final "can the user modify this product" gate combining role + status flags.
+ * Admins can always modify; write-class users can modify when the product is
+ * editable-in-place or a personal draft.
+ */
+export function canUserModifyProduct(args: {
+  canAdmin: boolean;
+  canWrite: boolean;
+  canEditInPlace: boolean;
+  isPersonalDraft: boolean;
+}): boolean {
+  if (args.canAdmin) return true;
+  return args.canWrite && (args.canEditInPlace || args.isPersonalDraft);
+}
+
+/**
+ * Resolve the human-readable domain label for a product. Falls back to the
+ * raw domain id when the lookup misses, and to a "not assigned" sentinel when
+ * the product has no domain at all.
+ */
+export function resolveDomainLabel(args: {
+  domain: string | undefined | null;
+  resolveName: (id: string) => string | undefined | null;
+  notAssignedLabel: string;
+}): string {
+  const { domain, resolveName, notAssignedLabel } = args;
+  if (!domain) return notAssignedLabel;
+  return resolveName(domain) || domain;
+}
+
+/**
+ * Whether the product is in the "active" lifecycle state. Centralised so the
+ * "active" magic string lives in one place — used by the lifecycle approve /
+ * deprecate gates.
+ */
+export function isProductActive(status: string | undefined | null): boolean {
+  return (status?.toLowerCase() || '') === 'active';
+}
+
+/**
+ * Output port → asset relationship predicates.
+ *
+ * Mirrors the `portHas*` predicates declared in `ontos-ontology.ttl` (lines
+ * 838–891). The ontology intentionally restricts these relationships to
+ * *deliverable* asset types — not container types like Catalog or Schema.
+ * The picker filter and the POST predicate selection both flow from this map,
+ * so they stay in lock-step with the ontology.
+ *
+ * If a new deliverable type is added to the TTL, add it here. If a caller
+ * tries to link an unsupported type the POST is skipped with a warning;
+ * the backend at `entity_relationships_manager.py` is the actual security
+ * gate and will return 422 for any invalid (predicate, range) tuple.
+ */
+export const PORT_TO_ASSET_PREDICATE: Readonly<Record<string, string>> = {
+  Table: 'portHasTable',
+  View: 'portHasView',
+  Dataset: 'portHasDataset',
+  APIEndpoint: 'portHasEndpoint',
+  MLModel: 'portHasModel',
+};
+
+const PORT_DELIVERABLE_ASSET_TYPES = Object.keys(PORT_TO_ASSET_PREDICATE);
+
+/**
+ * Look up the ontology predicate for a port → asset relationship.
+ * Returns `undefined` for unsupported / missing asset types so callers can
+ * skip the POST instead of building a `portHas<X>` the backend will 422 on.
+ */
+export function selectPortAssetPredicate(assetTypeName: string | undefined | null): string | undefined {
+  if (!assetTypeName) return undefined;
+  return PORT_TO_ASSET_PREDICATE[assetTypeName];
+}
+
+/**
+ * Build the POST body for `/api/entity-relationships` from an asset and the
+ * owning port id. Returns `null` when the asset type has no port predicate
+ * in the ontology — caller should skip + warn rather than send the request.
+ */
+export function buildLinkAssetRequestBody(
+  asset: any,
+  portId: string,
+): { source_type: string; source_id: string; target_type: string; target_id: string; relationship_type: string } | null {
+  const predicate = selectPortAssetPredicate(asset?.asset_type_name);
+  if (!predicate) return null;
+  return {
+    source_type: 'OutputPort',
+    source_id: portId,
+    target_type: asset.asset_type_name,
+    target_id: asset.id,
+    relationship_type: predicate,
+  };
+}
 
 type CheckApiResponseFn = <T>(
   response: { data?: T | { detail?: string }, error?: string | null | undefined },
@@ -116,21 +341,28 @@ function PortLinkedAssets({ portId, portName, canEdit }: { portId: string; portN
 
   const handleLinkAssets = async (assets: any[]) => {
     try {
+      let linkedCount = 0;
       for (const asset of assets) {
+        // The picker is filtered to deliverable types, but be defensive:
+        // if an asset of an unsupported type slips through, skip + warn rather
+        // than build a `portHas<X>` predicate that the backend will 422 on.
+        const body = buildLinkAssetRequestBody(asset, portId);
+        if (!body) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[link-asset] Skipping asset ${asset.id}: type "${asset.asset_type_name}" has no port relationship in the ontology.`
+          );
+          continue;
+        }
         const res = await fetch('/api/entity-relationships', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            source_type: 'OutputPort',
-            source_id: portId,
-            target_type: asset.asset_type_name || 'Table',
-            target_id: asset.id,
-            relationship_type: asset.relationshipType || `portHas${asset.asset_type_name || 'Table'}`,
-          }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(`Failed to link asset: ${res.statusText}`);
+        linkedCount += 1;
       }
-      toast({ title: 'Assets linked', description: `${assets.length} asset(s) linked to ${portName}` });
+      toast({ title: 'Assets linked', description: `${linkedCount} asset(s) linked to ${portName}` });
       fetchRelationships();
     } catch (error: any) {
       toast({ title: 'Error', description: error?.message || 'Failed to link assets', variant: 'destructive' });
@@ -198,10 +430,10 @@ function PortLinkedAssets({ portId, portName, canEdit }: { portId: string; portN
             isOpen={isAssetSelectorOpen}
             onOpenChange={setIsAssetSelectorOpen}
             onConfirm={handleLinkAssets}
-            relationshipType="portHasTable"
             relationshipLabel="linked to port"
+            targetAssetTypes={PORT_DELIVERABLE_ASSET_TYPES}
             title={`Link Assets to "${portName}"`}
-            description="Select assets to link to this deliverable"
+            description="Only deliverable asset types (Table, View, Dataset, API Endpoint, ML Model) can be linked to an output port."
           />
         </>
       )}
@@ -217,10 +449,17 @@ export default function DataProductDetails() {
   const listPath = pathname.replace(/\/[^/]+$/, '');
   const api = useApi();
   const { get, post, delete: deleteApi } = api;
+  const { lookupWorkflowId } = useApprovalWizardTrigger();
   const { toast } = useToast();
   const setDynamicTitle = useBreadcrumbStore((state) => state.setDynamicTitle);
   const setStaticSegments = useBreadcrumbStore((state) => state.setStaticSegments);
-  const { hasPermission, isLoading: permissionsLoading, getPermissionLevel } = usePermissions();
+  const {
+    hasPermission,
+    isLoading: permissionsLoading,
+    getPermissionLevel,
+    availableRoles,
+    appliedRoleId,
+  } = usePermissions();
   const { userInfo, fetchUserInfo } = useUserStore();
   const refreshNotifications = useNotificationsStore((state) => state.refreshNotifications);
   const { getDomainName, getDomainIdByName } = useDomains();
@@ -228,6 +467,7 @@ export default function DataProductDetails() {
   const [product, setProduct] = useState<DataProduct | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sidebarOwners, setSidebarOwners] = useState<Array<{ user_name?: string | null; user_email: string; role_name?: string | null }>>([]);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isVersionDialogOpen, setIsVersionDialogOpen] = useState(false);
   const [iriDialogOpen, setIriDialogOpen] = useState(false);
@@ -246,7 +486,6 @@ export default function DataProductDetails() {
   const [isTeamMemberDialogOpen, setIsTeamMemberDialogOpen] = useState(false);
   const [isSupportChannelDialogOpen, setIsSupportChannelDialogOpen] = useState(false);
   const [isImportExportDialogOpen, setIsImportExportDialogOpen] = useState(false);
-  const [isImportTeamMembersOpen, setIsImportTeamMembersOpen] = useState(false);
 
   // Editing state for nested entities
   const [editingInputPortIndex, setEditingInputPortIndex] = useState<number | null>(null);
@@ -270,6 +509,14 @@ export default function DataProductDetails() {
   // Quality summary for sidebar
   const [qualitySummary, setQualitySummary] = useState<QualitySummary | null>(null);
 
+  // Lifecycle direct actions
+  const [certificationLevels, setCertificationLevels] = useState<CertificationLevel[]>([]);
+  const [certifyDialogOpen, setCertifyDialogOpen] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [selectedCertifyLevel, setSelectedCertifyLevel] = useState<number | null>(null);
+  const [selectedPublishScope, setSelectedPublishScope] = useState<PublicationScope>('organization');
+  const [lifecycleActionSubmitting, setLifecycleActionSubmitting] = useState(false);
+
   // Clone/Commit draft states
   const [isCommitDraftDialogOpen, setIsCommitDraftDialogOpen] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
@@ -281,36 +528,34 @@ export default function DataProductDetails() {
   const canWrite = !permissionsLoading && hasPermission(featureId, Settings.FeatureAccessLevel.READ_WRITE);
   const canAdmin = !permissionsLoading && hasPermission(featureId, Settings.FeatureAccessLevel.ADMIN);
 
+  const canApproveProductLifecycle = userHasApprovalPrivilege(
+    ApprovalEntity.PRODUCTS,
+    userInfo?.groups,
+    availableRoles,
+    appliedRoleId
+  );
+
   // Versioned editing: determine if product can be edited in place based on status
   // Products with status 'draft', 'sandbox', 'proposed' can be edited directly
   // Products with status 'active' and above must be cloned for editing
-  const canEditInPlace = product?.status && ['draft', 'sandbox', 'proposed', 'under_review', 'approved'].includes(product.status.toLowerCase());
-  const isPersonalDraft = product?.draftOwnerId != null;
-  const isReadOnly = !canAdmin && !canEditInPlace && !isPersonalDraft;
+  const canEditInPlace = isStatusEditableInPlace(product?.status);
+  const isPersonalDraft = isPersonalDraftProduct(product);
+  const isReadOnly = isProductReadOnly({ canAdmin, canEditInPlace, isPersonalDraft });
 
   // Combined permission check: admin can always edit; others need write + editable status
-  const canModify = canAdmin || (canWrite && (canEditInPlace || isPersonalDraft));
+  const canModify = canUserModifyProduct({ canAdmin, canWrite, canEditInPlace, isPersonalDraft });
 
   // View mode state for filtering sections - initialize from localStorage
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    if (stored && ['minimal', 'medium', 'large'].includes(stored)) {
-      return stored as ViewMode;
-    }
-    return 'minimal';
-  });
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    () => parseStoredViewMode(localStorage.getItem(VIEW_MODE_STORAGE_KEY)) ?? 'minimal',
+  );
 
   const getDefaultViewMode = useCallback((): ViewMode => {
-    if (product?.owner_team_id && userInfo?.groups?.includes(product.owner_team_id)) {
-      return 'large';
-    }
-    const permissionLevel = getPermissionLevel('data-products');
-    if (permissionLevel === FeatureAccessLevel.READ_WRITE ||
-        permissionLevel === FeatureAccessLevel.ADMIN ||
-        permissionLevel === FeatureAccessLevel.FULL) {
-      return 'medium';
-    }
-    return 'minimal';
+    return computeDefaultViewMode({
+      ownerTeamId: product?.owner_team_id,
+      userGroups: userInfo?.groups,
+      permissionLevel: getPermissionLevel('data-products'),
+    });
   }, [product?.owner_team_id, userInfo?.groups, getPermissionLevel]);
 
   useEffect(() => {
@@ -330,28 +575,22 @@ export default function DataProductDetails() {
     localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
 
+  useEffect(() => {
+    get<CertificationLevel[]>('/api/certification-levels').then(({ data }) => {
+      if (Array.isArray(data)) setCertificationLevels(data);
+    });
+  }, [get]);
+
   useCopilotContext(
     'Data Product Details',
     `/data-products/${productId}`,
     product ? { type: 'data_product', name: product.name || 'Unnamed', id: productId || '' } : null,
   );
 
-  const formatDate = (dateString: string | undefined, fallback: string = 'N/A'): string => {
-    if (!dateString) return fallback;
-    try {
-      return new Date(dateString).toLocaleString();
-    } catch (e) {
-      return 'Invalid Date';
-    }
-  };
+  const formatDate = (dateString: string | undefined, fallback: string = 'N/A'): string =>
+    formatDateString(dateString, fallback);
 
-  const getStatusColor = (status: string | undefined): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    const lowerStatus = status?.toLowerCase() || '';
-    if (lowerStatus === 'active') return 'default';
-    if (lowerStatus === 'draft' || lowerStatus === 'proposed') return 'secondary';
-    if (lowerStatus === 'retired' || lowerStatus === 'deprecated') return 'outline';
-    return 'default';
-  };
+  const getStatusColor = getStatusBadgeVariant;
 
   const fetchProductDetails = async () => {
     if (!productId) {
@@ -418,6 +657,48 @@ export default function DataProductDetails() {
     }
   };
 
+  const handleDirectCertify = async () => {
+    if (!productId || selectedCertifyLevel == null) return;
+    setLifecycleActionSubmitting(true);
+    try {
+      const response = await post<unknown>(`/api/data-products/${productId}/certify`, {
+        certification_level: selectedCertifyLevel,
+      });
+      if (response.error) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'Certify failed');
+      }
+      toast({ title: 'Certified', description: 'Certification level has been applied.' });
+      setCertifyDialogOpen(false);
+      await fetchProductDetails();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to certify';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    } finally {
+      setLifecycleActionSubmitting(false);
+    }
+  };
+
+  const handleDirectPublish = async () => {
+    if (!productId) return;
+    setLifecycleActionSubmitting(true);
+    try {
+      const response = await post<unknown>(`/api/data-products/${productId}/set-publication-scope`, {
+        scope: selectedPublishScope,
+      });
+      if (response.error) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'Publish scope update failed');
+      }
+      toast({ title: 'Publication updated', description: 'Publication scope has been saved.' });
+      setPublishDialogOpen(false);
+      await fetchProductDetails();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to set publication scope';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    } finally {
+      setLifecycleActionSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     fetchProductDetails();
     return () => {
@@ -425,6 +706,20 @@ export default function DataProductDetails() {
       setDynamicTitle(null);
     };
   }, [productId, canRead, permissionsLoading]);
+
+  useEffect(() => {
+    if (!productId) return;
+    (async () => {
+      try {
+        const res = await get<Array<{ user_name?: string | null; user_email: string; role_name?: string | null; is_active: boolean }>>(
+          `/api/business-owners/by-object/data_product/${productId}?active_only=true`
+        );
+        if (!res.error && Array.isArray(res.data)) {
+          setSidebarOwners(res.data.filter((o) => o.is_active));
+        }
+      } catch { /* sidebar contacts are best-effort */ }
+    })();
+  }, [productId, get]);
 
   const handleEdit = () => {
     if (!canWrite) {
@@ -495,20 +790,11 @@ export default function DataProductDetails() {
   // Subscription: open approval wizard (or fallback to direct subscribe)
   const handleSubscribeClick = async () => {
     if (!productId) return;
-    try {
-      const res = await get<{ id: string }>('/api/workflows/for-trigger/for_subscribe');
-      if (res.data?.id) {
-        setSubscriptionWorkflowId(res.data.id);
-        setSubscriptionWizardOpen(true);
-      } else {
-        toast({
-          title: 'Approval workflow not configured',
-          description: 'Subscribing directly. Load default workflows in Settings to use the approval flow.',
-          variant: 'default',
-        });
-        await handleSubscribeDirect();
-      }
-    } catch {
+    const workflowId = await lookupWorkflowId('for_subscribe');
+    if (workflowId) {
+      setSubscriptionWorkflowId(workflowId);
+      setSubscriptionWizardOpen(true);
+    } else {
       toast({
         title: 'Approval workflow not configured',
         description: 'Subscribing directly. Load default workflows in Settings to use the approval flow.',
@@ -864,98 +1150,6 @@ export default function DataProductDetails() {
     }
   };
 
-  const handleDeleteTeamMember = async (index: number) => {
-    if (!productId || !product) return;
-    if (!confirm('Remove this team member?')) return;
-    try {
-      const updatedMembers = (product.team?.members || []).filter((_, i) => i !== index);
-      const updatedTeam = { ...product.team, members: updatedMembers };
-      const res = await fetch(`/api/data-products/${productId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...product, team: updatedTeam }),
-      });
-      if (!res.ok) throw new Error(`Failed to delete team member (${res.status})`);
-      await fetchProductDetails();
-      toast({
-        title: 'Team Member Removed',
-        description: 'Team member removed successfully.',
-      });
-    } catch (e: any) {
-      toast({
-        title: 'Error',
-        description: e?.message || 'Failed to delete team member',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const handleImportTeamMembers = async (members: TeamMember[]) => {
-    if (!productId || !product) return;
-    
-    try {
-      // Append imported members to existing team members
-      const existingMembers = product.team?.members || [];
-      const updatedMembers = [...existingMembers, ...members];
-      const updatedTeam = { ...product.team, members: updatedMembers };
-      
-      // Convert tags from objects to strings (tag FQNs) if needed
-      const tags = Array.isArray(product.tags) 
-        ? product.tags.map((tag: any) => typeof tag === 'string' ? tag : (tag.tag_fqn || tag.tagFQN))
-        : [];
-      
-      // Store team assignment metadata in customProperties
-      const teamMetadata = {
-        property: 'assigned_team',
-        value: JSON.stringify({
-          team_id: product.owner_team_id,
-          team_name: product.owner_team_name,
-          assigned_at: new Date().toISOString(),
-          member_count: members.length
-        }),
-        description: 'App team assignment metadata'
-      };
-      
-      const existingCustomProps = product.customProperties || [];
-      const updatedCustomProps = [
-        ...existingCustomProps.filter((p: any) => p.property !== 'assigned_team'),
-        teamMetadata
-      ];
-      
-      const res = await fetch(`/api/data-products/${productId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          ...product, 
-          team: updatedTeam, 
-          customProperties: updatedCustomProps,
-          tags // Use converted tags
-        }),
-      });
-      
-      if (!res.ok) {
-        const errorText = await res.text().catch(() => '');
-        throw new Error(`Failed to import team members (${res.status}): ${errorText}`);
-      }
-      
-      await fetchProductDetails();
-      setIsImportTeamMembersOpen(false);
-      
-      toast({
-        title: 'Team Members Imported',
-        description: `Successfully imported ${members.length} team member(s) from ${product.owner_team_name}`,
-      });
-    } catch (error) {
-      console.error('Failed to import team members:', error);
-      toast({
-        title: 'Import Failed',
-        description: error instanceof Error ? error.message : 'Failed to import team members',
-        variant: 'destructive',
-      });
-      throw error;
-    }
-  };
-
   const handleAddSupportChannel = async (channel: Support) => {
     if (!productId || !product) return;
     try {
@@ -1119,21 +1313,39 @@ export default function DataProductDetails() {
     }
   };
 
-  const shouldShowSection = (section: string): boolean => {
-    switch (viewMode) {
-      case 'minimal':
-        return ['deliverables', 'description', 'hierarchy'].includes(section);
-      case 'medium':
-        return !['management-ports', 'support-channels', 'metadata-panel', 'ratings', 'costs', 'quality'].includes(section);
-      case 'large':
-        return true;
-      default:
-        return false;
-    }
-  };
+  const shouldShowSection = (section: string): boolean =>
+    shouldShowSectionForViewMode(viewMode, section);
 
   if (loading || permissionsLoading) {
-    return <DetailViewSkeleton cards={5} actionButtons={5} />;
+    // Match the rendered shape: header has back + version navigator + S/M/L
+    // view-mode toggle on the left, multiple action buttons on the right;
+    // body has a hero, ODPS metadata panels, and an output-ports table.
+    return (
+      <div className="py-6 space-y-6">
+        <DetailHeaderSkeleton actionButtons={6} leftControls={2} />
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <SkeletonLine height="h-9" width="w-9" className="rounded" />
+            <SkeletonLine height="h-8" width="w-80" />
+            <SkeletonLine height="h-5" width="w-20" />
+          </div>
+          <SkeletonLine height="h-4" width="w-2/3" />
+        </div>
+        <PanelSkeleton rows={3} rowHeight="h-12" />
+        <PanelSkeleton rows={2} rowHeight="h-10" />
+        <div className="border rounded-lg">
+          <div className="p-6 border-b">
+            <div className="flex items-center gap-2">
+              <SkeletonLine height="h-5" width="w-5" />
+              <SkeletonLine height="h-5" width="w-40" />
+            </div>
+          </div>
+          <TableSkeleton columns={5} rows={3} bordered={false} />
+        </div>
+        <PanelSkeleton rows={3} rowHeight="h-10" />
+        <PanelSkeleton rows={2} rowHeight="h-10" />
+      </div>
+    );
   }
 
   if (error) {
@@ -1153,7 +1365,11 @@ export default function DataProductDetails() {
     );
   }
 
-  const domainLabel = product.domain ? (getDomainName(product.domain) || product.domain) : t('common:states.notAssigned');
+  const domainLabel = resolveDomainLabel({
+    domain: product.domain,
+    resolveName: getDomainName,
+    notAssignedLabel: t('common:states.notAssigned'),
+  });
 
   return (
     <div className="py-6 space-y-6">
@@ -1163,6 +1379,14 @@ export default function DataProductDetails() {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to List
           </Button>
+
+          {/* Version Navigation — unified across contracts and products (PRD #442). */}
+          <VersionNavigator
+            entityKind="product"
+            currentEntityId={productId!}
+            currentVersion={product?.version}
+            onVersionChange={(id) => navigate(`${listPath}/${id}`)}
+          />
 
           {/* View Mode Toggle */}
           <div className="inline-flex items-stretch h-8 gap-px border rounded-md bg-background overflow-hidden">
@@ -1196,6 +1420,32 @@ export default function DataProductDetails() {
           <Button variant="outline" onClick={() => setIsRequestDialogOpen(true)} size="sm">
             <KeyRound className="mr-2 h-4 w-4" /> Request...
           </Button>
+          {isProductActive(product.status) && canApproveProductLifecycle && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const first = certificationLevels[0]?.level_order ?? null;
+                setSelectedCertifyLevel(first);
+                setCertifyDialogOpen(true);
+              }}
+            >
+              <ShieldCheck className="mr-2 h-4 w-4" /> Certify
+            </Button>
+          )}
+          {isProductActive(product.status) && canWrite && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const cur = (product.publication_scope || 'none') as PublicationScope;
+                setSelectedPublishScope(cur === 'none' ? 'organization' : cur);
+                setPublishDialogOpen(true);
+              }}
+            >
+              <Globe className="mr-2 h-4 w-4" /> Publish
+            </Button>
+          )}
           <CommentSidebar
             entityType="data_product"
             entityId={productId!}
@@ -1307,106 +1557,161 @@ export default function DataProductDetails() {
         </Alert>
       )}
 
-      {/* Basic Info + Sidebar */}
+      {/* Basic Info + Contacts sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
         {/* Basic Info Card */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl font-bold flex items-center">
-              <Package className="mr-3 h-7 w-7 text-primary" />
-              {product.name || 'Unnamed Product'}
-            </CardTitle>
-            <CardDescription className="pt-1">
-              {product.description?.purpose || 'No description provided'}
-            </CardDescription>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <CardTitle className="text-2xl font-bold flex items-center">
+                  <Package className="mr-3 h-7 w-7 text-primary shrink-0" />
+                  <span className="truncate">{product.name || 'Unnamed Product'}</span>
+                </CardTitle>
+                <CardDescription className="pt-1">
+                  {product.description?.purpose || 'No description provided'}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-4 shrink-0">
+                <Badge variant={getStatusColor(product.status)}>
+                  {product.status || '—'}
+                </Badge>
+                {qualitySummary && qualitySummary.items_count > 0 && (
+                  <div className="flex flex-col items-end leading-none">
+                    <span
+                      className="text-3xl font-bold"
+                      style={{
+                        color:
+                          qualitySummary.overall_score_percent >= 80
+                            ? '#22c55e'
+                            : qualitySummary.overall_score_percent >= 50
+                              ? '#eab308'
+                              : '#ef4444',
+                      }}
+                    >
+                      {Math.round(qualitySummary.overall_score_percent)}%
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">
+                      Quality
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid md:grid-cols-3 gap-x-6 gap-y-2">
               <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Status:</Label>
-                <Badge variant={getStatusColor(product.status)} className="text-xs">
-                  {product.status || t('common:states.notAvailable')}
-                </Badge>
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
+                {product.version ? (
+                  <Badge variant="outline" className="text-xs">{product.version}</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </div>
               <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground min-w-[4rem]">Version:</Label>
-                <Badge variant="outline" className="text-xs">{product.version || t('common:states.notAvailable')}</Badge>
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
+                {product.domain && getDomainIdByName(domainLabel) ? (
+                  <span
+                    className="text-xs cursor-pointer text-primary hover:underline truncate"
+                    onClick={() => navigate(`/settings/data-domains/${getDomainIdByName(domainLabel)}`)}
+                  >
+                    {domainLabel}
+                  </span>
+                ) : product.domain ? (
+                  <span className="text-xs text-muted-foreground truncate">{domainLabel}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </div>
-              {(viewMode !== 'minimal' || product.domain) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Domain:</Label>
-                  {product.domain && getDomainIdByName(domainLabel) ? (
-                    <span
-                      className="text-xs cursor-pointer text-primary hover:underline truncate"
-                      onClick={() => navigate(`/settings/data-domains/${getDomainIdByName(domainLabel)}`)}
-                    >
-                      {domainLabel}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{domainLabel}</span>
-                  )}
-                </div>
-              )}
-              {(viewMode !== 'minimal' || ((product as any).project_id && product.project_name)) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
-                  {(product as any).project_id && product.project_name ? (
-                    <span
-                      className="text-xs cursor-pointer text-primary hover:underline truncate"
-                      onClick={() => navigate(`/projects/${(product as any).project_id}`)}
-                      title={`Project ID: ${(product as any).project_id}`}
-                    >
-                      {product.project_name}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                  )}
-                </div>
-              )}
-              {(viewMode !== 'minimal' || product.tenant) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
-                  <span className="text-xs text-muted-foreground truncate">{product.tenant || t('common:states.notAssigned')}</span>
-                </div>
-              )}
-              {(viewMode !== 'minimal' || (product.owner_team_id && product.owner_team_name)) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Owner:</Label>
-                  {product.owner_team_id && product.owner_team_name ? (
-                    <span
-                      className="text-xs cursor-pointer text-primary hover:underline truncate"
-                      onClick={() => navigate(`/teams/${product.owner_team_id}`)}
-                      title={`Team ID: ${product.owner_team_id}`}
-                    >
-                      {product.owner_team_name}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{t('common:states.notAssigned')}</span>
-                  )}
-                </div>
-              )}
-              {viewMode !== 'minimal' && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
-                  {product.apiVersion ? (
-                    <Badge variant="outline" className="text-xs">{product.apiVersion}</Badge>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">N/A</span>
-                  )}
-                </div>
-              )}
-              {(viewMode !== 'minimal' || product.created_at) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Project:</Label>
+                {(product as any).project_id && product.project_name ? (
+                  <span
+                    className="text-xs cursor-pointer text-primary hover:underline truncate"
+                    onClick={() => navigate(`/projects/${(product as any).project_id}`)}
+                    title={`Project ID: ${(product as any).project_id}`}
+                  >
+                    {product.project_name}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Tenant:</Label>
+                {product.tenant ? (
+                  <span className="text-xs text-muted-foreground truncate">{product.tenant}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Team:</Label>
+                {product.owner_team_id && product.owner_team_name ? (
+                  <span
+                    className="text-xs cursor-pointer text-primary hover:underline truncate"
+                    onClick={() => navigate(`/teams/${product.owner_team_id}`)}
+                    title={`Team ID: ${product.owner_team_id}`}
+                  >
+                    {product.owner_team_name}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">API Ver:</Label>
+                {product.apiVersion ? (
+                  <Badge variant="outline" className="text-xs">{product.apiVersion}</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Created:</Label>
+                {product.created_at ? (
                   <span className="text-xs text-muted-foreground truncate">{formatDate(product.created_at)}</span>
-                </div>
-              )}
-              {(viewMode !== 'minimal' || product.updated_at) && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Updated:</Label>
+                {product.updated_at ? (
                   <span className="text-xs text-muted-foreground truncate">{formatDate(product.updated_at)}</span>
-                </div>
-              )}
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Cert:</Label>
+                {(product.certification_level || product.inherited_certification_level) ? (
+                  <CertificationBadge
+                    certificationLevel={product.certification_level}
+                    inheritedCertificationLevel={product.inherited_certification_level}
+                    certifiedAt={product.certified_at}
+                    certifiedBy={product.certified_by}
+                    levels={certificationLevels}
+                    size="sm"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground min-w-[4rem]">Published:</Label>
+                {product.publication_scope && product.publication_scope !== 'none' ? (
+                  <PublicationScopeBadge
+                    scope={product.publication_scope as PublicationScope}
+                    publishedAt={product.published_at}
+                    publishedBy={product.published_by}
+                    size="sm"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
             </div>
 
             <div className="pt-2 border-t">
@@ -1436,20 +1741,53 @@ export default function DataProductDetails() {
           </CardContent>
         </Card>
 
-        {/* Sidebar: Contacts + Quality */}
+        {/* Sidebar: Contacts only */}
         <div className="space-y-4">
           {/* Contacts */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Contacts</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(() => {
-                const contacts = product.team?.members?.filter(
-                  (m) => m.role && ['owner', 'data owner', 'data steward', 'steward'].includes(m.role.toLowerCase())
-                );
-                if (contacts && contacts.length > 0) {
-                  return contacts.map((member, idx) => (
+          {(() => {
+            // Determine contact source for fallback indicator
+            const ownerContacts = product.team?.members?.filter(
+              (m) => m.role && ['owner', 'data owner', 'data steward', 'steward'].includes(m.role.toLowerCase())
+            );
+            const contactSource = sidebarOwners.length > 0
+              ? 'owners'
+              : (ownerContacts && ownerContacts.length > 0)
+                ? 'imported'
+                : product.owner_team_name
+                  ? 'team_only'
+                  : 'none';
+
+            return (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Contacts</CardTitle>
+                  {contactSource === 'imported' && (
+                    <p className="text-[11px] text-muted-foreground italic">From imported data</p>
+                  )}
+                  {contactSource === 'team_only' && (
+                    <p className="text-[11px] text-muted-foreground italic">Team assignment only</p>
+                  )}
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {contactSource === 'owners' && sidebarOwners.map((owner, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <Avatar className="h-8 w-8">
+                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                          {(owner.user_name || owner.user_email || '?')
+                            .split(/[\s.@]+/)
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .map((p) => p[0].toUpperCase())
+                            .join('')}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{owner.user_name || owner.user_email}</div>
+                        <div className="text-xs text-muted-foreground">{owner.role_name || 'Owner'}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {contactSource === 'imported' && ownerContacts!.map((member, idx) => (
                     <div key={idx} className="flex items-center gap-2">
                       <Avatar className="h-8 w-8">
                         <AvatarFallback className="text-xs bg-primary/10 text-primary">
@@ -1466,59 +1804,27 @@ export default function DataProductDetails() {
                         <div className="text-xs text-muted-foreground">{member.role}</div>
                       </div>
                     </div>
-                  ));
-                }
-                if (product.owner_team_name) {
-                  return (
+                  ))}
+                  {contactSource === 'team_only' && (
                     <div className="flex items-center gap-2">
                       <Avatar className="h-8 w-8">
                         <AvatarFallback className="text-xs bg-primary/10 text-primary">
-                          {product.owner_team_name.split(/\s+/).slice(0, 2).map((p) => p[0].toUpperCase()).join('')}
+                          {product.owner_team_name!.split(/\s+/).slice(0, 2).map((p) => p[0].toUpperCase()).join('')}
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
                         <div className="text-sm font-medium truncate">{product.owner_team_name}</div>
-                        <div className="text-xs text-muted-foreground">Owner Team</div>
+                        <div className="text-xs text-muted-foreground">Team</div>
                       </div>
                     </div>
-                  );
-                }
-                return <span className="text-xs text-muted-foreground">No contacts assigned</span>;
-              })()}
-            </CardContent>
-          </Card>
-
-          {/* Overall Data Quality */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Overall Data Quality (0-100%)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {qualitySummary && qualitySummary.items_count > 0 ? (
-                <div className="space-y-2">
-                  <div
-                    style={{
-                      '--progress-color': qualitySummary.overall_score_percent >= 80
-                        ? '#22c55e'
-                        : qualitySummary.overall_score_percent >= 50
-                          ? '#eab308'
-                          : '#ef4444',
-                    } as React.CSSProperties}
-                  >
-                    <Progress
-                      value={qualitySummary.overall_score_percent}
-                      className="h-3 [&>div]:!bg-[var(--progress-color)]"
-                    />
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {Math.round(qualitySummary.overall_score_percent)}%
-                  </div>
-                </div>
-              ) : (
-                <span className="text-xs text-muted-foreground">No quality data available</span>
-              )}
-            </CardContent>
-          </Card>
+                  )}
+                  {contactSource === 'none' && (
+                    <span className="text-xs text-muted-foreground">No contacts assigned</span>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
         </div>
       </div>
 
@@ -1792,69 +2098,24 @@ export default function DataProductDetails() {
       </Card>
       )}
 
-      {/* Team Section */}
-      {shouldShowSection('team') && (
+      {/* ODPS Team Metadata (read-only provenance) */}
+      {shouldShowSection('team') && product.team?.members && product.team.members.length > 0 && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Team ({product.team?.members?.length || 0} members)</span>
-            <div className="flex gap-2">
-              {canWrite && product.owner_team_id && (
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => setIsImportTeamMembersOpen(true)}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Import from Team
-                </Button>
-              )}
-              {canModify && (
-                <Button size="sm" onClick={() => setIsTeamMemberDialogOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Member
-                </Button>
-              )}
-            </div>
+            <span>ODPS Team Metadata ({product.team.members.length} members)</span>
           </CardTitle>
+          <p className="text-sm text-muted-foreground">Read-only provenance from imported product YAML. Manage ownership via the Owners panel above.</p>
         </CardHeader>
         <CardContent>
-          {product.team?.members && product.team.members.length > 0 ? (
-            <div className="space-y-2">
-              {product.team.members.map((member, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Badge variant="outline">{member.role || 'Member'}</Badge>
-                    <span className="text-sm">{member.name || member.username}</span>
-                  </div>
-                  {canModify && (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingTeamMemberIndex(idx);
-                          setIsTeamMemberDialogOpen(true);
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleDeleteTeamMember(idx)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No team members defined</p>
-          )}
+          <div className="space-y-2">
+            {product.team.members.map((member, idx) => (
+              <div key={idx} className="flex items-center gap-3 p-3 border rounded-lg">
+                <Badge variant="outline">{member.role || 'Member'}</Badge>
+                <span className="text-sm">{member.name || member.username}</span>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
       )}
@@ -1959,9 +2220,23 @@ export default function DataProductDetails() {
         />
       )}
 
-      {/* Ownership Panel */}
+      {/* Ownership Panel (with imported ODPS contacts) */}
       {shouldShowSection('ownership') && (
-        <OwnershipPanel objectType="data_product" objectId={productId!} canAssign={canModify} className="mb-6" />
+        <OwnershipPanel
+          objectType="data_product"
+          objectId={productId!}
+          canAssign={canModify}
+          className="mb-6"
+          importedContacts={product.team?.members?.map((m) => ({
+            username: m.username,
+            name: m.name,
+            role: m.role,
+            description: m.description,
+          }))}
+          importedContactsLabel="Imported Contacts"
+          ownerTeamId={product.owner_team_id}
+          ownerTeamName={product.owner_team_name}
+        />
       )}
 
       {/* Entity Relationships Panel (tree-based with drill-down) */}
@@ -2130,18 +2405,6 @@ export default function DataProductDetails() {
         currentProduct={product}
       />
 
-      {/* Import Team Members Dialog */}
-      {product.owner_team_id && (
-        <ImportTeamMembersDialog
-          isOpen={isImportTeamMembersOpen}
-          onOpenChange={setIsImportTeamMembersOpen}
-          entityId={productId!}
-          entityType="product"
-          teamId={product.owner_team_id}
-          teamName={product.owner_team_name || product.owner_team_id}
-          onImport={handleImportTeamMembers}
-        />
-      )}
 
       {/* Link Contract to Port Dialog */}
       <LinkContractToPortDialog
@@ -2165,6 +2428,24 @@ export default function DataProductDetails() {
         userCanOverride={versioningUserCanOverride}
         onUpdateInPlace={handleVersioningUpdateInPlace}
         onCreateNewVersion={handleVersioningCreateNewVersion}
+      />
+
+      <DirectCertifyDialog
+        open={certifyDialogOpen}
+        onOpenChange={setCertifyDialogOpen}
+        certificationLevels={certificationLevels}
+        selectedLevelOrder={selectedCertifyLevel}
+        onSelectedLevelOrderChange={setSelectedCertifyLevel}
+        isSubmitting={lifecycleActionSubmitting}
+        onConfirm={handleDirectCertify}
+      />
+      <DirectPublishDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        selectedScope={selectedPublishScope}
+        onSelectedScopeChange={setSelectedPublishScope}
+        isSubmitting={lifecycleActionSubmitting}
+        onConfirm={handleDirectPublish}
       />
     </div>
   );

@@ -48,7 +48,7 @@ Please be respectful and professional in all interactions. We're building a coll
    ```
 3. Add the upstream remote:
    ```bash
-   git remote add upstream https://github.com/larsgeorge/ontos.git
+   git remote add upstream https://github.com/databrickslabs/ontos.git
    ```
 
 ---
@@ -64,6 +64,59 @@ yarn install
 
 # Backend dependencies are managed by Hatch and installed automatically
 ```
+
+#### Working Behind a Private npm Mirror (optional)
+
+Some corporate environments block the public npm/yarn registry and require all
+package traffic to flow through an internal mirror (e.g., Nexus, Artifactory,
+Verdaccio, or an HTTPS pass-through proxy). If that applies to you, running
+`yarn install` will rewrite every `resolved` URL in `src/frontend/yarn.lock`
+from `https://registry.yarnpkg.com/...` to your mirror's URL, producing a huge
+diff on every install. **Do not commit those rewrites** — the lockfile in the
+repo must stay on the public registry URLs so external contributors can
+install without your mirror.
+
+To keep the on-disk lockfile pointing at your mirror (so yarn works) while git
+only ever sees the canonical public URLs, install a local git clean/smudge
+filter. This setup is per-clone and is not committed.
+
+1. Register the filter in your local git config (replace `<your-mirror-host>`
+   with the host of your internal mirror, e.g. `npm.corp.example.com`):
+
+   ```bash
+   MIRROR=<your-mirror-host>
+   git config filter.npmmirror.clean  "sed 's|https://${MIRROR//./\\.}/|https://registry.yarnpkg.com/|g'"
+   git config filter.npmmirror.smudge "sed 's|https://registry\\.yarnpkg\\.com/|https://${MIRROR}/|g'"
+   git config filter.npmmirror.required true
+   ```
+
+2. Attach the filter to the lockfile via local-only git attributes (lives in
+   `.git/info/attributes`, never committed):
+
+   ```bash
+   mkdir -p .git/info
+   printf 'src/frontend/yarn.lock filter=npmmirror\n' >> .git/info/attributes
+   ```
+
+3. Re-normalize the working tree so existing files match the new filter:
+
+   ```bash
+   git add --renormalize src/frontend/yarn.lock
+   git checkout -- src/frontend/yarn.lock
+   ```
+
+After this, `git diff src/frontend/yarn.lock` should be empty even though the
+on-disk file contains mirror URLs. `yarn install --frozen-lockfile`,
+`yarn add`, and `yarn upgrade` all work normally, and any commits you make
+will contain only real dependency changes against the public registry URLs.
+
+Notes:
+
+- Integrity hashes (`integrity sha512-...`) are independent of the URL, so
+  package verification is unaffected.
+- You must repeat the three steps above on every fresh clone.
+- If your mirror host changes later, re-run step 1 with the new host and then
+  step 3.
 
 ### 2. Configure Environment
 
@@ -149,7 +202,7 @@ The scope provides additional context. Common scopes include:
 
 ```bash
 # Feature
-feat(contracts): add schema validation for ODCS v3.0.2
+feat(contracts): add schema validation for ODCS v3.1.0
 
 # Bug fix
 fix(backend): correct date parsing in contract import
@@ -431,11 +484,204 @@ yarn test:e2e
 - Use fixtures for common setup
 - Aim for >80% coverage on new code
 
+### Local Directory Provider (PrincipalPicker testing)
+
+Many surfaces in the app use the `PrincipalPicker` to resolve users and
+groups against the configured Directory provider (Roles, Entitlements,
+Reviews, Comments audience, Workflow Designer custom principals, Data
+Contract wizard owner/stakeholders, etc.). To exercise the configured
+code path locally without standing up an Entra ID tenant or a Lakebase
+table, use the bundled `file` provider against the sample CSV at
+`src/backend/src/data/principals.csv`.
+
+The CSV ships with three users (Alice / Bob / Carol) and three groups
+(Producers / Consumers / Admins) and matches the format the
+`FileProvider` expects:
+
+```csv
+type,id,display_name,sub_label
+user,alice@example.com,Alice Liddell,alice@example.com
+user,bob@example.com,Bob Builder,bob@example.com
+user,carol@example.com,Carol Carlsson,carol@example.com
+group,Producers,Data Producers,producers-guid
+group,Consumers,Data Consumers,consumers-guid
+group,Admins,Platform Admins,admins-guid
+```
+
+**Configure via the UI (recommended):**
+
+1. Start the dev servers (see [Development Setup](#development-setup)).
+2. Sign in as a user with `settings:READ_WRITE` permission.
+3. Navigate to **Settings → Integrations → Directory**.
+4. Pick **CSV file (test / demo)** as the Provider.
+5. Set **CSV file path** to the absolute path of the bundled file, e.g.
+   `/Users/you/code/ontos/src/backend/src/data/principals.csv`.
+6. Click **Save**, then **Test connection** — you should see a success
+   toast.
+
+**Configure via the backend directly** (e.g. in a test fixture or
+seed script):
+
+```python
+from src.repositories.app_settings_repository import app_settings_repo
+
+app_settings_repo.set_by_key(db, "DIRECTORY_PROVIDER_TYPE", "file")
+app_settings_repo.set_by_key(
+    db,
+    "DIRECTORY_FILE_PATH",
+    "/absolute/path/to/src/backend/src/data/principals.csv",
+)
+```
+
+**Verify it works:**
+
+- `GET /api/directory/status` → `{ "configured": true, "provider_type": "file", "file_path": "/…/principals.csv" }`
+- `GET /api/directory/search?q=ali&types=users` → returns Alice
+- In any picker (e.g. Assign Owner on a Data Product), type `al` —
+  the dropdown should show a two-line row with `Alice Liddell` and
+  `alice@example.com` underneath.
+
+The file is re-read whenever its `mtime` advances, so editing the CSV
+takes effect on the next picker query without a server restart. The
+sample file is checked in as a fixture — feel free to extend it
+locally, but please don't commit org-specific edits.
+
+### Testing with Different User Personas (Runtime Impersonation)
+
+The app supports per-request user impersonation via HTTP headers, so you can
+test how features behave for different personas (Admin, Data Producer,
+Consumer, etc.) against the **same running backend** — no restarts, works with
+or without the Vite dev server in front.
+
+**Setup:**
+
+1. Pick a shared-secret token, e.g. `openssl rand -hex 32`.
+2. Set it on the backend: `TEST_USER_TOKEN=<your-token>` in
+   `src/backend/.env`.
+3. (Optional, for the UI picker) set the same value as
+   `VITE_TEST_USER_TOKEN=<your-token>` in `src/frontend/.env`.
+
+**Usage from the UI:**
+
+When `TEST_USER_TOKEN` is configured, the user-info dropdown gains a
+"Test persona" section listing personas defined in
+`src/backend/src/data/test_personas.yaml`. Pick one and the page reloads
+with every API request impersonating that user. A yellow ring around the
+avatar indicates an active persona.
+
+**Usage from curl / Playwright / any HTTP client:**
+
+```bash
+curl -H "X-Test-Token: <your-token>" \
+     -H "X-Test-User-Email: producer@test.local" \
+     -H "X-Test-User-Groups: [\"data-producers\"]" \
+     http://localhost:8000/api/user/details
+```
+
+- `X-Test-User-Email` is required when `X-Test-Token` matches.
+- `X-Test-User-Groups` is optional (JSON array or comma-separated). When
+  omitted, the backend falls back to a real SCIM lookup so the persona
+  reflects actual workspace state.
+- Optional refinement headers: `X-Test-User-Username`,
+  `X-Test-User-Name`, `X-Test-User-Ip`.
+
+**Security notes:**
+
+- The override is gated on `TEST_USER_TOKEN` being set server-side. Leave it
+  UNSET in production.
+- The token itself is never returned by the server. The persona discovery
+  endpoint (`GET /api/test/personas`) returns 404 when the feature is
+  disabled.
+- This mechanism is complementary to the env-based `MOCK_USER_*` variables
+  (which require restarts) and to the in-process FastAPI
+  `app.dependency_overrides[get_user_details_from_sdk]` pattern used by
+  most integration tests.
+
+See `src/backend/src/tests/integration/test_user_header_override.py` for
+worked examples.
+
 ---
 
 ## License
 
 By contributing to Ontos, you agree that your contributions will be licensed under the project's license (see LICENSE.txt).
+
+---
+
+## Supply Chain Security
+
+This project follows GitHub Actions supply chain security best practices as required for `databrickslabs` repos.
+
+### Action Pinning
+
+All GitHub Actions in `.github/workflows/` must be pinned to full SHA commits with a version comment:
+
+```yaml
+# Correct
+uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+# Incorrect
+uses: actions/checkout@v4
+```
+
+Dependabot (`.github/dependabot.yml`) will automatically open PRs when new action versions are available.
+
+### Python Dependency Pinning
+
+Python dependencies use a two-file pattern:
+
+- `requirements.in` - Source constraint files with version ranges (what you edit)
+- `requirements.txt` - Locked files with exact versions and hashes (what CI installs)
+
+To regenerate locked files after updating `.in` files:
+
+```bash
+./scripts/lock-requirements.sh
+```
+
+This requires [uv](https://github.com/astral-sh/uv) and PyPI access. The script runs `uv pip compile --generate-hashes` for all three requirement sets (`src/`, `src/backend/`, `src/e2e/`).
+
+### Alembic Migration Heads
+
+The database migration history under `src/backend/alembic/versions/` must always
+have **exactly one head**. Two PRs that branch off the same Alembic tip and each
+add a sibling revision will leave `main` with multiple heads, and app startup
+will crash in `init_db` with `script directory has multiple heads`.
+
+CI enforces this via the **Alembic Single-Head Check** job in
+`.github/workflows/test-coverage.yml`. On every PR it runs
+`scripts/check-alembic-heads.py`, which:
+
+1. Loads the PR's `versions/` tree and fails if `alembic heads` returns more
+   than one head.
+2. Fails if any newly added revision's `down_revision` is not reachable from
+   the PR base branch's tip — i.e. you forgot to rebase before authoring the
+   migration.
+
+**Remediation when the check fails:**
+
+- Rebase your branch onto the current base, drop your revision file, and
+  re-run `alembic revision -m '<message>'` so the new revision descends from
+  the live head.
+- Or, if a merge revision is the right call (your branch and another both
+  shipped migrations independently), run
+  `alembic merge -m 'merge heads' <head_a> <head_b>` and commit the resulting
+  file.
+
+**Escape hatch:** Apply the `alembic-branch` label to the PR to bypass the
+check. Use this only when the multi-head state is intentional and a merge
+revision is planned in the same PR.
+
+### Workflow Permissions
+
+All workflows must declare a minimal `permissions` block at the workflow level:
+
+```yaml
+permissions:
+  contents: read
+```
+
+Only add additional permissions (e.g., `issues: write`) if the workflow genuinely requires them.
 
 ---
 

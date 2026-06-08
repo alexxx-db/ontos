@@ -413,9 +413,10 @@ class TestDataProductRoutes:
         assert "owner1@test.com" in owners
         assert "owner2@test.com" in owners
 
-    def test_get_published_products(self, client):
-        """Test GET /api/data-products/published returns only active products."""
-        # Arrange - Create mix of products
+    def test_get_published_products(self, client, db_session):
+        """GET /api/data-products/published returns products with publication_scope != none."""
+        from src.db_models.data_products import DataProductDb
+
         for i, status in enumerate(["draft", "active", "active"]):
             data = {
                 "id": str(uuid.uuid4()),
@@ -424,16 +425,45 @@ class TestDataProductRoutes:
                 "productType": "sourceAligned",
                 "status": status,
             }
-            client.post("/api/data-products", json=data)
+            resp = client.post("/api/data-products", json=data)
+            assert resp.status_code == 201
+            if status == "active":
+                pid = resp.json()["id"]
+                row = db_session.get(DataProductDb, pid)
+                row.publication_scope = "domain" if i == 1 else "organization"
+                db_session.commit()
 
-        # Act
         response = client.get("/api/data-products/published")
 
-        # Assert
         assert response.status_code == 200
         products = response.json()
         assert len(products) == 2
-        assert all(p["status"] == "active" for p in products)
+        scopes = {p.get("publication_scope") for p in products}
+        assert scopes == {"domain", "organization"}
+
+    def test_get_published_products_scope_query(self, client, db_session):
+        """Optional scope query filters published products."""
+        from src.db_models.data_products import DataProductDb
+
+        for name, scope in [("ScopedA", "domain"), ("ScopedB", "external")]:
+            data = {
+                "id": str(uuid.uuid4()),
+                "name": name,
+                "version": "1.0.0",
+                "productType": "sourceAligned",
+                "status": "active",
+            }
+            resp = client.post("/api/data-products", json=data)
+            assert resp.status_code == 201
+            pid = resp.json()["id"]
+            row = db_session.get(DataProductDb, pid)
+            row.publication_scope = scope
+            db_session.commit()
+
+        r = client.get("/api/data-products/published?scope=domain")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
+        assert r.json()[0]["name"] == "ScopedA"
 
     # =================================================================
     # Contract Integration Endpoints

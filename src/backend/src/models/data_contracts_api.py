@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .tags import AssignedTag, AssignedTagCreate
 
@@ -9,10 +9,25 @@ if TYPE_CHECKING:
     pass  # Used to avoid circular imports if needed
 
 
+# ODCS v3.1.0 relationship model (schema-level and property-level)
+class SchemaRelationship(BaseModel):
+    """ODCS v3.1.0 relationship (foreign key) at schema or property level."""
+    id: Optional[str] = None  # internal DB id (populated on read)
+    type: str = "foreignKey"
+    # from is a reserved word in Python; use Field alias
+    from_value: Optional[Union[str, List[str]]] = Field(None, alias='from')
+    to: Union[str, List[str]] = ""
+    customProperties: Optional[List[Dict[str, Any]]] = None
+
+    class Config:
+        populate_by_name = True
+
+
 # ODCS-compliant schema models
 class ColumnProperty(BaseModel):
     name: str
     logicalType: str = Field(alias='logical_type')
+    stableId: Optional[str] = None  # ODCS v3.1.0 StableId
     required: Optional[bool] = False
     unique: Optional[bool] = False
     primaryKey: Optional[bool] = Field(False, alias='primary_key')
@@ -49,13 +64,18 @@ class ColumnProperty(BaseModel):
     semanticConcepts: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     authoritativeDefinitions: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
 
-    # ODCS v3.0.2 additional property fields
+    # ODCS additional property fields
     businessName: Optional[str] = None
     encryptedName: Optional[str] = None
     criticalDataElement: Optional[bool] = None
     transformLogic: Optional[str] = None
-    transformSourceObjects: Optional[str] = None
+    # ODCS v3.1.0 defines transformSourceObjects as an array of strings; accept a
+    # plain string for backward compatibility with earlier Ontos uploads.
+    transformSourceObjects: Optional[Union[List[str], str]] = None
     transformDescription: Optional[str] = None
+
+    # ODCS v3.1.0 relationships (property-level FKs)
+    relationships: Optional[List[SchemaRelationship]] = None
 
     class Config:
         # Accept both JSON keys: "logicalType" (field name) and "logical_type" (alias)
@@ -65,11 +85,12 @@ class ColumnProperty(BaseModel):
 
 class SchemaObject(BaseModel):
     name: str
+    stableId: Optional[str] = None  # ODCS v3.1.0 StableId
     physicalName: Optional[str] = None
     properties: List[ColumnProperty] = Field(default_factory=list)
     propertyCount: Optional[int] = Field(0, description="Total number of properties (columns) in this schema object")
 
-    # ODCS v3.0.2 additional schema object fields
+    # ODCS additional schema object fields
     businessName: Optional[str] = None
     physicalType: Optional[str] = None  # table, view, etc.
     description: Optional[str] = None
@@ -78,6 +99,9 @@ class SchemaObject(BaseModel):
     authoritativeDefinitions: Optional[List['AuthoritativeDefinition']] = Field(default_factory=list)
     customProperties: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     quality: Optional[List['QualityRule']] = Field(default_factory=list)  # ODCS quality rules are schema-nested
+
+    # ODCS v3.1.0 relationships (schema-level FKs)
+    relationships: Optional[List[SchemaRelationship]] = None
 
     class Config:
         populate_by_name = True
@@ -132,7 +156,7 @@ class QualityRule(BaseModel):
 
 
 class TeamMember(BaseModel):
-    """ODCS v3.0.2 Team Member"""
+    """ODCS Team Member"""
     # Core ODCS fields
     username: str  # Required by ODCS - maps to email/identifier
     role: str  # 'steward', 'consumer', 'expert', 'admin', etc.
@@ -168,7 +192,7 @@ class AccessControl(BaseModel):
 
 
 class SupportChannel(BaseModel):
-    """ODCS v3.0.2 Support Channel"""
+    """ODCS Support Channel"""
     channel: str
     url: str
     description: Optional[str] = None
@@ -188,7 +212,7 @@ class SupportChannels(BaseModel):
 
 
 class PricingInfo(BaseModel):
-    """ODCS v3.0.2 Pricing Information"""
+    """ODCS Pricing Information"""
     priceAmount: Optional[Union[int, float]] = None
     priceCurrency: Optional[str] = None  # USD, EUR, etc.
     priceUnit: Optional[str] = None  # megabyte, record, etc.
@@ -198,7 +222,7 @@ class PricingInfo(BaseModel):
 
 
 class ContractRole(BaseModel):
-    """ODCS v3.0.2 Role Definition"""
+    """ODCS Role Definition"""
     role: str
     description: Optional[str] = None
     access: Optional[str] = None  # read, write, etc.
@@ -216,7 +240,7 @@ class AuthoritativeDefinition(BaseModel):
 
 
 class SLAProperty(BaseModel):
-    """ODCS v3.0.2 SLA Property"""
+    """ODCS SLA Property"""
     property: str
     value: Union[str, int, float]
     valueExt: Optional[Union[str, int, float]] = None
@@ -236,7 +260,7 @@ class SLARequirements(BaseModel):
     data_freshness_minutes: Optional[int] = Field(None, alias='dataFreshnessMinutes')
 
 
-# ODCS v3.0.2 Server Types
+# ODCS Server Types
 ODCS_SERVER_TYPES = [
     "api", "athena", "azure", "bigquery", "clickhouse", "databricks", "denodo", "dremio",
     "duckdb", "glue", "cloudsql", "db2", "informix", "kafka", "kinesis", "local",
@@ -264,15 +288,57 @@ class ServerConfig(BaseModel):
     # Additional properties for specific server types
     properties: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator('properties', mode='before')
+    @classmethod
+    def _coerce_properties_from_orm(cls, value):
+        """Allow ORM-row collections to be validated alongside plain dicts.
+
+        ``DataContractServerDb.properties`` is a SQLAlchemy relationship
+        returning a list of ``DataContractServerPropertyDb`` rows (each with
+        ``key``/``value``), whereas ``ServerConfig.properties`` is a
+        ``Dict[str, Any]``. Without this coercion, calls like
+        ``DataContractRead.model_validate(orm_row, from_attributes=True)``
+        (used by the clone endpoint, history endpoint, personal-drafts list,
+        etc.) fail with ``Input should be a valid dictionary``. See #455.
+
+        Accepts:
+          * dict / mapping -> passed through
+          * iterable of objects with ``.key``/``.value`` attributes
+          * iterable of ``{"key": ..., "value": ...}`` mappings
+          * ``None`` -> empty dict
+        """
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        # Treat anything else as an iterable of property rows / dicts.
+        try:
+            iterator = iter(value)
+        except TypeError:
+            return value  # let Pydantic raise the usual error
+        result: Dict[str, Any] = {}
+        for item in iterator:
+            if isinstance(item, dict):
+                key = item.get('key')
+                val = item.get('value')
+            else:
+                key = getattr(item, 'key', None)
+                val = getattr(item, 'value', None)
+            if key is None:
+                continue
+            result[key] = val
+        return result
+
     class Config:
         populate_by_name = True
+        from_attributes = True
 
 
 # Full ODCS Contract Structure
 class ODCSContract(BaseModel):
-    """ODCS v3.0.2 compliant contract structure"""
+    """ODCS v3.1.0 compliant contract structure"""
     kind: str = 'DataContract'  # Required by ODCS
-    apiVersion: str = Field('v3.0.2', alias='api_version')  # Required by ODCS
+    apiVersion: str = Field('v3.1.0', alias='api_version')  # Required by ODCS
     id: str  # Required by ODCS
     version: str  # Required by ODCS
     status: str  # Required by ODCS
@@ -285,14 +351,14 @@ class ODCSContract(BaseModel):
     owner_team_id: Optional[str] = None  # No alias - always serializes as owner_team_id
     description: Optional[ContractDescription] = None
 
-    # ODCS v3.0.2 top-level fields
+    # ODCS top-level fields
     tags: Optional[List[AssignedTag]] = Field(default_factory=list)
     contractCreatedTs: Optional[str] = None  # ISO datetime string
 
     # Schema section
     contract_schema: List[SchemaObject] = Field(default_factory=list, alias="schema")
 
-    # SLA section (ODCS v3.0.2 structure)
+    # SLA section (ODCS structure)
     slaDefaultElement: Optional[str] = None
     slaProperties: Optional[List[SLAProperty]] = Field(default_factory=list)
     sla: Optional[SLARequirements] = None  # Legacy structure
@@ -305,7 +371,7 @@ class ODCSContract(BaseModel):
     roles: Optional[List[ContractRole]] = Field(default_factory=list)  # ODCS roles
     access_control: Optional[AccessControl] = Field(None, alias='accessControl')  # Legacy
 
-    # Support section (ODCS v3.0.2 structure)
+    # Support section (ODCS structure)
     support: Union[List[SupportChannel], SupportChannels, None] = None
 
     # Infrastructure section
@@ -328,7 +394,7 @@ class DataContractBase(BaseModel):
     owner_team_id: Optional[str] = None  # No alias - always serializes as owner_team_id
     project_id: Optional[str] = None  # Project association
     kind: str = Field('DataContract')  # Required by ODCS
-    apiVersion: str = Field('v3.0.2', alias='api_version')  # Required by ODCS
+    apiVersion: str = Field('v3.1.0', alias='api_version')  # Required by ODCS
     domainId: Optional[str] = Field(None, alias='domain_id')
     tenant: Optional[str] = None
     dataProduct: Optional[str] = Field(None, alias='data_product')
@@ -346,11 +412,11 @@ class DataContractCreate(DataContractBase):
     description: Optional[ContractDescription] = None
     contract_schema: Optional[List[SchemaObject]] = Field(None, alias="schema")
 
-    # ODCS v3.0.2 top-level fields
+    # ODCS top-level fields
     tags: Optional[List[AssignedTagCreate]] = Field(default_factory=list)
     contractCreatedTs: Optional[str] = None
 
-    # SLA section (ODCS v3.0.2 structure)
+    # SLA section (ODCS structure)
     slaDefaultElement: Optional[str] = None
     slaProperties: Optional[List[SLAProperty]] = Field(default_factory=list)
     sla: Optional[SLARequirements] = None  # Legacy structure
@@ -363,7 +429,7 @@ class DataContractCreate(DataContractBase):
     roles: Optional[List[ContractRole]] = Field(default_factory=list)
     access_control: Optional[AccessControl] = Field(None, alias='accessControl')  # Legacy
 
-    # Support section (ODCS v3.0.2 structure)
+    # Support section (ODCS structure)
     support: Union[List[SupportChannel], SupportChannels, None] = None
 
     # Infrastructure section
@@ -397,7 +463,6 @@ class DataContractUpdate(BaseModel):
     name: Optional[str] = None
     version: Optional[str] = None
     status: Optional[str] = None
-    published: Optional[bool] = None  # Marketplace publication status
     owner_team_id: Optional[str] = None  # No alias - always serializes as owner_team_id
     project_id: Optional[str] = None  # Project association
     kind: Optional[str] = None
@@ -405,6 +470,7 @@ class DataContractUpdate(BaseModel):
     domainId: Optional[str] = Field(None, alias='domain_id')
     tenant: Optional[str] = None
     dataProduct: Optional[str] = Field(None, alias='data_product')
+    description: Optional[ContractDescription] = None  # Nested description object (flattened in manager)
     descriptionUsage: Optional[str] = Field(None, alias='description_usage')
     descriptionPurpose: Optional[str] = Field(None, alias='description_purpose')
     descriptionLimitations: Optional[str] = Field(None, alias='description_limitations')
@@ -420,6 +486,10 @@ class DataContractUpdate(BaseModel):
 
     # Semantic versioning fields
     parent_contract_id: Optional[str] = Field(None, alias='parentContractId')
+    # Canonical family grouping key. Defaults to self.id on initial create;
+    # carried forward unchanged on every clone. Optional here so the
+    # initial-create path can omit it (repo will default it).
+    version_family_id: Optional[str] = Field(None, alias='versionFamilyId')
     base_name: Optional[str] = Field(None, alias='baseName')
     change_summary: Optional[str] = Field(None, alias='changeSummary')
 
@@ -432,28 +502,27 @@ class DataContractRead(BaseModel):
     name: str  # Required for app usability
     version: str  # Required by ODCS
     status: str  # Required by ODCS
-    published: bool = False  # Marketplace publication status
     owner_team_id: Optional[str] = None  # No alias - always serializes as owner_team_id
     owner_team_name: Optional[str] = None  # Resolved at query time
     project_id: Optional[str] = None  # Project association
     project_name: Optional[str] = None  # Resolved at query time
     kind: str = Field('DataContract')  # Required by ODCS
     # Ensure JSON uses camelCase key 'apiVersion' so frontend reads it
-    apiVersion: str = Field('v3.0.2', alias='apiVersion')  # Required by ODCS
+    apiVersion: str = Field('v3.1.0', alias='apiVersion')  # Required by ODCS
     tenant: Optional[str] = None
     domain: Optional[str] = None
     domainId: Optional[str] = None
     dataProduct: Optional[str] = Field(None, alias='data_product')
     description: Optional[ContractDescription] = None
 
-    # ODCS v3.0.2 top-level fields
+    # ODCS top-level fields
     tags: Optional[List[AssignedTag]] = Field(default_factory=list)  # Read model returns AssignedTag, not AssignedTagCreate
     contractCreatedTs: Optional[str] = None
 
     # Schema section
     contract_schema: List[SchemaObject] = Field(default_factory=list, alias="schema")
 
-    # SLA section (ODCS v3.0.2 structure)
+    # SLA section (ODCS structure)
     slaDefaultElement: Optional[str] = None
     slaProperties: Optional[List[SLAProperty]] = Field(default_factory=list)
     sla: Optional[SLARequirements] = None  # Legacy structure
@@ -466,7 +535,7 @@ class DataContractRead(BaseModel):
     roles: Optional[List[ContractRole]] = Field(default_factory=list)
     access_control: Optional[AccessControl] = Field(None, alias='accessControl')  # Legacy
 
-    # Support section (ODCS v3.0.2 structure)
+    # Support section (ODCS structure)
     support: Union[List[SupportChannel], SupportChannels, None] = None
 
     # Infrastructure section
@@ -487,17 +556,28 @@ class DataContractRead(BaseModel):
 
     # Semantic versioning fields
     parentContractId: Optional[str] = Field(None, alias='parent_contract_id')
+    versionFamilyId: Optional[str] = Field(None, alias='version_family_id')
     baseName: Optional[str] = Field(None, alias='base_name')
     changeSummary: Optional[str] = Field(None, alias='change_summary')
 
     # Personal draft visibility (three-tier model)
     # Tier 1: draft_owner_id set = personal draft, only owner can see
-    # Tier 2: draft_owner_id null, published=false = team/project visible
-    # Tier 3: published=true = marketplace visible to all
+    # Tier 2: draft_owner null, publication_scope none = team/project visible
+    # Tier 3: publication_scope not none = marketplace visible to all
     draftOwnerId: Optional[str] = Field(None, alias='draft_owner_id')
+
+    # Publication (canonical; replaces legacy boolean `published` column)
+    publication_scope: str = "none"
+    published_at: Optional[str] = None
+    published_by: Optional[str] = None
 
     class Config:
         populate_by_name = True
+        # Allow validating directly from ORM rows. Pre-existing endpoints
+        # (e.g. POST /data-contracts/{id}/clone) call
+        # ``DataContractRead.model_validate(db_row)`` and were returning 400
+        # under Pydantic v2 because this flag was missing.
+        from_attributes = True
 
 
 class DataContractSummary(BaseModel):
@@ -506,13 +586,12 @@ class DataContractSummary(BaseModel):
     name: str
     version: str
     status: str
-    published: bool = False
     owner_team_id: Optional[str] = None
     owner_team_name: Optional[str] = None
     project_id: Optional[str] = None
     project_name: Optional[str] = None
     kind: str = Field('DataContract')
-    apiVersion: str = Field('v3.0.2', alias='apiVersion')
+    apiVersion: str = Field('v3.1.0', alias='apiVersion')
     tenant: Optional[str] = None
     domain: Optional[str] = None
     domainId: Optional[str] = None
@@ -521,11 +600,39 @@ class DataContractSummary(BaseModel):
     tags: Optional[List[AssignedTag]] = Field(default_factory=list)
     created: Optional[str] = None
     updated: Optional[str] = None
-    parentContractId: Optional[str] = Field(None, alias='parent_contract_id')
-    baseName: Optional[str] = Field(None, alias='base_name')
-    changeSummary: Optional[str] = Field(None, alias='change_summary')
-    draftOwnerId: Optional[str] = Field(None, alias='draft_owner_id')
+    # The ``serialization_alias`` here forces camelCase on the wire while
+    # ``alias`` (used as the validation alias by Pydantic v2 when no
+    # explicit ``validation_alias`` is given) keeps the snake_case ORM
+    # attribute mapping working via ``from_attributes=True``. Without
+    # this, FastAPI's default ``response_model_by_alias=True`` would
+    # emit snake_case and the camelCase FE types would silently see
+    # ``undefined`` — see PRD #442 follow-up.
+    parentContractId: Optional[str] = Field(
+        None, alias='parent_contract_id', serialization_alias='parentContractId'
+    )
+    versionFamilyId: Optional[str] = Field(
+        None, alias='version_family_id', serialization_alias='versionFamilyId'
+    )
+    baseName: Optional[str] = Field(
+        None, alias='base_name', serialization_alias='baseName'
+    )
+    changeSummary: Optional[str] = Field(
+        None, alias='change_summary', serialization_alias='changeSummary'
+    )
+    draftOwnerId: Optional[str] = Field(
+        None, alias='draft_owner_id', serialization_alias='draftOwnerId'
+    )
+    # Count of versions in this row's family that are visible to the caller.
+    # Only emitted on the collapsed list view (include_history=False); on the
+    # expanded list view it is omitted because every row is its own family
+    # member. See PRD #442.
+    versionCount: Optional[int] = Field(
+        None, alias='version_count', serialization_alias='versionCount'
+    )
     schema_object_count: int = Field(0, alias='schemaObjectCount')
+    publication_scope: str = "none"
+    published_at: Optional[str] = None
+    published_by: Optional[str] = None
 
     class Config:
         populate_by_name = True
@@ -746,6 +853,69 @@ class DiffFromParentResponse(BaseModel):
     suggested_bump: str  # "major", "minor", "patch"
     suggested_version: str
     analysis: Dict[str, Any]  # Full analysis from ContractChangeAnalyzer
+
+
+# ===== ODCS v3.1.0 Team Metadata Models =====
+class TeamMetadataUpdate(BaseModel):
+    """Update team-level metadata (ODCS v3.1.0 Team object fields)."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    customProperties: Optional[List[Dict[str, Any]]] = None
+    authoritativeDefinitions: Optional[List[Dict[str, Any]]] = None
+
+
+class TeamMetadataRead(BaseModel):
+    """Response model for team metadata."""
+    id: str
+    contract_id: str
+    stable_id: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    customProperties: Optional[List[Dict[str, Any]]] = None
+    authoritativeDefinitions: Optional[List[Dict[str, Any]]] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ===== ODCS v3.1.0 Relationship CRUD Models =====
+class SchemaRelationshipCreate(BaseModel):
+    """Create a schema-level or property-level relationship."""
+    type: str = "foreignKey"
+    from_value: Optional[Union[str, List[str]]] = Field(None, alias='from')
+    to: Union[str, List[str]] = ""
+    customProperties: Optional[List[Dict[str, Any]]] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class SchemaRelationshipUpdate(BaseModel):
+    """Update a relationship."""
+    type: Optional[str] = None
+    from_value: Optional[Union[str, List[str]]] = Field(None, alias='from')
+    to: Optional[Union[str, List[str]]] = None
+    customProperties: Optional[List[Dict[str, Any]]] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class SchemaRelationshipRead(BaseModel):
+    """Response model for a relationship."""
+    id: str
+    type: str
+    from_value: Optional[Union[str, List[str]]] = Field(None, alias='from')
+    to: Union[str, List[str]] = ""
+    customProperties: Optional[List[Dict[str, Any]]] = None
+    schema_object_id: Optional[str] = None
+    property_id: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
 
 
 # Rebuild models to resolve forward references

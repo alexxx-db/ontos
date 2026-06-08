@@ -25,8 +25,20 @@ class AgreementWizardSessionsRepository:
         entity_id: str,
         completion_action: Optional[str] = None,
         created_by: Optional[str] = None,
+        workflow_snapshot: Optional[str] = None,
+        workflow_name: Optional[str] = None,
+        on_behalf_of_type: Optional[str] = None,
+        on_behalf_of_value: Optional[str] = None,
     ) -> AgreementWizardSessionDb:
-        """Create a new wizard session."""
+        """Create a new wizard session.
+
+        ``on_behalf_of_type`` / ``on_behalf_of_value`` capture the principal
+        the requester is acting on behalf of (). When
+        ``completion_action='subscribe'``, ``_complete_session`` reads these
+        back and forwards them to ``data_products_manager.subscribe()`` so the
+        resulting subscription record carries the correct OBO metadata instead
+        of the previous null.
+        """
         session = AgreementWizardSessionDb(
             workflow_id=workflow_id,
             entity_type=entity_type,
@@ -36,6 +48,10 @@ class AgreementWizardSessionsRepository:
             step_results=json.dumps([]),
             status='in_progress',
             created_by=created_by,
+            workflow_snapshot=workflow_snapshot,
+            workflow_name=workflow_name,
+            on_behalf_of_type=on_behalf_of_type,
+            on_behalf_of_value=on_behalf_of_value,
         )
         db.add(session)
         db.commit()
@@ -47,6 +63,31 @@ class AgreementWizardSessionsRepository:
         return db.query(AgreementWizardSessionDb).filter(
             AgreementWizardSessionDb.id == session_id
         ).first()
+
+    def list_recent(self, db: Session, limit: int = 50) -> List[Dict[str, Any]]:
+        """List recent wizard sessions with basic info."""
+        sessions = (
+            db.query(AgreementWizardSessionDb)
+            .order_by(AgreementWizardSessionDb.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        result = []
+        for s in sessions:
+            result.append({
+                "id": s.id,
+                "workflow_id": s.workflow_id,
+                "workflow_name": getattr(s, 'workflow_name', None),
+                "entity_type": s.entity_type,
+                "entity_id": s.entity_id,
+                "status": s.status,
+                "current_step_index": s.current_step_index,
+                "created_by": s.created_by,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                "completion_action": getattr(s, 'completion_action', None),
+            })
+        return result
 
     def get_by_created_by(
         self,
@@ -134,6 +175,54 @@ class AgreementWizardSessionsRepository:
         db.commit()
         db.refresh(session)
         return session
+
+    def update_on_behalf_of(
+        self,
+        db: Session,
+        session_id: str,
+        obo_type: Optional[str],
+        obo_value: Optional[str],
+    ) -> Optional[AgreementWizardSessionDb]:
+        """Persist on_behalf_of captured by the in-wizard ``on_behalf_of`` step
+        onto the session row. The auto-subscribe in ``_complete_session``
+        already reads ``session.on_behalf_of_type`` / ``on_behalf_of_value``
+        and forwards them to ``data_products_manager.subscribe()`` — so
+        writing here is the only thing required to make the new in-wizard
+        capture path equivalent to the legacy pre-wizard SubscribeDialog
+        capture path.
+        """
+        session = self.get(db, session_id)
+        if not session or session.status != 'in_progress':
+            return None
+        session.on_behalf_of_type = obo_type
+        session.on_behalf_of_value = obo_value
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        return session
+
+    def get_latest_completed_by_entity(
+        self,
+        db: Session,
+        entity_type: str,
+        entity_id: str,
+    ) -> Optional[AgreementWizardSessionDb]:
+        """Get the most recently completed wizard session for an entity.
+
+        Used by the workflow executor to propagate approval-flow user inputs
+        into the process workflow's step context (cross-workflow variable
+        propagation).
+        """
+        return (
+            db.query(AgreementWizardSessionDb)
+            .filter(
+                AgreementWizardSessionDb.entity_type == entity_type,
+                AgreementWizardSessionDb.entity_id == entity_id,
+                AgreementWizardSessionDb.status == 'completed',
+            )
+            .order_by(AgreementWizardSessionDb.updated_at.desc())
+            .first()
+        )
 
 
 agreement_wizard_sessions_repo = AgreementWizardSessionsRepository()

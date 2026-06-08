@@ -35,7 +35,7 @@ Please be respectful and professional in all interactions. We're building a coll
    ```
 3. Add the upstream remote:
    ```bash
-   git remote add upstream https://github.com/larsgeorge/ontos.git
+   git remote add upstream https://github.com/databrickslabs/ontos.git
    ```
 
 ## Development Setup
@@ -135,7 +135,7 @@ The scope provides additional context. Common scopes include:
 
 ```bash
 # Feature
-feat(contracts): add schema validation for ODCS v3.0.2
+feat(contracts): add schema validation for ODCS v3.1.0
 
 # Bug fix
 fix(backend): correct date parsing in contract import

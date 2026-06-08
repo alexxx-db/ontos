@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './components/theme';
 import Layout from './components/layout/layout';
@@ -8,6 +8,14 @@ import { RouteErrorBoundary } from './components/layout/route-error-boundary';
 import { useUserStore } from './stores/user-store';
 import { usePermissions } from './stores/permissions-store';
 import { useNotificationsStore } from './stores/notifications-store';
+import useTestPersonaStore, { installTestPersonaFetchInterceptor } from './stores/test-persona-store';
+import { usePointerEventsGuard } from './hooks/use-pointer-events-guard';
+
+// Install the fetch interceptor immediately at module load so even very early
+// requests (e.g. probes during component mount) carry the override headers
+// once a persona is restored from localStorage.
+installTestPersonaFetchInterceptor();
+import ApprovalWizardDialog from './components/workflows/approval-wizard-dialog';
 import './i18n/config'; // Initialize i18n
 
 // Import views
@@ -18,6 +26,7 @@ import DataProductDetails from './views/data-product-details';
 import DataContracts from './views/data-contracts';
 import DataContractDetails from './views/data-contract-details';
 import BusinessTermsView from './views/business-terms';
+import ConceptDetailView from './views/concept-detail';
 import Compliance from './views/compliance';
 import CompliancePolicyDetails from './views/compliance-policy-details';
 import ComplianceRunDetails from './views/compliance-run-details';
@@ -71,6 +80,12 @@ const DevLineageView = lazy(() => import('./components/lineage/dev-lineage-route
 // Concepts layout
 import ConceptsLayout from './components/concepts/concepts-layout';
 
+// Global route-scoped guards (e.g. recover from stuck Radix body pointer-events lock)
+function RouteGuards() {
+  usePointerEventsGuard();
+  return null;
+}
+
 // Settings layout and sub-views
 import SettingsLayout from './components/settings/settings-layout';
 import SettingsGeneralView from './views/settings-general';
@@ -83,27 +98,68 @@ import SettingsSearchView from './views/settings-search';
 import SettingsMcpView from './views/settings-mcp';
 import SettingsUiView from './views/settings-ui';
 import SettingsConnectorsView from './views/settings-connectors';
+import SettingsDirectoryView from './views/settings-directory';
 import SettingsSemanticModelsView from './views/settings-semantic-models';
+import SettingsCertificationLevelsView from './views/settings-certification-levels';
 
 export default function App() {
   const fetchUserInfo = useUserStore((state: any) => state.fetchUserInfo);
   const { fetchPermissions, fetchAvailableRoles } = usePermissions();
   const { startPolling: startNotificationPolling, stopPolling: stopNotificationPolling } = useNotificationsStore();
+  const initializeTestPersonas = useTestPersonaStore((s) => s.initialize);
+
+  // First-access disclaimer: any active `on_first_access` Approval Workflow the
+  // current user hasn't yet accepted at the workflow's current version is
+  // returned by GET /api/user/pending-approvals. We render the existing
+  // ApprovalWizardDialog against entity_type=user / entity_id=<email>.
+  // Walking the wizard creates an `agreements` row keyed on
+  // (created_by, workflow_id, workflow_version) — that IS the consent record;
+  // no localStorage flag, no separate settings table.
+  const [pendingFirstAccess, setPendingFirstAccess] = useState<{
+    workflow_id: string;
+    workflow_name: string;
+    workflow_version: number;
+  } | null>(null);
+  const [pendingUserEmail, setPendingUserEmail] = useState<string>('');
 
   useEffect(() => {
     console.log("App component mounted, fetching initial user info and permissions...");
-    fetchUserInfo();
-    fetchPermissions();
-    fetchAvailableRoles();
+    // Probe for the test-persona feature first so any restored persona
+    // selection is in effect before user/permissions calls go out.
+    initializeTestPersonas().finally(() => {
+      fetchUserInfo();
+      fetchPermissions();
+      fetchAvailableRoles();
+    });
 
     console.log("Starting notification polling...");
     startNotificationPolling();
+
+    // Fetch pending on_first_access workflows and (if any) launch the wizard
+    // for the first one. Subsequent items get prompted on the next app mount
+    // after the current one is accepted.
+    Promise.all([
+      fetch('/api/user/pending-approvals').then(r => r.ok ? r.json() : { workflows: [] }),
+      fetch('/api/user/details').then(r => r.ok ? r.json() : null),
+    ])
+      .then(([pending, userDetails]) => {
+        const list = Array.isArray(pending?.workflows) ? pending.workflows : [];
+        const email = (userDetails?.email || userDetails?.user || '') as string;
+        if (list.length > 0 && email) {
+          setPendingUserEmail(email);
+          setPendingFirstAccess(list[0]);
+        }
+      })
+      .catch((err) => {
+        // Non-fatal: first-access prompts are best-effort.
+        console.warn('Failed to fetch pending first-access approvals:', err);
+      });
 
     return () => {
         console.log("App component unmounting, stopping notification polling...");
         stopNotificationPolling();
     };
-  }, [fetchUserInfo, fetchPermissions, fetchAvailableRoles, startNotificationPolling, stopNotificationPolling]);
+  }, [fetchUserInfo, fetchPermissions, fetchAvailableRoles, startNotificationPolling, stopNotificationPolling, initializeTestPersonas]);
 
   return (
     <ThemeProvider defaultTheme="system" storageKey="ucapp-theme">
@@ -111,6 +167,7 @@ export default function App() {
         <Router future={{ 
           v7_relativeSplatPath: true,
         }}>
+          <RouteGuards />
           <Layout>
             <RouteErrorBoundary>
             <Routes>
@@ -148,6 +205,7 @@ export default function App() {
                 <Route index element={<Navigate to="/concepts/browser" replace />} />
                 <Route path="collections" element={<CollectionsView />} />
                 <Route path="browser" element={<BusinessTermsView />} />
+                <Route path="browser/:iri" element={<ConceptDetailView />} />
                 <Route path="search" element={<OntologySearchView />} />
                 <Route path="graph" element={<OntologyHomeView />} />
                 <Route path="hierarchy" element={<HierarchyBrowserView />} />
@@ -191,7 +249,9 @@ export default function App() {
                 <Route path="mcp" element={<SettingsMcpView />} />
                 <Route path="ui" element={<SettingsUiView />} />
                 <Route path="connectors" element={<SettingsConnectorsView />} />
+                <Route path="directory" element={<SettingsDirectoryView />} />
                 <Route path="semantic-models" element={<SettingsSemanticModelsView />} />
+                <Route path="certification-levels" element={<SettingsCertificationLevelsView />} />
                 <Route path="workflows" element={<Workflows />} />
                 <Route path="workflows/new" element={<WorkflowDesignerView />} />
                 <Route path="workflows/:workflowId" element={<WorkflowDesignerView />} />
@@ -224,6 +284,18 @@ export default function App() {
           </Layout>
         </Router>
         <Toaster />
+        {pendingFirstAccess && pendingUserEmail && (
+          <ApprovalWizardDialog
+            isOpen={true}
+            onOpenChange={(open) => { if (!open) setPendingFirstAccess(null); }}
+            entityType="user"
+            entityId={pendingUserEmail}
+            entityName={pendingUserEmail}
+            preselectedWorkflowId={pendingFirstAccess.workflow_id}
+            autoStartWithPreselected={true}
+            onComplete={() => setPendingFirstAccess(null)}
+          />
+        )}
       </TooltipProvider>
     </ThemeProvider>
   );

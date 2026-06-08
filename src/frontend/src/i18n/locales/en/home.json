@@ -1,5 +1,5 @@
 {
-  "title": "Welcome to Ontos",
+  "title": "Welcome to {{appName}}",
   "tagline": "Manage business glossary, data contracts, data products, personas, and more",
   "search": {
     "placeholder": "Search for data products, glossary terms, contracts..."
@@ -24,8 +24,8 @@
         "description": "Total data products"
       },
       "semanticModels": {
-        "title": "Concept Browser",
-        "description": "Models / Terms"
+        "title": "Concepts",
+        "description": "Business terms and definitions"
       },
       "estates": {
         "title": "Estates",
@@ -217,6 +217,10 @@
       "two": "2 per row",
       "three": "3 per row",
       "four": "4 per row"
+    },
+    "scopeFilter": {
+      "placeholder": "Scope",
+      "all": "All Scopes"
     },
     "openInDetails": "Open in details view"
   },

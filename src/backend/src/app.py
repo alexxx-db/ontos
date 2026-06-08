@@ -16,12 +16,12 @@ SERVER_STARTUP_TIME = int(time.time())
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from fastapi import HTTPException, status
 
-from src.common.middleware import ErrorHandlingMiddleware, LoggingMiddleware
+from src.common.middleware import ErrorHandlingMiddleware, LoggingMiddleware, MaintenanceMiddleware
 from src.routes import (
     access_grants_routes,
     catalog_commander_routes,
@@ -32,7 +32,6 @@ from src.routes import (
     data_contracts_routes,
     data_domains_routes,
     data_product_routes,
-    datasets_routes,
     entitlements_routes,
     entitlements_sync_routes,
     estate_manager_routes,
@@ -50,6 +49,7 @@ from src.routes import (
     settings_routes,
     semantic_models_routes,
     semantic_links_routes,
+    test_personas_routes,
     user_routes,
     audit_routes,
     change_log_routes,
@@ -74,6 +74,8 @@ from src.routes import (
     business_lineage_routes,
     readiness_routes,
     suggestion_routes,
+    certification_levels_routes,
+    directory_routes,
 )
 
 from src.common.database import init_db, get_session_factory, SQLAlchemySession
@@ -113,16 +115,33 @@ STATIC_ASSETS_PATH = BASE_DIR.parent / "static"
 async def startup_event():
     import os
     
+    # Initialize health state (must happen before anything else)
+    app.state.health = {
+        "db_ok": False,
+        "ws_ok": False,
+        "warnings": [],
+        "db_error": None,
+    }
+    
     # Skip startup tasks if running tests
     if os.getenv('SKIP_STARTUP_TASKS') == 'true':
         logger.info("SKIP_STARTUP_TASKS=true detected - skipping startup tasks (test mode)")
+        app.state.health["db_ok"] = True
+        app.state.health["ws_ok"] = True
         return
     
     logger.info("Running application startup event...")
     settings = get_settings()
     
-    initialize_database(settings=settings)
-    initialize_managers(app)  # Handles DB-backed manager init
+    try:
+        initialize_database(settings=settings)
+        app.state.health["db_ok"] = True
+    except Exception as e:
+        app.state.health["db_error"] = str(e)
+        logger.critical(f"Database init failed — entering maintenance mode: {e}", exc_info=True)
+        return  # Skip manager init; MaintenanceMiddleware will serve the maintenance page
+
+    initialize_managers(app)  # Soft-fails internally for ws_client; sets health["ws_ok"]
     
     # Initialize Git service for indirect delivery mode
     try:
@@ -164,8 +183,9 @@ async def startup_event():
         logger.warning(f"Failed initializing Delivery Service: {e}", exc_info=True)
         app.state.delivery_service = None
     
-    # Demo data is loaded on-demand via POST /api/settings/demo-data/load
-    # See: src/backend/src/data/demo_data.sql
+    # Demo data is loaded on-demand via POST /api/settings/demo-data/load?preset=<retail|hls|fsi|mfg|auto>
+    # Each preset is a fully self-contained vertical demo (no implicit content from other packs).
+    # Default preset is 'retail' (file: src/backend/src/data/demo_data_retail.sql).
     
     # Ensure SearchManager is initialized and index built
     try:
@@ -216,7 +236,6 @@ openapi_tags = [
     {"name": "Projects", "description": "Manage projects within teams"},
     {"name": "Tags", "description": "Manage tags and tag namespaces"},
     {"name": "Costs", "description": "Manage cost items and budgets"},
-    {"name": "Datasets", "description": "Manage datasets and dataset instances"},
     {"name": "Data Contracts", "description": "Manage data contracts for data products"},
     {"name": "Data Products", "description": "Manage data products and subscriptions"},
     
@@ -295,12 +314,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add custom middleware
+# Add custom middleware (outermost middleware runs first)
 app.add_middleware(ErrorHandlingMiddleware)
 app.add_middleware(LoggingMiddleware)
+app.add_middleware(MaintenanceMiddleware)
 
 # Mount static files for the React application (skip in test mode)
-if not os.environ.get('TESTING'):
+if not settings.TESTING:
     app.mount("/static", StaticFiles(directory=STATIC_ASSETS_PATH, html=True), name="static")
 
 # Data Products - Core data lifecycle
@@ -310,7 +330,6 @@ projects_routes.register_routes(app)
 tags_routes.register_routes(app)
 costs_routes.register_routes(app)
 quality_routes.register_routes(app)
-datasets_routes.register_routes(app)
 data_contracts_routes.register_routes(app)
 data_product_routes.register_routes(app)
 from src.routes import approvals_routes
@@ -334,6 +353,7 @@ entity_subscription_routes.register_routes(app)
 business_lineage_routes.register_routes(app)
 readiness_routes.register_routes(app)
 suggestion_routes.register_routes(app)
+certification_levels_routes.register_routes(app)
 data_asset_reviews_routes.register_routes(app)
 data_catalog_routes.register_routes(app)
 
@@ -358,6 +378,7 @@ search_routes.register_routes(app)
 llm_search_routes.register_routes(app)
 jobs_routes.register_routes(app)
 user_routes.register_routes(app)
+test_personas_routes.register_routes(app)
 audit_routes.register_routes(app)
 change_log_routes.register_routes(app)
 mcp_routes.register_routes(app)
@@ -365,6 +386,7 @@ mcp_tokens_routes.register_routes(app)
 self_service_routes.register_routes(app)
 workflows_routes.register_routes(app)
 settings_routes.register_routes(app)
+directory_routes.register_routes(app)
 connection_routes.register_routes(app)
 schema_import_routes.register_routes(app)
 
@@ -388,8 +410,49 @@ async def get_app_version():
         'timestamp': int(time.time())
     }
 
+# --- Health & retry endpoints ---
+@app.get("/api/health", tags=["System"])
+async def health_check():
+    """Return application health state."""
+    return app.state.health
+
+@app.post("/api/health/retry", tags=["System"])
+async def retry_startup():
+    """Re-attempt database init + manager init after a maintenance-mode failure.
+
+    NOTE: intentionally NOT gated by ``PermissionChecker``:
+      1. Any authenticated user hitting the UI during a DB outage gets
+         served the "retrying DB" interstitial, which POSTs here. Requiring
+         a role-level permission would break recovery for non-admins, who
+         are the majority of users.
+      2. ``PermissionChecker`` transitively requires ``auth_manager`` from
+         ``app.state.managers`` — the very thing this endpoint recovers when
+         broken — so gating would create a chicken-and-egg failure mode.
+
+    Edge authentication by the Databricks Apps platform still blocks
+    anonymous callers in prod. The operation is idempotent.
+    """
+    settings = get_settings()
+    try:
+        initialize_database(settings=settings)
+        app.state.health["db_ok"] = True
+        app.state.health["db_error"] = None
+    except Exception as e:
+        app.state.health["db_error"] = str(e)
+        logger.critical(f"Database retry failed: {e}", exc_info=True)
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    try:
+        app.state.health["warnings"] = []  # Reset warnings before retry
+        initialize_managers(app)  # Sets health["ws_ok"] internally
+    except Exception as e:
+        app.state.health["warnings"].append(f"Manager init failed on retry: {e}")
+        logger.error(f"Manager init failed on retry: {e}", exc_info=True)
+
+    return {"status": "ok", "health": app.state.health}
+
 # Define the SPA catch-all route LAST (skip in test mode)
-if not os.environ.get('TESTING'):
+if not settings.TESTING:
     @app.get("/{full_path:path}")
     def serve_spa(full_path: str):
         # Only catch routes that aren't API routes, static files, or API docs

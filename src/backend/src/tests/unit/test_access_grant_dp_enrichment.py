@@ -1,222 +1,259 @@
-"""Tests for access-grant request entity_data enrichment.
+"""Tests for access-grant ``entity_data`` enrichment with underlying-DP fields.
 
-When an access-grant request targets a data product, the
-``AccessGrantsManager.create_request`` flow enriches the trigger's
-``entity_data`` with fields parsed from the DP's output ports so
-webhook ``body_template``s can reference ``${entity.output_ports}`` and
-``${entity.catalogs}`` directly.
+When an access-grant request is fired against a data product, the workflow's
+trigger context carries ``entity_type=access_grant`` + ``entity_id=<request_id>``
+(the AGR is a proxy for the actual data product). Webhook ``body_template``
+authors often need fields from the *underlying* DP — most importantly
+``consumer_principals``, the AD/UC access group(s) that a downstream
+provisioner adds the requester into to grant catalog access.
 
-These tests pin the enrichment shape and the "caller wins" override
-discipline.
+Before this enrichment, ``${entity.consumer_principals}`` resolved to nothing,
+forcing customers to either (a) hard-code the group name in the webhook
+template, (b) modify the FE to inject ``consumer_principals`` into the AGR
+POST body, or (c) wait for a "fetch underlying entity" step type that
+doesn't exist. All of those were brittle or required customer-side changes
+that Ontos can't ship for them.
+
+This module asserts:
+- ``consumer_principals`` is enriched onto entity_data from the underlying DP
+- The enrichment deserializes the DP's JSON-string column into an array
+- Caller-supplied ``consumer_principals`` (via ``wizard_data`` or
+  ``extra='allow'``) is NOT overwritten — caller wins
+- Non-``data_product`` entity types are not enriched (no DP fetch)
+- A DP-fetch failure does not break the access-grant submission
+- The DP's name is also exposed under ``data_product_name`` for
+  log-friendly webhook templates
 """
-from __future__ import annotations
+import json
+import os
 
-import uuid
-from datetime import datetime, timezone
-from types import SimpleNamespace
+os.environ['TESTING'] = 'true'
+os.environ['SKIP_STARTUP_TASKS'] = 'true'
+
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
-from src.common.workflow_triggers import enrich_entity_data_with_data_product
-from src.db_models.access_grants import AccessGrantRequestStatus
+from src.controller.access_grants_manager import AccessGrantsManager
+from src.models.access_grants import AccessGrantRequestCreate, PermissionLevel
 
 
-def _make_port(name: str, asset_identifier: str | None) -> SimpleNamespace:
-    """Build a minimal stand-in for ``OutputPortDb`` for the helper."""
-    return SimpleNamespace(name=name, asset_identifier=asset_identifier)
+def _make_db_request(request_id):
+    db_req = MagicMock()
+    db_req.id = request_id
+    return db_req
 
 
-def _make_dp(ports: list[SimpleNamespace], **kwargs) -> SimpleNamespace:
-    """Build a minimal stand-in for ``DataProductDb`` for the helper."""
-    defaults = {"id": "prd-123", "name": "customer_360"}
-    defaults.update(kwargs)
-    return SimpleNamespace(output_ports=ports, **defaults)
+def _make_dp(*, id_: str, name: str = "Test DP",
+             consumer_principals_raw=None):
+    """Mock a ``DataProductDb`` with the fields the enrichment reads."""
+    dp = MagicMock()
+    dp.id = id_
+    dp.name = name
+    dp.consumer_principals = consumer_principals_raw
+    return dp
 
 
-class TestEnrichEntityDataWithDataProduct:
-    """Pin the helper's shape contract.
+def _drive_create_request(payload, captured, *, dp_mock=None,
+                          dp_fetch_raises=False):
+    """Drive ``create_request`` with mocks; capture trigger kwargs."""
+    manager = AccessGrantsManager()
+    manager._request_repo = MagicMock()
+    manager._request_repo.check_existing_pending.return_value = None
+    manager._request_repo.create.return_value = _make_db_request(uuid4())
+    manager._grant_repo = MagicMock()
+    manager._grant_repo.check_active_grant.return_value = None
+    manager._config_repo = MagicMock()
+    manager._config_repo.get_by_entity_type.return_value = None
 
-    The helper is invoked from both ``AccessGrantsManager.create_request``
-    and ``DataProductsManager.subscribe`` — tested here once.
-    """
+    db = MagicMock()
+    db.commit = MagicMock()
 
-    def test_multi_catalog_dp_emits_dedup_sorted_catalogs(self):
+    fake_registry = MagicMock()
+    fake_registry.on_request_access = MagicMock(return_value=[])
+
+    # Patch the DP repo: either return our mock DP, or raise to test
+    # the fail-safe wrapper around the enrichment.
+    fake_dp_repo = MagicMock()
+    if dp_fetch_raises:
+        fake_dp_repo.get.side_effect = RuntimeError("simulated DB failure")
+    else:
+        fake_dp_repo.get.return_value = dp_mock
+
+    with patch(
+        "src.common.workflow_triggers.get_trigger_registry",
+        return_value=fake_registry,
+    ), patch(
+        "src.controller.access_grants_manager.AccessGrantRequestResponse"
+    ) as resp_cls, patch(
+        "src.repositories.data_products_repository.data_product_repo",
+        fake_dp_repo,
+    ):
+        resp_cls.model_validate.return_value = MagicMock()
+        data = AccessGrantRequestCreate(**payload)
+        manager.create_request(db, requester_email="alice@example.com", data=data)
+
+    assert fake_registry.on_request_access.call_count == 1
+    captured.update(fake_registry.on_request_access.call_args.kwargs)
+
+
+class TestConsumerPrincipalsEnrichment:
+    def test_consumer_principals_is_enriched_from_dp(self):
+        """Happy path: DP carries consumer_principals; they appear on entity_data."""
+        dp_id = "dp-1"
+        cp_value = [
+            {"type": "group", "value": "099_Treasure_DataProducer_R"}
+        ]
         dp = _make_dp(
-            ports=[
-                _make_port("orders", "prod.sales.orders"),
-                _make_port("customers", "main.marts.customers"),
-                _make_port("returns", "prod.sales.returns"),
-            ]
-        )
-        entity_data = {}
-
-        enrich_entity_data_with_data_product(entity_data, dp)
-
-        # Catalogs: dedup + sorted alphabetically.
-        assert entity_data["catalogs"] == ["main", "prod"]
-
-        # Output ports: one per usable identifier, in source order.
-        assert len(entity_data["output_ports"]) == 3
-        assert entity_data["output_ports"][0] == {
-            "name": "orders",
-            "catalog": "prod",
-            "schema": "sales",
-            "table": "orders",
-            "fqn": "prod.sales.orders",
-        }
-        assert entity_data["output_ports"][1]["catalog"] == "main"
-        assert entity_data["output_ports"][2]["table"] == "returns"
-
-    def test_skips_ports_without_usable_asset_identifier(self):
-        """Ports without a parseable identifier are silently dropped.
-
-        A workflow author would rather see only the usable rows than
-        half-formed records with empty ``catalog`` fields.
-        """
-        dp = _make_dp(
-            ports=[
-                _make_port("usable", "main.marts.customers"),
-                _make_port("missing", None),
-                _make_port("not_uc", "/path/to/notebook"),
-                _make_port("too_many_parts", "a.b.c.d"),
-                _make_port("empty", ""),
-            ]
-        )
-        entity_data = {}
-
-        enrich_entity_data_with_data_product(entity_data, dp)
-
-        # Only the parseable port survives.
-        assert len(entity_data["output_ports"]) == 1
-        assert entity_data["output_ports"][0]["fqn"] == "main.marts.customers"
-        assert entity_data["catalogs"] == ["main"]
-
-    def test_caller_supplied_keys_are_preserved(self):
-        """If the caller pre-populates ``output_ports`` (e.g. from a
-        wizard override), the helper must not clobber the value.
-        Same goes for ``catalogs``.
-        """
-        dp = _make_dp(ports=[_make_port("orders", "prod.sales.orders")])
-        custom_ports = [{"name": "custom", "catalog": "x", "schema": "y", "table": "z", "fqn": "x.y.z"}]
-        entity_data = {
-            "output_ports": custom_ports,
-            "catalogs": ["override"],
-        }
-
-        enrich_entity_data_with_data_product(entity_data, dp)
-
-        assert entity_data["output_ports"] is custom_ports
-        assert entity_data["catalogs"] == ["override"]
-
-    def test_empty_dp_yields_empty_lists(self):
-        """A DP with no output ports still produces well-formed keys."""
-        dp = _make_dp(ports=[])
-        entity_data = {}
-
-        enrich_entity_data_with_data_product(entity_data, dp)
-
-        assert entity_data["output_ports"] == []
-        assert entity_data["catalogs"] == []
-
-    def test_none_data_product_is_noop(self):
-        """Passing ``None`` (DP not found) must not raise."""
-        entity_data = {"existing": "value"}
-
-        enrich_entity_data_with_data_product(entity_data, None)
-
-        assert entity_data == {"existing": "value"}
-
-
-class TestAccessGrantRequestEnrichment:
-    """Integration: the create_request flow wires the helper in correctly."""
-
-    def test_create_request_for_dp_enriches_entity_data(self, db_session, monkeypatch):
-        """End-to-end: a DP-targeted request results in a trigger
-        firing with ``output_ports`` + ``catalogs`` in entity_data.
-        """
-        from src.controller.access_grants_manager import AccessGrantsManager
-        from src.models.access_grants import (
-            AccessGrantRequestCreate,
-            PermissionLevel,
+            id_=dp_id,
+            consumer_principals_raw=json.dumps(cp_value),
         )
 
-        # Stub the DP repo so we don't depend on DB schema for ports.
-        fake_dp = _make_dp(
-            ports=[
-                _make_port("orders", "prod.sales.orders"),
-                _make_port("customers", "main.marts.customers"),
-            ],
-            id="prd-123",
-            name="customer_360",
-        )
-
-        # Capture the entity_data passed to the trigger.
         captured = {}
-
-        class FakeTriggerRegistry:
-            def on_request_access(self, **kwargs):
-                captured.update(kwargs)
-                return []
-
-        # Stub the access-grant request repo so we don't need its
-        # actual DB schema either — we only care that the trigger
-        # fires with the right entity_data. Fields here must satisfy
-        # ``AccessGrantRequestResponse.model_validate`` at the end of
-        # ``create_request``.
-        fake_request = SimpleNamespace(
-            id=uuid.uuid4(),
-            requester_email="alice@example.com",
-            entity_type="data_product",
-            entity_id="prd-123",
-            entity_name="customer_360",
-            requested_duration_days=30,
-            permission_level="READ",
-            reason="Need to validate Q3 churn metrics.",
-            status=AccessGrantRequestStatus.PENDING.value,
-            created_at=datetime.now(timezone.utc),
-            handled_at=None,
-            handled_by=None,
-            admin_message=None,
+        _drive_create_request(
+            payload={
+                "entity_type": "data_product",
+                "entity_id": dp_id,
+                "requested_duration_days": 7,
+                "permission_level": PermissionLevel.READ,
+            },
+            captured=captured,
+            dp_mock=dp,
         )
+
+        ed = captured["entity_data"]
+        assert ed["consumer_principals"] == cp_value
+        assert ed.get("data_product_name") == "Test DP"
+
+    def test_dp_with_no_consumer_principals_yields_empty_array(self):
+        """A DP that has no consumers set should expose an empty array (not None).
+
+        Downstream provisioners can then fail-fast on empty rather than
+        getting null. (Also keeps the JSON shape stable for runbook
+        authors.)
+        """
+        dp = _make_dp(id_="dp-empty", consumer_principals_raw=None)
+        captured = {}
+        _drive_create_request(
+            payload={
+                "entity_type": "data_product",
+                "entity_id": "dp-empty",
+                "requested_duration_days": 7,
+                "permission_level": PermissionLevel.READ,
+            },
+            captured=captured,
+            dp_mock=dp,
+        )
+        assert captured["entity_data"]["consumer_principals"] == []
+
+    def test_caller_supplied_consumer_principals_overrides_enrichment(self):
+        """Wizard / extra= callers may want to inject their own group list;
+        their value must win over the DP's value."""
+        caller_cp = [
+            {"type": "group", "value": "caller-specified-group"}
+        ]
+        dp_cp = [
+            {"type": "group", "value": "dp-default-group"}
+        ]
+        dp = _make_dp(
+            id_="dp-2",
+            consumer_principals_raw=json.dumps(dp_cp),
+        )
+        captured = {}
+        _drive_create_request(
+            payload={
+                "entity_type": "data_product",
+                "entity_id": "dp-2",
+                "requested_duration_days": 7,
+                "permission_level": PermissionLevel.READ,
+                "consumer_principals": caller_cp,  # extra='allow' field
+            },
+            captured=captured,
+            dp_mock=dp,
+        )
+        assert captured["entity_data"]["consumer_principals"] == caller_cp
+
+    def test_non_data_product_entity_type_is_not_enriched(self):
+        """Workflow types like ``access_grant`` against a contract should
+        NOT trigger a DP fetch."""
+        fake_dp_repo = MagicMock()
+        manager = AccessGrantsManager()
+        manager._request_repo = MagicMock()
+        manager._request_repo.check_existing_pending.return_value = None
+        manager._request_repo.create.return_value = _make_db_request(uuid4())
+        manager._grant_repo = MagicMock()
+        manager._grant_repo.check_active_grant.return_value = None
+        manager._config_repo = MagicMock()
+        manager._config_repo.get_by_entity_type.return_value = None
+
+        fake_registry = MagicMock()
+        fake_registry.on_request_access = MagicMock(return_value=[])
 
         with patch(
-            "src.controller.access_grants_manager.access_grant_request_repo"
-        ) as fake_request_repo, patch(
-            "src.repositories.data_products_repository.data_product_repo"
-        ) as fake_dp_repo, patch(
             "src.common.workflow_triggers.get_trigger_registry",
-            return_value=FakeTriggerRegistry(),
+            return_value=fake_registry,
+        ), patch(
+            "src.controller.access_grants_manager.AccessGrantRequestResponse"
+        ) as resp_cls, patch(
+            "src.repositories.data_products_repository.data_product_repo",
+            fake_dp_repo,
         ):
-            fake_request_repo.check_existing_pending.return_value = None
-            fake_request_repo.create.return_value = fake_request
-            fake_dp_repo.get.return_value = fake_dp
-
-            mgr = AccessGrantsManager()
-            mgr._request_repo = fake_request_repo
-
-            # Also stub grant_repo + config_repo (read-side).
-            mgr._grant_repo = MagicMock()
-            mgr._grant_repo.check_active_grant.return_value = None
-            mgr._config_repo = MagicMock()
-            mgr._config_repo.get_by_entity_type.return_value = None
-
-            payload = AccessGrantRequestCreate(
-                entity_type="data_product",
-                entity_id="prd-123",
-                entity_name="customer_360",
-                requested_duration_days=30,
+            resp_cls.model_validate.return_value = MagicMock()
+            data = AccessGrantRequestCreate(
+                entity_type="data_contract",
+                entity_id="dc-1",
+                requested_duration_days=7,
                 permission_level=PermissionLevel.READ,
-                reason="Need to validate Q3 churn metrics.",
+            )
+            manager.create_request(
+                MagicMock(), requester_email="alice@example.com", data=data
             )
 
-            mgr.create_request(db_session, "alice@example.com", payload)
+        # The DP repo must NOT have been consulted.
+        fake_dp_repo.get.assert_not_called()
+        ed = fake_registry.on_request_access.call_args.kwargs["entity_data"]
+        assert "consumer_principals" not in ed
 
-        # The trigger fired with enrichment baked in.
-        entity_data = captured["entity_data"]
-        assert entity_data["data_product_name"] == "customer_360"
-        assert entity_data["catalogs"] == ["main", "prod"]
-        assert len(entity_data["output_ports"]) == 2
-        fqns = [p["fqn"] for p in entity_data["output_ports"]]
-        assert "prod.sales.orders" in fqns
-        assert "main.marts.customers" in fqns
+    def test_dp_fetch_failure_is_fail_safe(self):
+        """If the DP fetch raises, the access-grant submission must still
+        succeed — the enrichment is a nice-to-have, not a critical path.
+        The exception is logged but never propagates."""
+        captured = {}
+        _drive_create_request(
+            payload={
+                "entity_type": "data_product",
+                "entity_id": "dp-missing",
+                "requested_duration_days": 7,
+                "permission_level": PermissionLevel.READ,
+            },
+            captured=captured,
+            dp_fetch_raises=True,
+        )
+        # entity_data must still be intact (request_id, entity_type, etc.)
+        ed = captured["entity_data"]
+        assert ed["entity_type"] == "data_product"
+        assert ed["entity_id"] == "dp-missing"
+        # consumer_principals MUST NOT be set when fetch fails
+        assert "consumer_principals" not in ed
+
+    def test_malformed_json_in_consumer_principals_yields_empty_array(self):
+        """A DP whose consumer_principals column has invalid JSON must not
+        crash submission — the field becomes an empty array and a warning
+        is logged."""
+        dp = _make_dp(
+            id_="dp-bad-json",
+            consumer_principals_raw="this is not json",
+        )
+        captured = {}
+        _drive_create_request(
+            payload={
+                "entity_type": "data_product",
+                "entity_id": "dp-bad-json",
+                "requested_duration_days": 7,
+                "permission_level": PermissionLevel.READ,
+            },
+            captured=captured,
+            dp_mock=dp,
+        )
+        assert captured["entity_data"]["consumer_principals"] == []

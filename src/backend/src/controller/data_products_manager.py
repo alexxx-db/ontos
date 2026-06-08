@@ -8,7 +8,8 @@ Handles product creation, updates, versioning, contract integration, and search 
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, Iterable, List, Optional, Any, Set
+from uuid import UUID
 from pathlib import Path
 
 SOURCE_ID_PROPERTY = "sourceId"
@@ -49,7 +50,8 @@ from src.models.data_products import (
     SubscriptionCreate,
     SubscriptionResponse,
     SubscriberInfo,
-    SubscribersListResponse
+    SubscribersListResponse,
+    OnBehalfOf,
 )
 from src.models.users import UserInfo
 from src.repositories.data_products_repository import data_product_repo, subscription_repo
@@ -122,31 +124,36 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         db: Optional[Session] = None,
         user: Optional[str] = None,
         background_tasks: Optional[Any] = None,
+        preserve_source_id: bool = False,
     ) -> DataProductApi:
         """Creates a new ODPS v1.0.0 data product via the repository.
-        
+
         Args:
             product_data: Dictionary containing product data
             db: Optional database session to use. If not provided, uses self._db
             user: Optional user who created the product (for delivery tracking)
             background_tasks: Optional FastAPI BackgroundTasks for async delivery
+            preserve_source_id: If True, preserve the original non-UUID id as a
+                sourceId custom property (used during batch upload/import)
         """
         from src.controller.delivery_service import DeliveryChangeType
-        
+
         logger.debug(f"Manager creating ODPS product from data: {product_data}")
         # Use provided session or fall back to instance session
         db_session = db if db is not None else self._db
         try:
             # Preserve original external ID (e.g. URN) as a custom property
-            original_id = product_data.get('id')
-            if original_id and isinstance(original_id, str) and not _is_valid_uuid(original_id):
-                custom_props = product_data.get('customProperties', [])
-                if isinstance(custom_props, list):
-                    custom_props.append({"property": SOURCE_ID_PROPERTY, "value": original_id})
-                elif isinstance(custom_props, dict):
-                    custom_props[SOURCE_ID_PROPERTY] = original_id
-                product_data['customProperties'] = custom_props
-                logger.info(f"Preserved original ID '{original_id}' as {SOURCE_ID_PROPERTY} custom property")
+            # Only when explicitly requested (e.g. during batch upload/import)
+            if preserve_source_id:
+                original_id = product_data.get('id')
+                if original_id and isinstance(original_id, str) and not _is_valid_uuid(original_id):
+                    custom_props = product_data.get('customProperties', [])
+                    if isinstance(custom_props, list):
+                        custom_props.append({"property": SOURCE_ID_PROPERTY, "value": original_id})
+                    elif isinstance(custom_props, dict):
+                        custom_props[SOURCE_ID_PROPERTY] = original_id
+                    product_data['customProperties'] = custom_props
+                    logger.info(f"Preserved original ID '{original_id}' as {SOURCE_ID_PROPERTY} custom property")
 
             # Always generate a UUID for the product ID
             product_data['id'] = str(uuid.uuid4())
@@ -235,15 +242,30 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         skip: int = 0,
         limit: int = 100,
         project_id: Optional[str] = None,
-        is_admin: bool = False
+        is_admin: bool = False,
+        caller_email: Optional[str] = None,
+        caller_team_ids: Optional[List[str]] = None,
+        caller_project_ids: Optional[List[str]] = None,
     ) -> List[DataProductApi]:
         """List ODPS v1.0.0 data products.
+
+        For non-admin callers, results are filtered by the ownership cascade
+        described on ``DataProductsRepository.get_multi``: a product is
+        visible if it matches the caller's project membership, team
+        membership, or creator (``draft_owner_id``).
+
+        Back-compat: existing call sites that pass only ``is_admin`` (or
+        nothing) continue to compile. Non-admin calls with no scope inputs
+        intentionally return an empty list — fail-closed.
 
         Args:
             skip: Number of records to skip
             limit: Maximum number of records to return
             project_id: Optional project ID to filter by (ignored if is_admin=True)
-            is_admin: If True, return all products regardless of project_id
+            is_admin: If True, return all products regardless of scope
+            caller_email: Caller email — matched against ``draft_owner_id``
+            caller_team_ids: Caller team memberships — matched against ``owner_team_id``
+            caller_project_ids: Caller's accessible projects — matched against ``project_id``
 
         Returns:
             List of DataProduct API models
@@ -254,7 +276,10 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 skip=skip,
                 limit=limit,
                 project_id=project_id,
-                is_admin=is_admin
+                is_admin=is_admin,
+                caller_email=caller_email,
+                caller_team_ids=caller_team_ids,
+                caller_project_ids=caller_project_ids,
             )
             products_with_tags = []
             for product_db in products_db:
@@ -267,6 +292,37 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         except Exception as e:
             logger.error(f"Unexpected error listing products: {e}")
             raise
+
+    def list_output_port_ids_for_products(
+        self, db: Session, *, product_ids: Iterable[str]
+    ) -> Set[str]:
+        """Return OutputPort IDs belonging to the given Data Products."""
+        return self._repo.get_output_port_ids_for_products(db, product_ids=product_ids)
+
+    def list_linked_asset_ids_for_products(
+        self,
+        db: Session,
+        *,
+        product_ids: Iterable[str],
+        port_ids: Optional[Iterable[str]] = None,
+    ) -> Set[UUID]:
+        """Return asset UUIDs linked to the given Data Products / OutputPorts.
+
+        Asset linkage is materialized in ``entity_relationships`` (DataProduct ->
+        asset, OutputPort -> asset). When ``port_ids`` is None, the manager looks
+        them up via the data-products repository so callers can pass just the
+        accessible product set.
+        """
+        pid_list = [str(p) for p in product_ids]
+        if not pid_list and not port_ids:
+            return set()
+        if port_ids is None:
+            port_ids = self._repo.get_output_port_ids_for_products(
+                db, product_ids=pid_list
+            )
+        return entity_relationship_repo.get_asset_ids_linked_to_products(
+            db, product_ids=pid_list, port_ids=port_ids,
+        )
 
     def update_product(
         self,
@@ -376,12 +432,28 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         user_groups: List[str],
         db: Optional[Session] = None,
         background_tasks: Optional[Any] = None,
+        caller_team_ids: Optional[List[str]] = None,
     ) -> Optional[DataProductApi]:
         """
-        Update a data product with project membership authorization check.
+        Update a data product with ownership-scope authorization.
 
-        If the product belongs to a project, verifies that the user is a member
-        of that project before allowing the update.
+        Authorization cascade for non-admin callers (any condition allows):
+          1. Project membership — caller is a member of any team assigned to
+             ``existing_product_db.project_id`` (when set).
+          2. Team ownership — ``existing_product_db.owner_team_id`` is in the
+             caller's ``caller_team_ids``.
+          3. Creator / single-user ownership — ``existing_product_db.draft_owner_id``
+             matches ``user_email``. This serves drafts AND non-drafts: a user
+             who created a product and never assigned it to a team still owns
+             it.
+
+        Admins always pass. If none of the above conditions match, raises
+        ``PermissionError`` with a generic message that does not disclose
+        which check failed.
+
+        Legacy / orphan rows (no project_id, no owner_team_id, no
+        draft_owner_id) fail closed for non-admins. An admin can promote
+        them later by setting an owner.
 
         Args:
             product_id: ID of product to update
@@ -390,12 +462,16 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             user_groups: List of groups the user belongs to
             db: Optional database session. If not provided, uses self._db
             background_tasks: Optional FastAPI BackgroundTasks for async delivery
+            caller_team_ids: Caller's team memberships (UUIDs from teams_manager).
+                Optional — back-compat call sites that don't pass it lose the
+                team-ownership branch but keep project-membership and
+                draft-owner branches.
 
         Returns:
             Updated product if successful, None if not found
 
         Raises:
-            PermissionError: If user is not a project member (when product has project_id)
+            PermissionError: If caller has no ownership claim on the product
             ValueError: If validation fails
             SQLAlchemyError: If database operation fails
         """
@@ -403,34 +479,64 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         db_session = db if db is not None else self._db
 
         try:
-            # Get existing product to check project membership
             existing_product_db = self._repo.get(db=db_session, id=product_id)
             if not existing_product_db:
                 logger.warning(f"Product not found for update: {product_id}")
                 return None
 
-            # Check project membership if product belongs to a project
-            if existing_product_db.project_id:
-                from src.controller.projects_manager import projects_manager
-                from src.common.config import get_settings
+            from src.controller.projects_manager import projects_manager
+            from src.common.authorization import is_user_admin
+            from src.common.config import get_settings
 
-                settings = get_settings()
-                is_member = projects_manager.is_user_project_member(
+            settings = get_settings()
+
+            # Admin always allowed (short-circuit, also matches existing
+            # is_user_project_member behavior).
+            if is_user_admin(user_groups, settings):
+                logger.debug(f"User {user_email} is admin — bypassing ownership cascade")
+                return self.update_product(
+                    product_id,
+                    product_data_dict,
+                    db=db_session,
+                    user=user_email,
+                    background_tasks=background_tasks,
+                )
+
+            authorized = False
+
+            # 1. Project membership (preserves prior fast-path semantics)
+            if existing_product_db.project_id:
+                if projects_manager.is_user_project_member(
                     db=db_session,
                     user_identifier=user_email,
                     user_groups=user_groups,
                     project_id=existing_product_db.project_id,
-                    settings=settings
-                )
+                    settings=settings,
+                ):
+                    authorized = True
 
-                if not is_member:
-                    logger.warning(
-                        f"User {user_email} denied update access to product {product_id} "
-                        f"(project: {existing_product_db.project_id}) - not a project member"
-                    )
-                    raise PermissionError(
-                        "You must be a member of the project to edit this data product"
-                    )
+            # 2. Team ownership
+            if not authorized and existing_product_db.owner_team_id and caller_team_ids:
+                if existing_product_db.owner_team_id in caller_team_ids:
+                    authorized = True
+
+            # 3. Creator / single-user ownership (drafts AND non-drafts).
+            #    Case-insensitive email match — emails are not case-sensitive.
+            if not authorized and existing_product_db.draft_owner_id and user_email:
+                if existing_product_db.draft_owner_id.lower() == user_email.lower():
+                    authorized = True
+
+            if not authorized:
+                logger.warning(
+                    f"User {user_email} denied update on product {product_id} "
+                    f"(project_id={existing_product_db.project_id}, "
+                    f"owner_team_id={existing_product_db.owner_team_id}, "
+                    f"draft_owner_id={existing_product_db.draft_owner_id})"
+                )
+                # Generic message — do not leak which sub-check failed.
+                raise PermissionError(
+                    "Insufficient permissions to edit this data product"
+                )
 
             # Perform update (validation happens inside update_product)
             return self.update_product(
@@ -514,18 +620,9 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             ValueError: If transition is invalid or product not found
             SQLAlchemyError: If database operation fails
         """
-        # Define valid status transitions (ODPS lifecycle aligned with ODCS)
-        valid_transitions = {
-            'draft': ['sandbox', 'proposed', 'deprecated'],
-            'sandbox': ['draft', 'proposed', 'deprecated'],
-            'proposed': ['draft', 'under_review', 'deprecated'],
-            'under_review': ['draft', 'approved', 'deprecated'],
-            'approved': ['active', 'draft', 'deprecated'],
-            'active': ['certified', 'deprecated'],
-            'certified': ['deprecated', 'active'],
-            'deprecated': ['retired', 'active'],
-            'retired': []  # Terminal state
-        }
+        # Certification is now a separate dimension — removed from status transitions
+        from src.models.lifecycle import DATA_PRODUCT_TRANSITIONS
+        valid_transitions = DATA_PRODUCT_TRANSITIONS
         
         try:
             product_db = self._repo.get(db=self._db, id=product_id)
@@ -578,7 +675,7 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             old_status = product_db.status
             product_db.status = new_status_lower
             self._db.add(product_db)
-            self._db.flush()
+            self._db.commit()
             
             logger.info(
                 f"Product {product_id} status transitioned: {old_status} → {new_status_lower}"
@@ -612,10 +709,24 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 new_status=new_status_lower
             )
             
+            # Fire on_status_change workflow trigger
+            from src.common.workflow_triggers import fire_trigger_safe
+            from src.models.process_workflows import EntityType
+            fire_trigger_safe(
+                self._db, "on_status_change",
+                entity_type=EntityType.DATA_PRODUCT,
+                entity_id=product_id,
+                from_status=current_status,
+                to_status=new_status_lower,
+                entity_name=product_db.name,
+                entity_data={"name": product_db.name, "status": new_status_lower},
+                user_email=current_user,
+            )
+
             result = self._load_product_with_tags(product_db)
             self._update_search_index(result)
             return result
-            
+
         except SQLAlchemyError as e:
             logger.error(f"Database error transitioning product {product_id} status: {e}")
             raise
@@ -640,25 +751,12 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         """
         return self.transition_status(product_id, 'sandbox', current_user)
 
-    def submit_for_certification(self, product_id: str, current_user: Optional[str] = None) -> DataProductApi:
-        """
-        Submit a draft/sandbox product for review (draft/sandbox → proposed).
-
-        ODPS lifecycle: This moves a product from 'draft' or 'sandbox' to 'proposed' status,
-        indicating it's ready for governance review/approval.
-
-        Args:
-            product_id: ID of the product to submit
-            current_user: Username for audit trail
-
-        Returns:
-            Updated product with 'proposed' status
-
-        Raises:
-            ValueError: If product not found or invalid status transition
-            SQLAlchemyError: If database operation fails
-        """
+    def submit_for_review(self, product_id: str, current_user: Optional[str] = None) -> DataProductApi:
+        """Submit a draft/sandbox product for review (draft/sandbox → proposed)."""
         return self.transition_status(product_id, 'proposed', current_user)
+
+    # Backward-compatible alias
+    submit_for_certification = submit_for_review
 
     def approve_product(self, product_id: str, current_user: Optional[str] = None) -> DataProductApi:
         """
@@ -732,7 +830,7 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 # Validate that all linked contracts are in an approved status
                 from src.repositories.data_contracts_repository import data_contract_repo
                 
-                valid_contract_statuses = ['approved', 'active', 'certified']
+                valid_contract_statuses = ['approved', 'active']
                 contracts_not_approved = []
                 
                 for port in product_db.output_ports:
@@ -753,6 +851,14 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
 
             # Use transition_status for validation and update
             result = self.transition_status(product_id, 'active', current_user)
+
+            # Set publication scope
+            from datetime import datetime, timezone
+            product_db.publication_scope = "organization"
+            product_db.published_at = datetime.now(timezone.utc)
+            product_db.published_by = current_user
+            self._db.add(product_db)
+            self._db.commit()
 
             # Fire on_publish trigger
             try:
@@ -776,28 +882,18 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             raise
 
     def certify_product(self, product_id: str, current_user: Optional[str] = None) -> DataProductApi:
+        """DEPRECATED: certification is now a separate dimension. Use the certify endpoint instead.
+        
+        Kept for backward compatibility — raises informative error.
         """
-        Certify an active product (active → certified).
-
-        ODPS lifecycle (aligned with ODCS): Marks an active product as certified, indicating
-        it meets elevated standards for high-value or regulated use cases.
-
-        Args:
-            product_id: ID of the product to certify
-            current_user: Username for audit trail
-
-        Returns:
-            Updated product with 'certified' status
-
-        Raises:
-            ValueError: If product not found or invalid status transition
-            SQLAlchemyError: If database operation fails
-        """
-        return self.transition_status(product_id, 'certified', current_user)
+        raise ValueError(
+            "Status-based certification is removed. "
+            "Use POST /api/data-products/{id}/certify with a certification_level instead."
+        )
 
     def deprecate_product(self, product_id: str, current_user: Optional[str] = None) -> DataProductApi:
         """
-        Deprecate an active or certified product (active/certified → deprecated).
+        Deprecate an active product (active → deprecated).
 
         ODPS lifecycle: Marks a product as deprecated, signaling
         it will be retired soon and consumers should migrate.
@@ -1185,30 +1281,43 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         
         return result
 
-    def get_published_products(self, skip: int = 0, limit: int = 100) -> List[DataProductApi]:
+    def get_published_products(
+        self, skip: int = 0, limit: int = 100, scope: Optional[str] = None
+    ) -> List[DataProductApi]:
         """
-        Get all published (active status) data products for marketplace/discovery.
+        Get data products published to the marketplace (by publication scope).
 
-        Returns only products that are in 'active' status, meaning they have been
-        certified, published, and are available for consumption.
+        Returns products with a non-none publication_scope. Optionally filter to one scope.
 
         Args:
             skip: Number of products to skip (for pagination)
             limit: Maximum number of products to return
+            scope: If set, only products whose publication_scope matches (case-insensitive)
 
         Returns:
-            List of active data products
+            List of marketplace-visible data products
 
         Raises:
             SQLAlchemyError: If database operation fails
         """
         try:
-            all_products = self.list_products(skip=skip, limit=limit)
+            # Marketplace-visibility helper: ``publication_scope`` is the
+            # authoritative permission for these products, NOT the
+            # per-user ownership cascade. Bypass the cascade so published
+            # products surface regardless of who's asking.
+            all_products = self.list_products(skip=skip, limit=limit, is_admin=True)
             published_products = [
                 product for product in all_products
-                if product.status and product.status.lower() == 'active'
+                if product.publication_scope and product.publication_scope.lower() != 'none'
             ]
-            logger.info(f"Retrieved {len(published_products)} published products (active status)")
+            if scope:
+                published_products = [
+                    p for p in published_products
+                    if p.publication_scope and p.publication_scope.lower() == scope.lower()
+                ]
+            logger.info(
+                f"Retrieved {len(published_products)} published products (scope={scope or 'all'})"
+            )
             return published_products
         except SQLAlchemyError as e:
             logger.error(f"Database error retrieving published products: {e}")
@@ -1283,9 +1392,9 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 continue
 
             try:
-                # create_product() always generates a UUID and preserves
-                # any non-UUID original id as a sourceId custom property
-                created_product = self.create_product(product_data)
+                # create_product() always generates a UUID; preserve_source_id=True
+                # stores any non-UUID original id as a sourceId custom property
+                created_product = self.create_product(product_data, preserve_source_id=True)
                 created_products.append(created_product)
                 logger.info(f"Successfully created product {created_product.id} from batch upload")
 
@@ -1320,6 +1429,9 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         # Generate new ID and set new version
         new_product_data['id'] = str(uuid.uuid4())
         new_product_data['version'] = request.new_version
+
+        # Link new version back to the original product
+        new_product_data['parent_product_id'] = original_product_id
 
         # Reset status to DRAFT
         new_product_data['status'] = DataProductStatus.DRAFT.value
@@ -1420,7 +1532,6 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 parent_product_id=product_id,
                 base_name=base_name,
                 change_summary=change_summary,
-                published=False  # New versions are never published initially
             )
             db.add(new_product)
             db.flush()
@@ -1491,55 +1602,103 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                             db.add(new_ic)
             
             # Clone Output Ports
+            #
+            # Earlier versions of this block referenced ``port.expectation``
+            # and ``port.dataset_name`` — neither of which exist on
+            # ``OutputPortDb`` (the columns were dropped before delivery_method
+            # landed). Cloning any product with output ports therefore raised
+            # AttributeError. Fix: replicate only the columns currently on the
+            # model (see db_models/data_products.py:193). Includes the
+            # Databricks extensions (asset_type, asset_identifier, server,
+            # contains_pii, auto_approve) so clones stay faithful to source.
             if source_product.output_ports:
                 for port in source_product.output_ports:
                     new_port = OutputPortDb(
                         product_id=new_id,
                         name=port.name,
                         version=port.version,
+                        description=port.description,
+                        port_type=port.port_type,
                         contract_id=port.contract_id,
-                        expectation=port.expectation,
-                        dataset_name=port.dataset_name
+                        delivery_method_id=port.delivery_method_id,
+                        asset_type=port.asset_type,
+                        asset_identifier=port.asset_identifier,
+                        status=port.status,
+                        server=port.server,
+                        contains_pii=port.contains_pii,
+                        auto_approve=port.auto_approve,
                     )
                     db.add(new_port)
                     db.flush()
-                    
-                    # Clone SBOMs
-                    if hasattr(port, 'sboms') and port.sboms:
-                        for sbom in port.sboms:
+
+                    # Clone SBOMs. The earlier code asked for ``port.sboms``
+                    # (plural); the actual relationship on ``OutputPortDb`` is
+                    # ``sbom`` (singular, see line 222 of db_models). Because
+                    # ``hasattr`` returned False, the block silently no-op'd
+                    # and SBOMs were never carried over. The earlier code also
+                    # referenced four nonexistent SBOMDb columns
+                    # (``spdx_version``, ``spdx_id``, ``name``,
+                    # ``creation_info_created``); ``SBOMDb`` only has ``type``
+                    # and ``url`` today.
+                    if port.sbom:
+                        for sbom in port.sbom:
                             new_sbom = SBOMDb(
                                 output_port_id=new_port.id,
-                                spdx_version=sbom.spdx_version,
-                                spdx_id=sbom.spdx_id,
-                                name=sbom.name,
-                                creation_info_created=sbom.creation_info_created
+                                type=sbom.type,
+                                url=sbom.url,
                             )
                             db.add(new_sbom)
-            
+
+                    # Clone input contracts on output ports too. The
+                    # relationship is declared on OutputPortDb as
+                    # ``input_contracts`` (line 223 of db_models).
+                    if port.input_contracts:
+                        for ic in port.input_contracts:
+                            new_ic = InputContractDb(
+                                output_port_id=new_port.id,
+                                contract_id=ic.contract_id,
+                                contract_version=ic.contract_version,
+                            )
+                            db.add(new_ic)
+
             # Clone Management Ports
+            #
+            # Earlier code referenced ``port.type`` and ``port.endpoint``;
+            # neither exists on ``ManagementPortDb`` (real fields are
+            # ``port_type`` and ``url``). It also omitted the required
+            # ``content`` column (nullable=False), which would have raised
+            # IntegrityError on commit had the AttributeError not fired first.
             if source_product.management_ports:
                 for port in source_product.management_ports:
                     new_port = ManagementPortDb(
                         product_id=new_id,
                         name=port.name,
-                        type=port.type,
+                        content=port.content,
+                        port_type=port.port_type,
+                        url=port.url,
+                        channel=port.channel,
                         description=port.description,
-                        server=port.server,
-                        endpoint=port.endpoint
                     )
                     db.add(new_port)
-            
+
             # Clone Support Channels
+            #
+            # Earlier code referenced ``channel.type`` (no such column) and
+            # omitted the required ``channel`` column itself (nullable=False).
+            # IntegrityError on any product with support channels.
             if source_product.support_channels:
-                for channel in source_product.support_channels:
+                for support in source_product.support_channels:
                     new_channel = SupportDb(
                         product_id=new_id,
-                        type=channel.type,
-                        url=channel.url,
-                        description=channel.description
+                        channel=support.channel,
+                        url=support.url,
+                        description=support.description,
+                        tool=support.tool,
+                        scope=support.scope,
+                        invitation_url=support.invitation_url,
                     )
                     db.add(new_channel)
-            
+
             # Clone Team
             if source_product.team:
                 src_team = source_product.team
@@ -1550,15 +1709,22 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 )
                 db.add(new_team)
                 db.flush()
-                
-                # Clone team members
-                if hasattr(src_team, 'members') and src_team.members:
+
+                # Clone team members. Earlier code referenced ``member.email``
+                # and omitted the required ``username`` column; ``email`` is
+                # not a column on ``DataProductTeamMemberDb`` — the required
+                # identity field is ``username`` (line 356 of db_models).
+                if src_team.members:
                     for member in src_team.members:
                         new_member = DataProductTeamMemberDb(
                             team_id=new_team.id,
+                            username=member.username,
                             name=member.name,
-                            email=member.email,
-                            role=member.role
+                            description=member.description,
+                            role=member.role,
+                            date_in=member.date_in,
+                            date_out=member.date_out,
+                            replaced_by_username=member.replaced_by_username,
                         )
                         db.add(new_member)
             
@@ -1677,8 +1843,8 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             draft.version = new_version
             draft.change_summary = change_summary
             draft.draft_owner_id = None  # Remove personal draft ownership
-            # published remains False - marketplace publish is separate action
-            
+            # publication_scope stays none until an explicit marketplace publish
+
             db.commit()
             db.refresh(draft)
             
@@ -1938,9 +2104,12 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                 logger.error(f"Failed to persist error: {persist_error}")
 
     def save_to_yaml(self, yaml_path: str) -> bool:
-        """Save current ODPS v1.0.0 data products to a YAML file."""
+        """Save current ODPS v1.0.0 data products to a YAML file.
+
+        System-level export — bypasses per-user ownership scope.
+        """
         try:
-            all_products_api = self.list_products(limit=10000)
+            all_products_api = self.list_products(limit=10000, is_admin=True)
             products_list = [p.model_dump(by_alias=True) for p in all_products_api]
 
             with open(yaml_path, 'w') as file:
@@ -2074,11 +2243,16 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             self._notify_index_upsert(item)
 
     def get_search_index_items(self) -> List[SearchIndexItem]:
-        """Fetches ODPS v1.0.0 data products and maps them to SearchIndexItem format."""
+        """Fetches ODPS v1.0.0 data products and maps them to SearchIndexItem format.
+
+        System-level caller (search indexer) — uses ``is_admin=True`` to bypass
+        the per-user ownership scope. Per-user filtering happens at query time
+        in the search route, not at index-build time.
+        """
         logger.info("Fetching ODPS products for search indexing...")
         items = []
         try:
-            products_api = self.list_products(limit=10000)
+            products_api = self.list_products(limit=10000, is_admin=True)
             for product in products_api:
                 item = self._build_search_index_item(product)
                 if item:
@@ -2367,15 +2541,25 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         logger.debug(f"Fetching ODPS products linked to contract {contract_id}")
 
         try:
-            all_products = self.list_products(limit=10000)
-            linked_products = []
+            from src.db_models.data_products import OutputPortDb
 
-            for product in all_products:
-                if product.outputPorts:
-                    for port in product.outputPorts:
-                        if port.contractId == contract_id:
-                            linked_products.append(product)
-                            break
+            # Query output_ports directly to find all product_ids referencing this contract.
+            # This avoids loading all products and is immune to session identity-map staleness.
+            self._db.expire_all()
+            port_rows = (
+                self._db.query(OutputPortDb.product_id)
+                .filter(OutputPortDb.contract_id == contract_id)
+                .distinct()
+                .all()
+            )
+            product_ids = [row[0] for row in port_rows]
+            logger.debug(f"Found {len(product_ids)} product IDs with output ports linked to contract {contract_id}")
+
+            linked_products = []
+            for pid in product_ids:
+                product_db = self._repo.get(db=self._db, id=pid)
+                if product_db:
+                    linked_products.append(self._load_product_with_tags(product_db))
 
             logger.info(f"Found {len(linked_products)} ODPS products linked to contract {contract_id}")
             return linked_products
@@ -2784,7 +2968,7 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             raise ValueError(f"Product {product_id} not found")
         
         # Fetch team with members
-        team = team_repo.get_with_members(self.db, id=team_id)
+        team = team_repo.get_with_members(self._db, id=team_id)
         if not team:
             raise ValueError(f"Team {team_id} not found")
         
@@ -2934,32 +3118,45 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
         product_id: str,
         subscriber_email: str,
         reason: Optional[str] = None,
+        on_behalf_of: Optional[OnBehalfOf] = None,
         db: Optional[Session] = None
     ) -> SubscriptionResponse:
         """
         Subscribe a user to a data product.
-        
+
         Args:
             product_id: ID of the product to subscribe to
             subscriber_email: Email of the subscriber
             reason: Optional reason for subscribing
+            on_behalf_of: Optional principal that the subscription is for
+                (). When set, ``type`` ∈ {user, group,
+                service_principal} and ``value`` is validated against the
+                workspace SCIM directory for non-user types. ``user`` accepts
+                arbitrary strings to cover new hires not yet indexed.
             db: Optional database session
-            
+
         Returns:
             SubscriptionResponse with subscription details
-            
+
         Raises:
-            ValueError: If product not found or not in subscribable status
+            ValueError: If product not found, not in subscribable status, or
+                ``on_behalf_of`` references an unknown group / SP.
         """
         db_session = db if db is not None else self._db
-        logger.info(f"User {subscriber_email} subscribing to product {product_id}")
-        
+        if on_behalf_of:
+            logger.info(
+                "User %s subscribing to product %s on behalf of %s '%s'",
+                subscriber_email, product_id, on_behalf_of.type, on_behalf_of.value,
+            )
+        else:
+            logger.info(f"User {subscriber_email} subscribing to product {product_id}")
+
         try:
             # Validate product exists and is subscribable
             product = self.get_product(product_id)
             if not product:
                 raise ValueError(f"Product {product_id} not found")
-            
+
             # Check if product is in a subscribable status
             subscribable_statuses = ['active', 'certified']
             if product.status and product.status.lower() not in subscribable_statuses:
@@ -2967,27 +3164,49 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                     f"Cannot subscribe to product in status '{product.status}'. "
                     f"Product must be in one of: {', '.join(subscribable_statuses)}"
                 )
-            
+
+            # Validate on_behalf_of principal exists in workspace SCIM (groups,
+            # service principals). User type is intentionally not validated —
+            # covers new hires not yet indexed (explicit ask).
+            if on_behalf_of and on_behalf_of.type in ('group', 'service_principal'):
+                self._validate_on_behalf_of_principal(on_behalf_of)
+
             # Check if already subscribed
             existing = subscription_repo.get_by_product_and_user(
                 db_session,
                 product_id=product_id,
                 subscriber_email=subscriber_email
             )
-            
+
             if existing:
                 logger.info(f"User {subscriber_email} already subscribed to product {product_id}")
-                return SubscriptionResponse(
+                response = SubscriptionResponse(
                     subscribed=True,
                     subscription=Subscription.model_validate(existing)
                 )
-            
+                # Fire on_subscribe trigger even for the duplicate path so all
+                # subscribe call sites consistently surface the event (matches
+                # the prior route-handler behavior that fired regardless of
+                # new vs. duplicate). See _fire_on_subscribe_trigger.
+                self._fire_on_subscribe_trigger(
+                    db_session=db_session,
+                    product=product,
+                    product_id=product_id,
+                    subscriber_email=subscriber_email,
+                    reason=reason,
+                    on_behalf_of=on_behalf_of,
+                    subscription_id=getattr(existing, 'id', None),
+                )
+                return response
+
             # Create subscription
             subscription_db = subscription_repo.create(
                 db_session,
                 product_id=product_id,
                 subscriber_email=subscriber_email,
-                reason=reason
+                reason=reason,
+                on_behalf_of_type=on_behalf_of.type if on_behalf_of else None,
+                on_behalf_of_value=on_behalf_of.value if on_behalf_of else None,
             )
 
             # Log to change log for audit
@@ -3001,65 +3220,27 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
 
             db_session.commit()
 
-            # Fire the ON_SUBSCRIBE trigger so workflows can react
-            # (e.g. notify the DP owner, post to ITSM, etc.). Mirror
-            # the access-grant enrichment pattern so webhook templates
-            # can use ``${entity.catalogs}`` / ``${entity.output_ports}``
-            # on subscription events too. Failures are isolated — a
-            # trigger error must not roll back the subscription.
-            try:
-                from src.common.workflow_triggers import (
-                    enrich_entity_data_with_data_product,
-                    get_trigger_registry,
-                )
-                from src.db_models.data_products import DataProductDb as _DataProductDb
-                from src.models.process_workflows import EntityType as _WfEntityType
-
-                # Resolve the underlying DP for enrichment. ``product``
-                # above is the API model; we need the DB row for ports.
-                dp_db = db_session.query(_DataProductDb).filter(
-                    _DataProductDb.id == product_id
-                ).first()
-
-                trigger_entity_data: Dict[str, Any] = {
-                    "product_id": product_id,
-                    "subscriber_email": subscriber_email,
-                    "reason": reason,
-                }
-                if dp_db is not None:
-                    enrich_entity_data_with_data_product(
-                        trigger_entity_data, dp_db
-                    )
-                    if (
-                        "data_product_name" not in trigger_entity_data
-                        and dp_db.name
-                    ):
-                        trigger_entity_data["data_product_name"] = dp_db.name
-
-                trigger_registry = get_trigger_registry(db_session)
-                trigger_registry.on_subscribe(
-                    entity_type=_WfEntityType.DATA_PRODUCT,
-                    entity_id=product_id,
-                    entity_name=getattr(product, 'name', None) or product_id,
-                    entity_data=trigger_entity_data,
-                    user_email=subscriber_email,
-                    blocking=False,
-                )
-            except Exception as workflow_err:
-                logger.error(
-                    "Failed to fire on_subscribe trigger for product "
-                    "%s: %s",
-                    product_id,
-                    workflow_err,
-                    exc_info=True,
-                )
-
             logger.info(f"User {subscriber_email} subscribed to product {product_id}")
-            return SubscriptionResponse(
+            response = SubscriptionResponse(
                 subscribed=True,
                 subscription=Subscription.model_validate(subscription_db)
             )
-            
+            # Fire on_subscribe trigger after successful persistence (Option A:
+            # moved from the route handler so the wizard auto-subscribe path
+            # — agreement_wizard_manager._complete_session → dp_manager.subscribe
+            # — also fires it. Wrapped in try/except inside the helper so a
+            # transient trigger error does not break the subscribe response.
+            self._fire_on_subscribe_trigger(
+                db_session=db_session,
+                product=product,
+                product_id=product_id,
+                subscriber_email=subscriber_email,
+                reason=reason,
+                on_behalf_of=on_behalf_of,
+                subscription_id=getattr(subscription_db, 'id', None),
+            )
+            return response
+
         except ValueError as e:
             logger.error(f"Validation error subscribing to product {product_id}: {e}")
             raise
@@ -3067,6 +3248,158 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             logger.error(f"Database error subscribing to product {product_id}: {e}")
             db_session.rollback()
             raise
+
+    # ------------------------------------------------------------------
+    # on_subscribe trigger firing (Option A — moved from route handler)
+    # ------------------------------------------------------------------
+    def _fire_on_subscribe_trigger(
+        self,
+        *,
+        db_session: Session,
+        product: Any,
+        product_id: str,
+        subscriber_email: str,
+        reason: Optional[str],
+        on_behalf_of: Optional[OnBehalfOf],
+        subscription_id: Optional[Any],
+    ) -> None:
+        """Fire the on_subscribe workflow trigger.
+
+        Centralized here so every subscribe call site (route handler + wizard
+        auto-subscribe via agreement_wizard_manager._complete_session +
+        any future caller) consistently fires the trigger. Previously this
+        lived in data_product_routes.subscribe_to_product, which meant the
+        wizard path silently bypassed the trigger.
+
+        Builds the entity_data payload that the executor flattens into
+        StepContext (.on_behalf_of for ${context.on_behalf_of.value} in
+        webhook bodies / grant_permissions principals; .consumer_principals
+        for ${entity.consumer_principals}).
+
+        Wrapped in try/except — a trigger fire failure must not break the
+        subscribe response.
+        """
+        try:
+            from src.common.workflow_triggers import (
+                enrich_entity_data_with_data_product,
+                fire_trigger_safe,
+            )
+            from src.db_models.data_products import DataProductDb as _DataProductDb
+            from src.models.process_workflows import EntityType
+
+            entity_data: Dict[str, Any] = {
+                "product_id": product_id,
+                "subscriber_email": subscriber_email,
+                "reason": reason,
+            }
+            if on_behalf_of:
+                obo_dict: Dict[str, Any] = {
+                    "type": on_behalf_of.type,
+                    "value": on_behalf_of.value,
+                }
+                # Resolved display string for human-friendly templates
+                if on_behalf_of.type == 'user':
+                    obo_dict["display"] = on_behalf_of.value
+                elif on_behalf_of.type == 'group':
+                    obo_dict["display"] = f"Group: {on_behalf_of.value}"
+                else:  # service_principal
+                    obo_dict["display"] = f"SP: {on_behalf_of.value}"
+                entity_data["on_behalf_of"] = obo_dict
+
+            # Surface consumer_principals so workflow webhook bodies can pipe
+            # them via ${entity.consumer_principals}. Each principal is dumped
+            # to a plain {type, value} dict so _render_template_value's JSON
+            # serializer produces a clean array of objects in the rendered
+            # webhook body.
+            principals = getattr(product, 'consumer_principals', None) if product is not None else None
+            if principals:
+                entity_data["consumer_principals"] = [
+                    p.model_dump() if hasattr(p, 'model_dump') else p
+                    for p in principals
+                ]
+
+            # Catalog + output_ports enrichment for ${entity.catalogs} /
+            # ${entity.output_ports}. Requires the DB model (has the
+            # output_ports relationship); ``product`` here is the API model.
+            dp_db = db_session.query(_DataProductDb).filter(
+                _DataProductDb.id == product_id
+            ).first()
+            if dp_db is not None:
+                enrich_entity_data_with_data_product(entity_data, dp_db)
+                if "data_product_name" not in entity_data and dp_db.name:
+                    entity_data["data_product_name"] = dp_db.name
+
+            # Fire with entity_type=DATA_PRODUCT (NOT SUBSCRIPTION). Process
+            # workflows register with entity_types=["data_product"] because
+            # the docstring on TriggerRegistry.on_subscribe explicitly states
+            # the type is "(dataset, data_product)" — i.e. the entity the
+            # user is subscribing TO. The prior route-handler code used
+            # EntityType.SUBSCRIPTION, which is why the cross-workflow E2E
+            # never matched any workflow even on the route path. Using
+            # DATA_PRODUCT makes the on_subscribe trigger actually wire up
+            # to the registered workflows. The entity_id is the product id
+            # so workflows can resolve ${entity.product_id} consistently.
+            fire_trigger_safe(
+                db_session, "on_subscribe",
+                entity_type=EntityType.DATA_PRODUCT,
+                entity_id=product_id,
+                entity_name=product_id,
+                entity_data=entity_data,
+                user_email=subscriber_email,
+            )
+        except Exception as e:
+            # Non-fatal — never break the subscribe response on trigger errors.
+            logger.warning("on_subscribe trigger fire failed (non-fatal): %s", e)
+
+    # ------------------------------------------------------------------
+    # on_behalf_of validation
+    # ------------------------------------------------------------------
+    def _validate_on_behalf_of_principal(self, on_behalf_of: OnBehalfOf) -> None:
+        """Look up the principal in the workspace SCIM directory.
+
+        Raises ValueError (caller maps to HTTP 400) if not found. Underlying
+        SDK calls go through ``CachingWorkspaceClient`` which already caches
+        SCIM responses — no manager-side cache needed (per PR #315 review).
+        """
+        try:
+            # Late import: workspace_client is heavyweight and may be mocked
+            # in unit tests via dependency override.
+            from src.common.workspace_client import get_workspace_client
+            ws = get_workspace_client()
+        except Exception as e:
+            # Workspace client not available in dev / tests — skip validation
+            # rather than reject. This mirrors how grant_permissions handles
+            # missing SP credentials (see GrantPermissionsStepHandler).
+            logger.warning(
+                "on_behalf_of validation skipped (workspace client unavailable): %s", e,
+            )
+            return
+
+        try:
+            if on_behalf_of.type == 'group':
+                # SCIM filter — exact displayName match
+                results = list(ws.groups.list(filter=f'displayName eq "{on_behalf_of.value}"'))
+            else:  # service_principal
+                # Allow either applicationId or displayName
+                results = list(ws.service_principals.list(
+                    filter=f'displayName eq "{on_behalf_of.value}"'
+                ))
+                if not results:
+                    results = list(ws.service_principals.list(
+                        filter=f'applicationId eq "{on_behalf_of.value}"'
+                    ))
+            exists = bool(results)
+        except Exception as e:
+            logger.warning(
+                "on_behalf_of SCIM lookup failed for %s '%s': %s — treating as not found",
+                on_behalf_of.type, on_behalf_of.value, e,
+            )
+            exists = False
+
+        if not exists:
+            raise ValueError(
+                f"{on_behalf_of.type} '{on_behalf_of.value}' not found in workspace directory"
+            )
 
     def unsubscribe(
         self,

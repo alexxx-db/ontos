@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, Boolean, TIMESTAMP, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Text, Boolean, Integer, TIMESTAMP, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,7 +46,15 @@ class AssetDb(Base):
     domain_id = Column(String, nullable=True, index=True)  # FK to data_domains (string ID)
     properties = Column(JSON, nullable=True)  # Type-specific metadata following type's schema
     tags = Column(JSON, nullable=True)  # Quick tags/classifications
-    status = Column(String, nullable=False, default="active", index=True)  # active, deprecated, archived
+    status = Column(String, nullable=False, default="active", index=True)
+
+    # Certification
+    certification_level = Column(Integer, nullable=True, index=True)
+    inherited_certification_level = Column(Integer, nullable=True)
+    certified_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    certified_by = Column(String, nullable=True)
+    certification_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    certification_notes = Column(Text, nullable=True)
 
     created_by = Column(String, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

@@ -16,6 +16,11 @@ export interface Notification {
   recipient_role_id?: string | null;  // Role UUID for role-based recipients
   recipient_role_name?: string | null;  // Resolved role name for display
   target_roles?: string[] | null;  // For role-based notifications (legacy)
+  /**
+   * Backend-driven handler key for in-app actions. Examples: `workflow_approval`,
+   * `handle_publish_request`, `certification_requested`, `publication_requested`,
+   * and informational markers such as `entity_certified`, `entity_published`.
+   */
   action_type?: string | null;
   action_payload?: Record<string, any> | null;
   data?: Record<string, any> | null;  // Additional data for job progress etc.

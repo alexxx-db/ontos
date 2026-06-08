@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { useNotificationsStore } from '@/stores/notifications-store';
-import { Loader2, AlertCircle, FileText, Eye, Database, ShieldCheck, Info, RefreshCw } from 'lucide-react';
+import { Loader2, AlertCircle, FileText, Eye, Database, ShieldCheck, Info, RefreshCw, Rocket } from 'lucide-react';
 import type { DeploymentPolicy } from '@/types/deployment-policy';
 import AccessRequestFields from '@/components/access/access-request-fields';
 import {
@@ -18,7 +18,14 @@ import {
   getRecommendedAction,
 } from '@/lib/odcs-lifecycle';
 
-type RequestType = 'access' | 'review' | 'deploy' | 'status_change';
+type RequestType = 'access' | 'review' | 'deploy' | 'publish' | 'certify' | 'status_change';
+
+interface CertificationLevelOption {
+  id: string;
+  level_order: number;
+  name: string;
+  color: string | null;
+}
 
 interface RequestContractActionDialogProps {
   isOpen: boolean;
@@ -58,6 +65,22 @@ export default function RequestContractActionDialog({
   const [deploymentPolicy, setDeploymentPolicy] = useState<DeploymentPolicy | null>(null);
   const [loadingPolicy, setLoadingPolicy] = useState(false);
   const [policyError, setPolicyError] = useState<string | null>(null);
+  const [certificationLevel, setCertificationLevel] = useState<number | null>(null);
+  const [certificationLevels, setCertificationLevels] = useState<CertificationLevelOption[]>([]);
+  const [publicationScope, setPublicationScope] = useState('organization');
+
+  useEffect(() => {
+    get<CertificationLevelOption[]>('/api/certification-levels').then(({ data }) => {
+      if (Array.isArray(data)) setCertificationLevels(data);
+    });
+  }, [get]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setCertificationLevel(null);
+      setPublicationScope('organization');
+    }
+  }, [isOpen]);
 
   const getRequestTypeConfig = (type: RequestType) => {
     switch (type) {
@@ -84,6 +107,24 @@ export default function RequestContractActionDialog({
           description: 'Request approval to deploy this contract to Unity Catalog.',
           enabled: true,
           endpoint: `/api/data-contracts/${contractId}/request-deploy`,
+        };
+      case 'publish':
+        return {
+          icon: <Rocket className="h-5 w-5" />,
+          title: 'Request Publish',
+          description: 'Request to publish this contract with a defined visibility scope.',
+          enabled:
+            contractStatus?.toLowerCase() === 'approved' ||
+            contractStatus?.toLowerCase() === 'active',
+          endpoint: `/api/data-contracts/${contractId}/request-publish`,
+        };
+      case 'certify':
+        return {
+          icon: <ShieldCheck className="h-5 w-5" />,
+          title: 'Request Certification',
+          description: 'Request that this contract be certified at a specific level.',
+          enabled: true,
+          endpoint: `/api/data-contracts/${contractId}/request-certify`,
         };
       case 'status_change':
         const allowedTransitions = contractStatus ? getAllowedTransitions(contractStatus) : [];
@@ -140,6 +181,13 @@ export default function RequestContractActionDialog({
         }
       }
     }
+
+    if (requestType === 'certify') {
+      if (!certificationLevel) {
+        setError('Please select a certification level');
+        return false;
+      }
+    }
     
     return true;
   };
@@ -178,6 +226,21 @@ export default function RequestContractActionDialog({
         payload = {
           catalog: catalog.trim() || undefined,
           schema: schema.trim() || undefined,
+          message: message.trim() || undefined,
+        };
+      } else if (requestType === 'publish') {
+        payload = {
+          scope: publicationScope,
+          justification: justification.trim() || undefined,
+        };
+      } else if (requestType === 'certify') {
+        if (!certificationLevel) {
+          setError('Please select a certification level');
+          setSubmitting(false);
+          return;
+        }
+        payload = {
+          certification_level: certificationLevel,
           message: message.trim() || undefined,
         };
       } else if (requestType === 'status_change') {
@@ -229,6 +292,8 @@ export default function RequestContractActionDialog({
       setCatalog('');
       setSchema('');
       setTargetStatus('');
+      setCertificationLevel(null);
+      setPublicationScope('organization');
       onOpenChange(false);
 
     } catch (e: any) {
@@ -333,7 +398,16 @@ export default function RequestContractActionDialog({
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {(['status_change', 'deploy', 'review', 'access'] as RequestType[]).map((type) => {
+                {(
+                  [
+                    'status_change',
+                    'deploy',
+                    'review',
+                    'publish',
+                    'certify',
+                    'access',
+                  ] as RequestType[]
+                ).map((type) => {
                   const config = getRequestTypeConfig(type);
                   return (
                     <SelectItem key={type} value={type} disabled={!config.enabled}>
@@ -381,6 +455,80 @@ export default function RequestContractActionDialog({
                 className="min-h-[80px] resize-none"
                 disabled={submitting}
               />
+            </div>
+          )}
+
+          {requestType === 'publish' && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="contract-pub-scope" className="text-sm font-medium">
+                  Publication Scope *
+                </Label>
+                <Select value={publicationScope} onValueChange={setPublicationScope} disabled={submitting}>
+                  <SelectTrigger id="contract-pub-scope">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="domain">Domain</SelectItem>
+                    <SelectItem value="organization">Organization</SelectItem>
+                    <SelectItem value="external">External</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contract-publish-justification" className="text-sm font-medium">
+                  Justification (optional)
+                </Label>
+                <Textarea
+                  id="contract-publish-justification"
+                  value={justification}
+                  onChange={(e) => setJustification(e.target.value)}
+                  placeholder="Why should this contract be published?"
+                  className="min-h-[80px] resize-none"
+                  rows={3}
+                  disabled={submitting}
+                />
+              </div>
+            </div>
+          )}
+
+          {requestType === 'certify' && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="contract-cert-level" className="text-sm font-medium">
+                  Certification Level *
+                </Label>
+                <Select
+                  value={certificationLevel !== null ? certificationLevel.toString() : ''}
+                  onValueChange={(v) => setCertificationLevel(parseInt(v, 10))}
+                  disabled={submitting}
+                >
+                  <SelectTrigger id="contract-cert-level">
+                    <SelectValue placeholder="Select certification level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {certificationLevels.map((l) => (
+                      <SelectItem key={l.id} value={l.level_order.toString()}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contract-cert-message" className="text-sm font-medium">
+                  Message (optional)
+                </Label>
+                <Textarea
+                  id="contract-cert-message"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Why should this contract be certified?"
+                  className="min-h-[80px] resize-none"
+                  rows={3}
+                  disabled={submitting}
+                />
+              </div>
             </div>
           )}
 

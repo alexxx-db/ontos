@@ -333,8 +333,8 @@ class WorkflowsManager:
         
         matching = []
         for wf in db_workflows:
-            # Additional status filtering for on_status_change
-            if trigger_type == TriggerType.ON_STATUS_CHANGE:
+            # Additional status filtering for on_status_change and before_status_change
+            if trigger_type in (TriggerType.ON_STATUS_CHANGE, TriggerType.BEFORE_STATUS_CHANGE):
                 trigger_config = json.loads(wf.trigger_config) if wf.trigger_config else {}
                 wf_from = trigger_config.get('from_status')
                 wf_to = trigger_config.get('to_status')
@@ -442,6 +442,10 @@ class WorkflowsManager:
         elif step.step_type == StepType.SCRIPT:
             if not config.get('code'):
                 errors.append(f"Step '{step.step_id}': Script step requires 'code' in config")
+        
+        elif step.step_type == StepType.ENTITY_ACTION:
+            if not config.get('action'):
+                errors.append(f"Step '{step.step_id}': Entity action step requires 'action' in config")
         
         return errors
 
@@ -585,6 +589,243 @@ class WorkflowsManager:
                                     "required": {"type": "boolean"},
                                 },
                             },
+                        },
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=True,
+            ),
+            StepTypeSchema(
+                type=StepType.ENTITY_ACTION,
+                name="Entity Action",
+                description="Performs a lifecycle action on the trigger entity (certify, publish, etc.)",
+                icon="zap",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["certify", "decertify", "publish", "unpublish"],
+                            "description": "The action to perform on the entity",
+                        },
+                        "level_source": {
+                            "type": "string",
+                            "enum": ["from_request", "fixed", "from_approval"],
+                            "default": "from_request",
+                            "description": "Source for certification level (certify action only)",
+                        },
+                        "fixed_level": {
+                            "type": "integer",
+                            "description": "Fixed certification level (when level_source is 'fixed')",
+                        },
+                        "scope_source": {
+                            "type": "string",
+                            "enum": ["from_request", "fixed", "from_approval"],
+                            "default": "from_request",
+                            "description": "Source for publication scope (publish action only)",
+                        },
+                        "fixed_scope": {
+                            "type": "string",
+                            "enum": ["domain", "organization", "external"],
+                            "description": "Fixed publication scope (when scope_source is 'fixed')",
+                        },
+                    },
+                    "required": ["action"],
+                },
+                has_pass_branch=True,
+                has_fail_branch=True,
+            ),
+            StepTypeSchema(
+                type=StepType.GENERATE_PDF,
+                name="Generate PDF",
+                description="Generate a PDF rendition of the agreement (non-visual, auto-advances).",
+                icon="file-text",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "storage": {
+                            "type": "string",
+                            "title": "Storage Destination",
+                            "description": "Where to store the generated PDF: 'volume' saves to a Databricks Volume for permanent archival, 'none' generates on-demand at download time only.",
+                            "enum": ["volume", "none"],
+                            "default": "none",
+                        },
+                        "volume_path": {
+                            "type": "string",
+                            "title": "Volume Path",
+                            "description": "Databricks Volume path for storing the PDF (e.g. /Volumes/catalog/schema/volume_name).",
+                            "x-visible-when": {"field": "storage", "value": "volume"},
+                        },
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=True,
+            ),
+            StepTypeSchema(
+                type=StepType.ON_BEHALF_OF,
+                name="On Behalf Of",
+                description="Capture whether the requester is acting for themselves or on behalf of a group/SP. Lands in step_results AND the session row, so the auto-subscribe path picks it up unchanged.",
+                icon="users",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "title": "Step Title", "default": "Who are you requesting access for?"},
+                        "description": {"type": "string", "title": "Step Description"},
+                        "allow_self": {"type": "boolean", "title": "Allow self-requests", "default": True},
+                        "allow_user_groups": {"type": "boolean", "title": "Allow groups the user is in", "default": True},
+                        "allow_free_text": {"type": "boolean", "title": "Allow free-text group/SP entry", "default": True},
+                        "require_justification": {"type": "boolean", "title": "Require justification", "default": False},
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=False,
+            ),
+            StepTypeSchema(
+                type=StepType.LEGAL_DOCUMENT,
+                name="Legal Document",
+                description="Display a legal document for the signer to review and optionally acknowledge.",
+                icon="file-text",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "title": "Step Title"},
+                        "description": {"type": "string", "title": "Step Description"},
+                        "body_markdown": {"type": "string", "title": "Document Body (Markdown)"},
+                        "require_scroll_to_end": {"type": "boolean", "title": "Require Scroll to End", "default": False},
+                        "require_acknowledgement_checkbox": {"type": "boolean", "title": "Require Acknowledgement Checkbox", "default": False},
+                        "acknowledgement_label": {"type": "string", "title": "Acknowledgement Label", "default": "I have read and understood the above"},
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=False,
+            ),
+            StepTypeSchema(
+                type=StepType.ACKNOWLEDGEMENT_CHECKLIST,
+                name="Acknowledgement Checklist",
+                description="Present a list of labeled checkboxes for explicit, itemized consents.",
+                icon="list-checks",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "title": "Step Title"},
+                        "description": {"type": "string", "title": "Step Description"},
+                        "items": {
+                            "type": "array",
+                            "title": "Checklist Items",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "label": {"type": "string"},
+                                    "required": {"type": "boolean", "default": True},
+                                },
+                            },
+                            "maxItems": 10,
+                        },
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=False,
+            ),
+            StepTypeSchema(
+                type=StepType.CO_SIGNERS,
+                name="Co-Signers",
+                description="Collect co-signer names (record-only, no counter-signature flow).",
+                icon="users",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "title": "Step Title"},
+                        "description": {"type": "string", "title": "Step Description"},
+                        "min_count": {"type": "integer", "title": "Minimum Co-Signers", "default": 0},
+                        "max_count": {"type": "integer", "title": "Maximum Co-Signers", "default": 5},
+                        "principal_type": {"type": "string", "title": "Principal Type", "enum": ["user", "group", "either"], "default": "either"},
+                        "label": {"type": "string", "title": "Input Label", "default": "Add co-signer"},
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=False,
+            ),
+            StepTypeSchema(
+                type=StepType.PERSIST_AGREEMENT,
+                name="Persist Agreement",
+                description="Materialize the agreement record (non-visual, auto-advances).",
+                icon="database",
+                config_schema={
+                    "type": "object",
+                    "description": "Saves the agreement record to the database at this point in the flow. Place this before Generate PDF if you want the PDF to include a stored agreement ID, or after if you want to verify PDF generation succeeded first. When omitted from a workflow, the agreement is saved automatically at the end.",
+                    "properties": {},
+                },
+                has_pass_branch=True,
+                has_fail_branch=True,
+            ),
+            StepTypeSchema(
+                type=StepType.DELIVER,
+                name="Deliver",
+                description="Send the signed agreement through notification channels (non-visual, auto-advances).",
+                icon="send",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "channels": {
+                            "type": "array",
+                            "title": "Delivery Channels",
+                            "items": {"type": "string", "enum": ["in_app", "email", "webhook"]},
+                            "default": ["in_app"],
+                        },
+                        "recipients": {
+                            "type": "array",
+                            "title": "Recipients",
+                            "items": {"type": "string"},
+                            "default": ["signer"],
+                        },
+                        "subject_template": {"type": "string", "title": "Subject Template"},
+                        "body_template": {"type": "string", "title": "Body Template"},
+                    },
+                },
+                has_pass_branch=True,
+                has_fail_branch=True,
+            ),
+            StepTypeSchema(
+                type=StepType.GRANT_PERMISSIONS,
+                name="Grant Permissions",
+                description="Grant UC permissions via the SP workspace client (e.g. SELECT on a table after approval).",
+                icon="key",
+                config_schema={
+                    "type": "object",
+                    "properties": {
+                        "permission_type": {
+                            "type": "string",
+                            "title": "Permission to Grant",
+                            "description": "Which Unity Catalog privilege to grant on the target object (e.g. SELECT lets the user read data from a table).",
+                            "enum": ["SELECT", "USE_SCHEMA", "USE_CATALOG", "ALL_PRIVILEGES"],
+                            "default": "SELECT",
+                        },
+                        "target_source": {
+                            "type": "string",
+                            "title": "What to Grant On",
+                            "description": "Where to find the target object: 'from_entity' uses the table/schema/catalog that triggered this workflow, 'from_variable' reads it from a previous step's output.",
+                            "enum": ["from_entity", "from_variable"],
+                            "default": "from_entity",
+                        },
+                        "target_variable": {
+                            "type": "string",
+                            "title": "Target Variable Path",
+                            "description": "The dot-separated path to the target in step results (e.g. 'step_results.user_input.catalog_name').",
+                            "x-visible-when": {"field": "target_source", "value": "from_variable"},
+                        },
+                        "principal_source": {
+                            "type": "string",
+                            "title": "Who Gets Access",
+                            "description": "Who receives the permission: 'requester' is the user who triggered the workflow, 'from_variable' reads the principal from a previous step (e.g. an on-behalf-of input).",
+                            "enum": ["requester", "from_variable"],
+                            "default": "requester",
+                        },
+                        "principal_variable": {
+                            "type": "string",
+                            "title": "Principal Variable Path",
+                            "description": "The dot-separated path to the principal email in step results (e.g. 'step_results.access_request.on_behalf_of').",
+                            "x-visible-when": {"field": "principal_source", "value": "from_variable"},
                         },
                     },
                 },
@@ -757,6 +998,20 @@ class WorkflowsManager:
                     sample="customer_360",
                 ),
                 TemplateVarDescriptor(
+                    path="entity.consumer_principals",
+                    type="array",
+                    description=(
+                        "Configured access groups / service principals on "
+                        "the data product. Each item is "
+                        "``{type, value}`` where type is ``group`` or "
+                        "``service_principal``. Downstream provisioners "
+                        "add the requester into these principals."
+                    ),
+                    sample=[
+                        {"type": "group", "value": "data_product_consumers"},
+                    ],
+                ),
+                TemplateVarDescriptor(
                     path="entity.output_ports",
                     type="array",
                     description=(
@@ -783,6 +1038,54 @@ class WorkflowsManager:
                         "grant requests."
                     ),
                     sample=["main", "prod"],
+                ),
+            ],
+        )
+
+        # ----- Context group: ${context.on_behalf_of.*} -----
+        # Populated by the wizard's on_behalf_of step (or directly by the
+        # subscribe-on-behalf API). Indicates whether the requester is
+        # acting for themselves, a group they belong to, or another
+        # principal — the "is this a user or a group?" signal external
+        # provisioners need to dispatch correctly.
+        on_behalf_of_context = TemplateVarGroup(
+            namespace="context",
+            description=(
+                "Workflow execution context. ``on_behalf_of`` carries "
+                "the requester's intent: are they acting for themselves, "
+                "for a group, or for a service principal?"
+            ),
+            variables=[
+                TemplateVarDescriptor(
+                    path="context.on_behalf_of.type",
+                    type="enum",
+                    description=(
+                        "Whether the requester is acting for themselves, "
+                        "a group they belong to, or another principal. "
+                        "External provisioners route based on this."
+                    ),
+                    sample="group",
+                    enum_values=["user", "group", "service_principal"],
+                ),
+                TemplateVarDescriptor(
+                    path="context.on_behalf_of.value",
+                    type="string",
+                    description=(
+                        "Principal identifier — email when ``type=user``, "
+                        "group name when ``type=group``, application ID "
+                        "when ``type=service_principal``."
+                    ),
+                    sample="data_product_consumers",
+                ),
+                TemplateVarDescriptor(
+                    path="context.on_behalf_of.display",
+                    type="string",
+                    description=(
+                        "Human-readable label for the principal "
+                        "(e.g. ``Group: analysts``). Use in user-facing "
+                        "messages; use ``.value`` for machine routing."
+                    ),
+                    sample="Group: data_product_consumers",
                 ),
             ],
         )
@@ -823,6 +1126,32 @@ class WorkflowsManager:
                     sample="customer_360",
                 ),
                 TemplateVarDescriptor(
+                    path="entity.consumer_principals",
+                    type="array",
+                    description=(
+                        "Configured access groups / service principals "
+                        "on the data product. Each item is "
+                        "``{type, value}``."
+                    ),
+                    sample=[
+                        {"type": "group", "value": "data_product_consumers"},
+                    ],
+                ),
+                TemplateVarDescriptor(
+                    path="entity.on_behalf_of",
+                    type="object",
+                    description=(
+                        "Same payload as ``${context.on_behalf_of}`` but "
+                        "also persisted onto the subscription record. "
+                        "Use ``${entity.on_behalf_of.type}`` etc."
+                    ),
+                    sample={
+                        "type": "group",
+                        "value": "data_product_consumers",
+                        "display": "Group: data_product_consumers",
+                    },
+                ),
+                TemplateVarDescriptor(
                     path="entity.output_ports",
                     type="array",
                     description=(
@@ -856,10 +1185,12 @@ class WorkflowsManager:
         return {
             (TriggerType.ON_REQUEST_ACCESS, EntityType.ACCESS_GRANT): [
                 on_request_access_dp_entity,
+                on_behalf_of_context,
                 flat_group,
             ],
             (TriggerType.ON_SUBSCRIBE, EntityType.DATA_PRODUCT): [
                 on_subscribe_dp_entity,
+                on_behalf_of_context,
                 flat_group,
             ],
         }

@@ -88,24 +88,20 @@ function VariableRow({
 
   return (
     <div className="py-2 border-b last:border-b-0">
-      {/* Path + type pill + copy button. ``ml-auto`` on the button
-          guarantees daylight between the bg-muted placeholder and the
-          icon even when the row is narrow. ``inline-block`` on the code
-          stops its background from stretching across leftover whitespace. */}
-      <div className="flex items-center gap-2">
-        <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded inline-block break-all">
+      {/* Row 1: placeholder + copy button on its own line. Giving the
+          path a full row prevents the type badge from squeezing it down
+          to a couple of characters per line on narrow panels. */}
+      <div className="flex items-start gap-2">
+        <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded break-all flex-1 min-w-0">
           {placeholder}
         </code>
-        <Badge variant="outline" className="text-xs shrink-0">
-          {descriptor.type}
-        </Badge>
         <Button
           variant="ghost"
           size="sm"
           onClick={handleCopy}
           aria-label={`Copy ${placeholder}`}
           title={`Copy ${placeholder}`}
-          className="ml-auto shrink-0 h-7 w-7 p-0"
+          className="shrink-0 h-6 w-6 p-0"
         >
           {copied ? (
             <Check className="h-3.5 w-3.5 text-emerald-600" />
@@ -114,11 +110,19 @@ function VariableRow({
           )}
         </Button>
       </div>
-      {groupLabel && (
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mt-1">
-          {groupLabel}
-        </p>
-      )}
+      {/* Row 2: type badge + (optional) group label, then description.
+          Type lives on its own line so a long path never has to share
+          horizontal space with the badge. */}
+      <div className="flex items-center gap-2 mt-1">
+        <Badge variant="outline" className="text-xs shrink-0">
+          {descriptor.type}
+        </Badge>
+        {groupLabel && (
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+            {groupLabel}
+          </span>
+        )}
+      </div>
       <p className="text-xs text-muted-foreground mt-1">
         {descriptor.description}
       </p>
@@ -273,8 +277,9 @@ export default function TemplateVarsInspector({
   }
 
   const isSearching = query.trim().length > 0;
-  // Default-open the entity group (first) since that's the most useful.
-  const defaultOpen = data.groups[0]?.namespace;
+  // Groups are collapsed by default — the section can host 10+ variables
+  // per group and that's overwhelming on first load. Authors expand
+  // what they need, or use the search input to find a specific var.
 
   return (
     <div className="rounded-md border overflow-hidden flex flex-col">
@@ -333,7 +338,7 @@ export default function TemplateVarsInspector({
           )}
         </div>
       ) : (
-        <Accordion type="multiple" defaultValue={defaultOpen ? [defaultOpen] : []}>
+        <Accordion type="multiple" defaultValue={[]}>
           {data.groups.map((group) => (
             <AccordionItem
               key={group.namespace}

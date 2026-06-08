@@ -73,6 +73,9 @@ def _build_dp_entity_data_for_access_grant() -> Dict[str, Any]:
         "requested_duration_days": 30,
         "permission_level": "READ",
         "reason": "Need to validate Q3 churn metrics.",
+        "consumer_principals": [
+            {"type": "group", "value": "data_product_consumers"},
+        ],
     }
     enrich_entity_data_with_data_product(entity_data, fake_dp)
     entity_data["data_product_name"] = fake_dp.name
@@ -94,6 +97,14 @@ def _build_dp_entity_data_for_subscribe() -> Dict[str, Any]:
         "product_id": "prd-123",
         "subscriber_email": "alice@example.com",
         "reason": "Onboarding analytics dashboard.",
+        "consumer_principals": [
+            {"type": "group", "value": "data_product_consumers"},
+        ],
+        "on_behalf_of": {
+            "type": "group",
+            "value": "data_product_consumers",
+            "display": "Group: data_product_consumers",
+        },
     }
     enrich_entity_data_with_data_product(entity_data, fake_dp)
     entity_data["data_product_name"] = fake_dp.name
@@ -119,6 +130,14 @@ def _make_context(entity_data: Dict[str, Any]) -> StepContext:
         workflow_id="wf-001",
         workflow_name="Test Workflow",
         step_results={},
+        # The executor hoists entity_data["on_behalf_of"] onto the
+        # context when present (workflow_executor.py ~2064); mirror that
+        # so ${context.on_behalf_of.*} resolves like it does at runtime.
+        on_behalf_of=entity_data.get("on_behalf_of") or {
+            "type": "user",
+            "value": "alice@example.com",
+            "display": "alice@example.com",
+        },
     )
 
 

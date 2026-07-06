@@ -5,6 +5,8 @@ This module provides utility functions for integrating with Databricks Genie Spa
 Handles space creation, dataset collection, and metadata formatting.
 """
 
+import json
+
 from databricks.sdk import WorkspaceClient
 from typing import List, Dict, Optional, Any
 from sqlalchemy.orm import Session
@@ -19,7 +21,8 @@ async def create_genie_space(
     name: str,
     datasets: List[str],
     description: Optional[str] = None,
-    instructions: Optional[str] = None
+    instructions: Optional[str] = None,
+    warehouse_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Create a Genie Space using Databricks API.
@@ -30,6 +33,8 @@ async def create_genie_space(
         datasets: List of catalog.schema.table identifiers
         description: Optional space description
         instructions: Optional context/instructions (metadata)
+        warehouse_id: SQL warehouse backing the space; falls back to
+            settings.DATABRICKS_WAREHOUSE_ID (required by the API)
 
     Returns:
         Dict with space_id, space_url, status
@@ -39,19 +44,35 @@ async def create_genie_space(
     """
     try:
         # API Reference: https://docs.databricks.com/api/workspace/genie/createspace
-        payload = {
-            "display_name": name,
-            "description": description or "",
+        # The API requires: title/description/warehouse_id at the top level and
+        # the space definition as a JSON string in 'serialized_space'
+        # ({version: 2, data_sources.tables[].identifier, instructions.text_instructions}).
+        if not warehouse_id:
+            from src.common.config import get_settings
+            warehouse_id = get_settings().DATABRICKS_WAREHOUSE_ID
+        if not warehouse_id:
+            raise ValueError(
+                "No SQL warehouse configured: Genie spaces require warehouse_id "
+                "(set DATABRICKS_WAREHOUSE_ID on the app)"
+            )
+
+        space_def: Dict[str, Any] = {
+            "version": 2,
+            "config": {},
+            "data_sources": {"tables": [{"identifier": ds} for ds in datasets]},
         }
-
-        # Add dataset references
-        if datasets:
-            # Format datasets for Genie API (format may vary based on actual API)
-            payload["tables"] = [{"full_name": ds} for ds in datasets]
-
         # Add instructions/context (truncate to safe length)
         if instructions:
-            payload["instructions"] = instructions[:5000]
+            space_def["instructions"] = {
+                "text_instructions": [{"content": [instructions[:5000]]}]
+            }
+
+        payload = {
+            "title": name,
+            "description": description or "",
+            "warehouse_id": warehouse_id,
+            "serialized_space": json.dumps(space_def),
+        }
 
         logger.info(f"Creating Genie Space with {len(datasets)} datasets: {name}")
         logger.debug(f"Genie Space payload: {payload}")

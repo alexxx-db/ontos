@@ -135,10 +135,30 @@ def collect_datasets_from_products(product_ids: List[str], db: Session) -> List[
             logger.debug(f"Processing product: {product_db.name} ({product_id})")
 
             for port in product_db.output_ports:
-                if port.asset_type in ['table', 'view'] and port.asset_identifier:
+                # Prefer exact table FQNs from the port contract's schema
+                # objects: asset_identifier is often schema-level
+                # (catalog.schema), which the Genie API rejects as an
+                # invalid table identifier.
+                added = False
+                contract_id = getattr(port, 'contract_id', None)
+                if contract_id:
+                    from src.db_models.data_contracts import SchemaObjectDb
+                    schema_objects = (db.query(SchemaObjectDb)
+                                      .filter(SchemaObjectDb.contract_id == contract_id)
+                                      .all())
+                    for so in schema_objects:
+                        fqn = so.physical_name
+                        if fqn and fqn.count('.') == 2:
+                            datasets.append(fqn)
+                            added = True
+                            logger.debug(f"Added dataset {fqn} from contract of port {port.name}")
+                if (not added and port.asset_type in ['table', 'view']
+                        and port.asset_identifier
+                        and port.asset_identifier.count('.') == 2):
                     datasets.append(port.asset_identifier)
+                    added = True
                     logger.debug(f"Added dataset: {port.asset_identifier} from port {port.name}")
-                else:
+                if not added:
                     logger.debug(f"Skipping port {port.name}: type={port.asset_type}, identifier={port.asset_identifier}")
 
         except Exception as e:

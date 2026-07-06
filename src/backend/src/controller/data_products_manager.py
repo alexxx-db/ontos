@@ -2205,6 +2205,9 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                         link=result['space_url'],
                         type=NotificationType.SUCCESS
                     )
+                    # repo.create only flushes; background sessions must
+                    # commit or the notification is rolled back on close
+                    db.commit()
 
         except Exception as e:
             logger.error(f"Failed to create Genie Space: {e}", exc_info=True)
@@ -2221,6 +2224,7 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
                             description=f"Failed to create Genie Space: {str(e)}",
                             type=NotificationType.ERROR
                         )
+                        db.commit()
                 except Exception as notify_error:
                     logger.error(f"Failed to send error notification: {notify_error}")
 

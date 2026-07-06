@@ -59,7 +59,8 @@ async def create_genie_space(
         space_def: Dict[str, Any] = {
             "version": 2,
             "config": {},
-            "data_sources": {"tables": [{"identifier": ds} for ds in datasets]},
+            # The API requires tables sorted by identifier
+            "data_sources": {"tables": [{"identifier": ds} for ds in sorted(datasets)]},
         }
         # Add instructions/context (truncate to safe length)
         if instructions:

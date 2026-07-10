@@ -2138,13 +2138,14 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
 
         # Send initial notification
         try:
-            await self._notifications_manager.create_notification(
+            from src.models.notifications import NotificationType
+            await self._notifications_manager.create_user_notification(
                 db=db,
                 user_id=user_email,
                 title="Genie Space Creation Started",
                 description=f"Genie Space creation for Data Product(s) {product_ids_str} initiated. "
                            "You will be notified when it's ready.",
-                status="info"
+                type=NotificationType.INFO
             )
         except Exception as e:
             logger.error(f"Failed to send initial Genie Space notification: {e}", exc_info=True)
@@ -2218,14 +2219,18 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
 
                 # Step 7: Send success notification
                 if self._notifications_manager:
-                    await self._notifications_manager.create_notification(
+                    from src.models.notifications import NotificationType
+                    await self._notifications_manager.create_user_notification(
                         db=db,
                         user_id=user_email,
                         title="Genie Space Ready",
                         description=f"Your Genie Space '{space_name}' has been created with {len(datasets)} datasets.",
                         link=result['space_url'],
-                        status="success"
+                        type=NotificationType.SUCCESS
                     )
+                    # repo.create only flushes; background sessions must
+                    # commit or the notification is rolled back on close
+                    db.commit()
 
         except Exception as e:
             logger.error(f"Failed to create Genie Space: {e}", exc_info=True)
@@ -2234,13 +2239,15 @@ class DataProductsManager(DeliveryMixin, SearchableAsset):
             if self._notifications_manager:
                 try:
                     with session_factory() as db:
-                        await self._notifications_manager.create_notification(
+                        from src.models.notifications import NotificationType
+                        await self._notifications_manager.create_user_notification(
                             db=db,
                             user_id=user_email,
                             title="Genie Space Creation Failed",
                             description=f"Failed to create Genie Space: {str(e)}",
-                            status="error"
+                            type=NotificationType.ERROR
                         )
+                        db.commit()
                 except Exception as notify_error:
                     logger.error(f"Failed to send error notification: {notify_error}")
 

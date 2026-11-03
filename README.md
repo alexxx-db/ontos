@@ -95,10 +95,15 @@ hatch -e dev run dev-backend
 
 ### Deploying to Databricks
 
+The bundle lives in `src/` (`src/databricks.yaml`). Run it from there:
+
 ```bash
-databricks bundle deploy --var="catalog=app_data" --var="schema=app_ontos"
-databricks apps deploy <app-name>
+cd src
+databricks bundle deploy -t dev --var="sql_warehouse_id=<warehouse-id>"
+databricks bundle run ontos -t dev
 ```
+
+`dev` (the default target) deploys an app named `ontos-<your-user>`; `-t prod` deploys the shared `ontos` app. The Lakebase database, the Unity Catalog volume, the SQL warehouse and the serving endpoint must already exist — see [Configuring](CONFIGURING.md#deploying-with-the-bundle) for the variables that point at them.
 
 ## Documentation
 

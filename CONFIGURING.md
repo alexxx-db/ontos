@@ -219,8 +219,12 @@ GRANT CREATE ON DATABASE "app_ontos" TO PUBLIC;
 
 #### 3. Deploy Your App
 
+Deploy with the bundle (see [Deploying with the bundle](#deploying-with-the-bundle)):
+
 ```bash
-databricks apps deploy <app-name>
+cd src
+databricks bundle deploy -t dev --var="sql_warehouse_id=<warehouse-id>"
+databricks bundle run ontos -t dev
 ```
 
 On first startup, the app will:
@@ -256,6 +260,23 @@ Reference the Lakebase instance in your `app.yaml`:
 - name: "ENV"
   value: "PROD"  # Triggers OAuth mode (not LOCAL)
 ```
+
+### Deploying with the bundle
+
+`src/databricks.yaml` creates the app and binds the four resources that `src/app.yaml` reads (`postgres`, `sql-warehouse`, `serving-endpoint`, `volume` — the same names as `src/manifest.yaml`). Runtime settings stay in `app.yaml`. The Apps runtime builds the frontend itself (`npm run build` from `src/package.json`).
+
+The bundle does not create these; they must exist first:
+
+| Variable | What it points at | Default |
+|----------|-------------------|---------|
+| `sql_warehouse_id` | SQL warehouse ID | *(required)* |
+| `lakebase_branch` | Lakebase branch, `projects/<project>/branches/<branch>` | `projects/ontos-db/branches/production` |
+| `lakebase_database` | Lakebase database resource name on that branch — not the Postgres name (Postgres `app_ontos` is listed as `…/databases/app-ontos`); find it with `databricks postgres list-databases <branch>` | `projects/ontos-db/branches/production/databases/app-ontos` |
+| `serving_endpoint_name` | Serving endpoint for Ask Ontos | `databricks-claude-sonnet-4-5` |
+| `catalog_name` / `schema_name` / `volume_name` | UC volume for app files | `app_data_dev.app_ontos_dev.app_files_dev` (dev), `app_data_prod.app_ontos_prod.app_files_prod` (prod) |
+| `app_name` | App name (max 30 chars) | `ontos-<your-user>` (dev), `ontos` (prod) |
+
+Set them with `--var="name=value"`, or persist per-target values in `src/.databricks/bundle/<target>/variable-overrides.json` (not committed).
 
 ### Security Notes
 

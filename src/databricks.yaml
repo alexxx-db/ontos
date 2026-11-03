@@ -1,66 +1,100 @@
 bundle:
   name: ontos
 
+# Deploy from this directory (src/):
+#   databricks bundle deploy -t dev && databricks bundle run ontos -t dev
+#
+# Runtime command and env vars live in app.yaml; this bundle only creates the
+# app and binds the resources app.yaml reads via valueFrom (names must match
+# manifest.yaml). The frontend is built by the Apps runtime (package.json
+# "build" script) at deploy time.
+#
+# Prerequisites (not created by the bundle): the Lakebase project/branch/database,
+# the UC catalog + schema + volume, the SQL warehouse and the serving endpoint.
+
 variables:
+  app_name:
+    description: "App name: lowercase letters, digits and hyphens; max 30 characters"
+    default: ontos-${workspace.current_user.domain_friendly_name}
   sql_warehouse_id:
-    description: "ID of the SQL warehouse to use"
-    lookup:
-      warehouse: "default"
+    description: "ID of the SQL warehouse the app queries"
+  serving_endpoint_name:
+    description: "Model serving endpoint for Ask Ontos (LLM_ENDPOINT)"
+    default: "databricks-claude-sonnet-4-5"
+  lakebase_branch:
+    description: "Lakebase Autoscaling branch, e.g. projects/<project>/branches/<branch>"
+    default: "projects/ontos-db/branches/production"
+  lakebase_database:
+    description: "Lakebase database resource name (not the Postgres name), from `databricks postgres list-databases <branch>`"
+    default: "projects/ontos-db/branches/production/databases/app-ontos"
   catalog_name:
-    description: "Name of the catalog to use"
+    description: "Catalog holding the app's volume"
     default: "app_data"
   schema_name:
-    description: "Name of the schema to use"
+    description: "Schema holding the app's volume"
     default: "app_ontos"
   volume_name:
-    description: "Name of the volume to use"
+    description: "UC volume for app files"
     default: "app_files"
-  app_config:
-    type: complex
-    description: "Configuration for Ontos"
-    default:
-      command:
-        - "uvicorn"
-        - "src.app:app"
-        - "--host"
-        - "0.0.0.0"
-        - "--port"
-        - "8000"
-      env:
-        - name: "DATABRICKS_WAREHOUSE_ID"
-          value: ${var.sql_warehouse_id}
-        - name: "DATABRICKS_CATALOG"
-          value: ${var.catalog_name}
-        - name: "DATABRICKS_SCHEMA"
-          value: ${var.schema_name}
-        - name: "DATABRICKS_VOLUME"
-          value: ${var.volume_name}
 
 resources:
   apps:
     ontos:
-      name: "ontos"
-      description: "Ontos"
+      name: ${var.app_name}
+      description: "Ontos - data governance for Unity Catalog"
       source_code_path: "."
-      config: ${var.app_config}
       resources:
+        - name: "postgres"
+          description: "Lakebase database for the app's metadata"
+          postgres:
+            branch: ${var.lakebase_branch}
+            database: ${var.lakebase_database}
+            permission: "CAN_CONNECT_AND_CREATE"
         - name: "sql-warehouse"
-          description: "SQL warehouse for the app"
+          description: "SQL warehouse for the app to query datasets"
           sql_warehouse:
             id: ${var.sql_warehouse_id}
             permission: "CAN_USE"
+        - name: "serving-endpoint"
+          description: "LLM serving endpoint for Ask Ontos"
+          serving_endpoint:
+            name: ${var.serving_endpoint_name}
+            permission: "CAN_QUERY"
+        - name: "volume"
+          description: "Volume for the app to store files"
+          uc_securable:
+            securable_type: "VOLUME"
+            securable_full_name: ${var.catalog_name}.${var.schema_name}.${var.volume_name}
+            permission: "WRITE_VOLUME"
+      user_api_scopes:
+        - "sql"
+        - "serving.serving-endpoints"
+        - "files.files"
+        - "dashboards.genie"
+        - "catalog.connections"
+        - "catalog.catalogs:read"
+        - "catalog.schemas:read"
+        - "catalog.tables:read"
       permissions:
-        - user_name: "*"
+        - group_name: "users"
           level: "CAN_USE"
 
 targets:
   dev:
+    mode: development
+    default: true
     variables:
       catalog_name: "app_data_dev"
       schema_name: "app_ontos_dev"
       volume_name: "app_files_dev"
   prod:
+    mode: production
+    workspace:
+      # Deploy prod from one identity (ideally a service principal via run_as)
+      # so only one copy exists. Not /Workspace/Shared: that is writable by all users.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
+      app_name: "ontos"
       catalog_name: "app_data_prod"
       schema_name: "app_ontos_prod"
       volume_name: "app_files_prod"

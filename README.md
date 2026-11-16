@@ -112,7 +112,7 @@ databricks bundle run migrate -t dev   # Alembic migrations
 databricks bundle run ontos -t dev     # start the app
 ```
 
-`dev` (the default target) deploys resources suffixed with your username; `prd` is used by Seiji for customer deployments. See [Configuring](CONFIGURING.md#deploying-with-the-bundle) for the variables and `src/deploy/` for the Seiji hooks.
+`dev` (the default target) deploys resources suffixed with your username; `prd` is used by Seiji for customer deployments. `dev-abacus` is a second dev copy that deploys beside `dev` in the abacus demo workspace and only checks for a prebuilt `app_artifact/`. See [Configuring](CONFIGURING.md#deploying-with-the-bundle) for the variables and `src/deploy/` for the Seiji hooks.
 
 ## Documentation
 

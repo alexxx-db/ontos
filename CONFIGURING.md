@@ -289,9 +289,12 @@ Variables (defaults in `src/databricks.yml`):
 
 | Variable | What it controls | Default |
 |----------|------------------|---------|
+| `customer` / `workspace` / `catalog` | Deployment inputs with no defaults; the Seiji hooks set them per workspace | *(required)* |
 | `serving_endpoint_name` | Serving endpoint for Ask Ontos | `databricks-claude-sonnet-4-5` |
-| `catalog` / `app_schema` | UC catalog and schema for the app volume | `app_data` / `app_ontos` |
-| `app_name` / resource names | Suffix and naming of bundle resources | suffixed per dev user on `dev` |
+| `app_schema` | Postgres search_path inside the Lakebase database | `app_ontos` |
+| `uc_schema` | UC schema for the app volume; override when two copies share a catalog | `app_ontos` |
+| `app_admin_groups` | Groups that get the app's admin role on first start, JSON list | `["admins"]` |
+| `app_viewers_group` / `implementers_group` / `workspace_admins_group` / `tenant_admins_group` | Groups granted app use, warehouse CAN_USE and schema/volume grants | `<customer>-<workspace>-...` |
 
 Set them with `--var="name=value"`, or persist per-target values in
 `src/.databricks/bundle/<target>/variable-overrides.json` (not committed).

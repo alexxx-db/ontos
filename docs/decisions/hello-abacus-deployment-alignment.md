@@ -20,6 +20,24 @@ what changed and what was deliberately kept.
 | Conformance | `src/scripts/check.sh` runs backend, frontend, artifact, deploy-hook, and migration checks. |
 | Access | App access is group-based (`${var.app_user_group}` etc.) rather than the `users` group. |
 
+## Learned from the first abacus deployment attempt (2026-11-16)
+
+- `app_source_code_path` resolves relative to the resource file using it
+  (`resources/app.yml`), so its default is `../app_artifact`, not `./`.
+- The app service principal needs an explicit CAN_USE entry in the warehouse's
+  own `permissions` list, or a later deploy removes the app resource's grant.
+- Side-by-side dev copies need their own target (`dev-abacus`): distinct bundle
+  root, name suffix, viewer-group override, UC schema name (`uc_schema`) and
+  app admin groups (`app_admin_groups`).
+- `dev-abacus` uses a check-only artifact build so it can deploy from a
+  workspace that has no package-index egress or pnpm.
+- Open risk: the Apps runtime's Databricks-managed Python constraints can reject
+  exact pins. If a deployment fails at package install, read `<app-url>/logz`
+  and relax the conflicting pins, then re-lock and rebuild.
+- The app's groups need `USE CATALOG` on the catalog; the bundle only grants
+  schema and volume privileges. On a non-standard catalog (not
+  `<label>_<workspace>_catalog`) that grant is manual.
+
 ## Not decided here
 
 - CI platform: Ontos stays on GitHub Actions; hello-abacus uses GitLab + souschef.

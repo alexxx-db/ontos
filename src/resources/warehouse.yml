@@ -18,3 +18,7 @@ resources:
           level: CAN_USE
         - group_name: ${var.tenant_admins_group}
           level: CAN_USE
+        # The app's own service principal. The app resource grants it CAN_USE too, but
+        # without it here a later bundle deploy resets this list and removes that grant.
+        - service_principal_name: ${resources.apps.ontos.service_principal_client_id}
+          level: CAN_USE

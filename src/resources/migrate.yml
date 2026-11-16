@@ -1,0 +1,33 @@
+resources:
+  jobs:
+    migrate:
+      name: ontos-migrate${var.name_suffix}
+      tasks:
+        - task_key: alembic_upgrade
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/migrate.py
+            parameters:
+              - ${workspace.file_path}
+              - ${resources.postgres_branches.production.id}
+              - ${resources.postgres_databases.app.id}
+              - ${var.app_schema}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            # What the app's migration path (src.common.database -> alembic)
+            # imports. Serverless environments resolve these when the
+            # environment is built, so they work where the runtime has no
+            # package-index egress.
+            dependencies:
+              - "alembic==1.20.0"
+              - "databricks-sdk==0.148.0"
+              - "databricks-sql-connector==4.5.0"
+              - "fastapi==0.141.1"
+              - "psycopg2-binary==2.9.13"
+              - "pydantic==2.13.5"
+              - "pydantic-settings==2.15.0"
+              - "python-dotenv==1.2.3"
+              - "pyyaml==6.0.3"
+              - "sqlalchemy==2.0.52"

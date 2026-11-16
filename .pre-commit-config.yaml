@@ -26,7 +26,7 @@ repos:
     hooks:
       - id: eslint
         name: eslint
-        entry: bash -c 'cd src/frontend && npm run lint:fix'
+        entry: bash -c 'cd src/frontend && pnpm run lint:fix'
         language: system
         files: ^src/frontend/src/.*\.(ts|tsx)$
         pass_filenames: false
@@ -36,7 +36,7 @@ repos:
     hooks:
       - id: prettier
         name: prettier
-        entry: bash -c 'cd src/frontend && npm run format'
+        entry: bash -c 'cd src/frontend && pnpm run format'
         language: system
         files: ^src/frontend/src/.*\.(ts|tsx|css)$
         pass_filenames: false
@@ -46,17 +46,19 @@ repos:
     hooks:
       - id: typescript
         name: typescript
-        entry: bash -c 'cd src/frontend && npm run type-check'
+        entry: bash -c 'cd src/frontend && pnpm run type-check'
         language: system
         files: ^src/frontend/src/.*\.(ts|tsx)$
         pass_filenames: false
 
-  # Requirements lockfile sync check
+  # uv.lock sync check: dependencies changed but the lockfile was not regenerated.
+  # Enforcement starts once src/uv.lock exists at HEAD; before that the migration
+  # itself cannot satisfy the check on a machine without index access.
   - repo: local
     hooks:
-      - id: check-requirements-lock
-        name: check-requirements-lock
-        entry: bash -c 'if git diff --cached --name-only | grep -q "requirements\.in$"; then if ! git diff --cached --name-only | grep -q "requirements\.txt$"; then echo "ERROR: requirements.in changed but requirements.txt was not updated." && echo "Run ./scripts/lock-requirements.sh and stage the updated .txt files." && exit 1; fi; fi'
+      - id: check-uv-lock
+        name: check-uv-lock
+        entry: bash -c 'if git cat-file -e HEAD:src/uv.lock 2>/dev/null && git diff --cached --name-only | grep -q "src/pyproject.toml$"; then if ! git diff --cached --name-only | grep -q "src/uv.lock$"; then echo "ERROR: pyproject.toml dependencies changed but uv.lock was not updated." && echo "Run uv lock in src/ and stage the updated uv.lock." && exit 1; fi; fi'
         language: system
-        files: requirements\.(in|txt)$
+        files: src/(pyproject\.toml|uv\.lock)$
         pass_filenames: false

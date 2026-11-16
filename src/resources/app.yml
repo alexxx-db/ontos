@@ -1,0 +1,89 @@
+resources:
+  apps:
+    ontos:
+      name: ontos${var.name_suffix}
+      description: "Ontos - data governance for Unity Catalog"
+      source_code_path: ${var.app_source_code_path}
+      config:
+        # The Apps container installs requirements.txt from ./wheels before this runs.
+        command:
+          - python
+          - backend/src/app.py
+        env:
+          - name: ENV
+            value: "PROD"
+          - name: APP_DEMO_MODE
+            value: "false"
+          - name: APP_DB_DROP_ON_START
+            value: "false"
+          - name: PYTHONPATH
+            value: "./backend"
+          - name: PYTHONUNBUFFERED
+            value: "1"
+          # PGHOST, PGDATABASE, PGUSER are auto-injected by the `database` binding below.
+          - name: PGSCHEMA
+            value: ${var.app_schema}
+          # Fallback for Lakebase when the SDK cannot read the postgres app resource:
+          # the branch resource id is its name, projects/<project>/branches/<branch>.
+          - name: LAKEBASE_INSTANCE_NAME
+            value: ${resources.postgres_branches.production.id}
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: DATABRICKS_VOLUME
+            value_from: volume
+          - name: DATABRICKS_CATALOG
+            value: ${var.catalog}
+          - name: DATABRICKS_SCHEMA
+            value: ${resources.schemas.app_schema.name}
+          - name: APP_ADMIN_DEFAULT_GROUPS
+            value: '["admins"]'
+          - name: APP_AUDIT_LOG_DIR
+            value: ${var.audit_log_dir}
+          - name: LLM_ENABLED
+            value: "True"
+          - name: LLM_ENDPOINT
+            value_from: serving-endpoint
+      user_api_scopes:
+        - "sql"
+        - "serving.serving-endpoints"
+        - "files.files"
+        - "dashboards.genie"
+        - "catalog.connections"
+        - "catalog.catalogs:read"
+        - "catalog.schemas:read"
+        - "catalog.tables:read"
+        - "postgres"
+      # No group gets CAN_MANAGE: the deployer and the workspace's admins,
+      # workspace_admins_group among them, already hold it.
+      permissions:
+        - group_name: ${var.app_viewers_group}
+          level: CAN_USE
+        - group_name: ${var.implementers_group}
+          level: CAN_USE
+        - group_name: ${var.workspace_admins_group}
+          level: CAN_USE
+        - group_name: ${var.tenant_admins_group}
+          level: CAN_USE
+      resources:
+        - name: database
+          description: "Lakebase database for the app's metadata"
+          postgres:
+            branch: ${resources.postgres_branches.production.id}
+            database: ${resources.postgres_databases.app.id}
+            permission: CAN_CONNECT_AND_CREATE
+        - name: sql-warehouse
+          description: "SQL warehouse the app queries datasets through"
+          sql_warehouse:
+            id: ${resources.sql_warehouses.warehouse.id}
+            permission: CAN_USE
+        - name: serving-endpoint
+          description: "LLM serving endpoint for Ask Ontos"
+          serving_endpoint:
+            name: ${var.serving_endpoint_name}
+            permission: CAN_QUERY
+        - name: volume
+          description: "Volume for the app to store files"
+          uc_securable:
+            securable_type: "VOLUME"
+            securable_full_name: ${var.catalog}.${resources.schemas.app_schema.name}.app_files
+            permission: WRITE_VOLUME

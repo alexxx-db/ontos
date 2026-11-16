@@ -9,7 +9,7 @@ Project-specific guidance for Claude Code lives in [`.cursor/rules/`](./.cursor/
 - [`05-code-style-and-structure.mdc`](./.cursor/rules/05-code-style-and-structure.mdc) — Python + TS rules, error/logging security
 - [`07-project-conventions.mdc`](./.cursor/rules/07-project-conventions.mdc) — auth, config, permissions store, breadcrumbs
 - [`08-testing-and-deployment.mdc`](./.cursor/rules/08-testing-and-deployment.mdc) — local dev, log paths, ports, Playwright MCP
-- [`09-package-management.mdc`](./.cursor/rules/09-package-management.mdc) — npm (not yarn/pnpm)
+- [`09-package-management.mdc`](./.cursor/rules/09-package-management.mdc) — pnpm (frontend) and uv (backend); no npm/yarn/pip/hatch
 - [`10-entity-panel-matrix.mdc`](./.cursor/rules/10-entity-panel-matrix.mdc) — which polymorphic panels apply to which entity/asset type
 - [`11-database-migrations.mdc`](./.cursor/rules/11-database-migrations.mdc) — Alembic short-revision convention, single-head rule, new-migration workflow
 
@@ -23,5 +23,6 @@ Project-specific guidance for Claude Code lives in [`.cursor/rules/`](./.cursor/
 - **NEVER restart the dev server processes.** Backend and frontend run with auto-reload. See `08-testing-and-deployment.mdc`.
 - Backend logs: `/tmp/backend.log`. Frontend logs: `/tmp/frontend.log`. Read them for debugging.
 - Backend port: **8000**. Frontend port: **3000**. In a *separate* worktree, run your own servers on distinct ports — frontend via `VITE_PORT`/`VITE_PROXY_TARGET`, backend by invoking `uvicorn ... --port=<port>` directly (the `dev-backend` script is hard-coded to 8000) — never rebind 8000/3000. See `08-testing-and-deployment.mdc`.
-- Run Python via `hatch -e dev run ...`.
-- Frontend package manager is **npm**, not yarn/pnpm.
+- Run Python via `uv run ...` from `src/`.
+- Frontend package manager is **pnpm**, not npm/yarn. Backend deps are **uv** + `uv.lock`, not pip/hatch/requirements.txt.
+- Deploy follows the Hello Abacus standard: bundle (`src/databricks.yml` + `src/resources/*.yml`) → `migrate` job (Alembic) → app, with the offline `app_artifact/` built by `src/scripts/build_artifact.sh`. Customer deploys go through Seiji (`src/seiji-packaging.yaml`, `src/deploy/`).

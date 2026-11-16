@@ -14,7 +14,7 @@ Full reference: [`docs/notes/database-migrations.md`](../../docs/notes/database-
 **Hard rules (CI-enforced)**
 
 - Exactly **one head** at all times. The `check-alembic-heads` job in `.github/workflows/test-coverage.yml` runs `scripts/check-alembic-heads.py` and will fail the PR otherwise.
-- Always **rebase onto the current base branch first**, then run `alembic revision -m '<message>'` so the new revision descends from the live head (`hatch -e dev run alembic heads`).
+- Always **rebase onto the current base branch first**, then run `alembic revision -m '<message>'` so the new revision descends from the live head (`uv run alembic heads`).
 - A genuine multi-head merge requires `alembic merge -m 'merge heads' <head_a> <head_b>` plus the `alembic-branch` PR label to bypass the gate.
 
 **Project convention: short revision ids**
@@ -28,8 +28,8 @@ Migrations live in `src/backend/alembic/versions/` and use a `<letter><number>_<
 **Workflow when adding a migration**
 
 1. Rebase the branch onto `main`.
-2. `cd src/backend && hatch -e dev run alembic heads` — note the current head (e.g. `j1_add_version_family_id`).
-3. `hatch -e dev run alembic revision -m '<message>'` (or `--autogenerate` and review).
+2. `cd src/backend && uv run alembic heads` — note the current head (e.g. `j1_add_version_family_id`).
+3. `uv run alembic revision -m '<message>'` (or `--autogenerate` and review).
 4. **Rename the file** from the default `<hex>_<slug>.py` to `<letter><number>_<slug>.py`:
    - Same wave → bump the number (after `j1_…`, use `j2_…`).
    - New themed wave → next unused letter (after `j*`, start `k1_…`).
@@ -37,7 +37,7 @@ Migrations live in `src/backend/alembic/versions/` and use a `<letter><number>_<
    - `revision = '<letter><number>_<slug>'` (this is what Alembic actually stores)
    - `down_revision = '<current_head_revision>'`
    - Docstring header `Revision ID:` and `Revises:` lines
-6. Verify: `hatch -e dev run alembic heads` → must report a single head equal to your new revision; `alembic history` → must show your revision descending from the previous head.
+6. Verify: `uv run alembic heads` → must report a single head equal to your new revision; `alembic history` → must show your revision descending from the previous head.
 
 **Common pitfalls**
 

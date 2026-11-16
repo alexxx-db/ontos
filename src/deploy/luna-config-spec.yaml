@@ -1,0 +1,15 @@
+# The values Seiji reads for this package, set per label in its config.
+config:
+  _:
+    ontos_enabled_workspaces:
+      default: []
+      description: "Workspaces to deploy the ontos app to."
+      required: true
+      tfvar: true
+      type: list
+  nextgen.datasolutions.ontos:
+    app_tag:
+      description: "CI tag of the artifact published to s3://abacus-artifacts-kitchen/databricks-apps/ontos/<tag>/. An earlier tag rolls back."
+      required: true
+      tfvar: true
+      type: str

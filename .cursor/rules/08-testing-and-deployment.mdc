@@ -12,7 +12,7 @@ scope:
 - Backend (FastAPI/Uvicorn) runs on **port 8000**. Frontend (Vite) runs on **port 3000**.
 - Both servers run in dev mode with auto-reload. **NEVER restart server processes** — file changes auto-reload.
 - Backend logs: `/tmp/backend.log`. Frontend logs: `/tmp/frontend.log`. Read them as needed.
-- Always run Python snippets via `hatch -e dev run ...` to pick up the project's environment.
+- Always run Python snippets via `uv run ...` (from `src/`) to pick up the project's environment.
 - Input validation: Pydantic on the backend, Zod / `react-hook-form` on the frontend.
 
 **Multiple worktrees (parallel LLM sessions)**
@@ -23,8 +23,8 @@ scope:
   - `VITE_PORT` (default `3000`) — Vite dev server.
   - `VITE_PROXY_TARGET` (default `http://localhost:8000`) — must point at *your* backend port.
 - Example second pair (backend 8100 / frontend 3100):
-  - Backend (from `src/`): `hatch -e dev run uvicorn --app-dir backend src.app:app --reload --host=0.0.0.0 --port=8100`
-  - Frontend (from `src/frontend/`): `VITE_PORT=3100 VITE_PROXY_TARGET=http://localhost:8100 yarn dev:frontend`
+  - Backend (from `src/`): `uv run uvicorn --app-dir backend src.app:app --reload --host=0.0.0.0 --port=8100`
+  - Frontend (from `src/frontend/`): `VITE_PORT=3100 VITE_PROXY_TARGET=http://localhost:8100 pnpm dev:frontend`
 - Full contributor-facing docs: `CONTRIBUTING.md` → "Running Multiple Worktrees Side-by-Side".
 
 **Testing**
@@ -40,4 +40,7 @@ scope:
 
 **Deployment**
 
-- Deployed as a Databricks App via `databricks bundle deploy`. App config: `src/app.yaml`. Bundle config: `src/databricks.yaml`.
+- Deployed as a Databricks App via asset bundles, Hello Abacus style: `src/databricks.yml` + `src/resources/*.yml`. App command/env live in `resources/app.yml` (`config:`); there is no `app.yaml`/`manifest.yaml`.
+- Deploy order is deploy → migrate → run: `databricks bundle deploy -t dev`, `databricks bundle run migrate -t dev`, `databricks bundle run ontos -t dev`. Databricks CLI v1.7.0 or later is required.
+- The app deploys `app_artifact/` (vendored wheels + `--no-index` requirements), built by `src/scripts/build_artifact.sh` and proven by `src/scripts/check_artifact.sh`. The frontend builds into `backend/static/` before the artifact; the Apps runtime builds nothing.
+- The bundle creates the Lakebase project/branch/database/endpoint, SQL warehouse, UC schema+volume, and the `migrate` job. Customer deploys go through Seiji (`src/seiji-packaging.yaml`, `src/deploy/`).

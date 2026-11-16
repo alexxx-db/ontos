@@ -32,7 +32,10 @@ export default defineConfig(({ command }) => ({
     setupFiles: ['./src/test/setup.ts'],
   },
   build: {
-    outDir: './static/', // Change output directory
+    // Build straight into the backend's static dir, as Hello Abacus builds into
+    // backend/dist: the artifact deploys the built frontend, the Apps runtime
+    // builds nothing.
+    outDir: '../backend/static/',
     sourcemap: true,
     emptyOutDir: true,
     assetsDir: "", // Customize assets directory

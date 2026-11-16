@@ -1,0 +1,35 @@
+resources:
+  schemas:
+    app_schema:
+      catalog_name: ${var.catalog}
+      name: app_ontos
+      comment: Unity Catalog data the ontos app owns. Its tables hold no PHI.
+      # The viewers and implementers read the data, because the app reads as the person.
+      # The admin groups already hold ALL_PRIVILEGES on the catalog. USE CATALOG on the
+      # catalog is its owner's to grant.
+      grants:
+        - principal: ${var.app_viewers_group}
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+        - principal: ${var.implementers_group}
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+
+  volumes:
+    app_files:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.app_schema.name}
+      name: app_files
+      volume_type: MANAGED
+      comment: Files the ontos app stores per workspace.
+      grants:
+        - principal: ${var.app_viewers_group}
+          privileges:
+            - READ_VOLUME
+            - WRITE_VOLUME
+        - principal: ${var.implementers_group}
+          privileges:
+            - READ_VOLUME
+            - WRITE_VOLUME

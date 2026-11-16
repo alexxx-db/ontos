@@ -15,7 +15,7 @@ License checking helps ensure compliance with open-source licenses and provides 
 
 ### Backend  
 - **Tool**: `pip-licenses` (Python package)
-- **Added to**: `requirements.txt` in `src/backend/`
+- **Added to**: the `dev` dependency group in `src/pyproject.toml`
 
 ### Root Scripts
 - **Location**: `src/package.json`
@@ -24,18 +24,18 @@ License checking helps ensure compliance with open-source licenses and provides 
 ## Prerequisites
 
 ### Frontend
-- npm (bundled with Node.js)
-- `license-checker` npm package (automatically installed with `npm install`)
+- pnpm 12
+- `license-checker` package (installed by `pnpm install`)
 
 ### Backend
 - Python environment with dependencies installed (virtual environment recommended)
-- `pip-licenses` package (included in requirements.txt)
+- `pip-licenses` package (a member of the `dev` dependency group in `src/pyproject.toml`)
 - **Note:** Install pip-licenses in your project's virtual environment:
   ```bash
   # Activate your virtual environment first, then:
   pip install pip-licenses
-  # Or install all requirements:
-  pip install -r requirements.txt
+  # Or install all backend deps:
+  cd src && uv sync
   ```
 
 ## Quick Start
@@ -45,7 +45,7 @@ License checking helps ensure compliance with open-source licenses and provides 
 From the `src/` directory:
 
 ```bash
-npm run license-check:all
+pnpm run license-check:all
 ```
 
 This will display license information for both frontend and backend dependencies.
@@ -58,23 +58,23 @@ This will display license information for both frontend and backend dependencies
 cd src/frontend
 
 # Quick summary
-npm run license-check
+pnpm run license-check
 
 # Full export (JSON + CSV)
-npm run license-check:full
+pnpm run license-check:full
 
 # Production dependencies only
-npm run license-check:production
+pnpm run license-check:production
 ```
 
 ### From `src/` Directory
 
 ```bash
 # Check frontend licenses
-npm run license-check:frontend
+pnpm run license-check:frontend
 
 # Full export with JSON and CSV files
-npm run license-check:frontend:full
+pnpm run license-check:frontend:full
 ```
 
 **Note:** Commands run from `src/` automatically change to the `frontend/` directory before executing. This is the simplest and most reliable approach.
@@ -101,10 +101,10 @@ npm run license-check:frontend:full
 
 ```bash
 # Markdown format (recommended)
-npm run license-check:backend
+pnpm run license-check:backend
 
 # JSON export
-npm run license-check:backend:json
+pnpm run license-check:backend:json
 ```
 
 ### From `src/backend/` Directory
@@ -182,7 +182,7 @@ You can add license checking to your CI/CD pipeline:
 - name: Check licenses
   run: |
     cd src/frontend
-    npm run license-check
+    pnpm run license-check
     cd ../backend
     bash check_licenses.sh
 ```
@@ -194,7 +194,7 @@ You can add license checking to your CI/CD pipeline:
 Install dependencies:
 ```bash
 cd src/frontend
-npm install
+pnpm install
 ```
 
 ### Backend: "pip-licenses: command not found"
@@ -210,8 +210,8 @@ venv\Scripts\activate  # On Windows
 
 # Then install pip-licenses
 pip install pip-licenses
-# or install all requirements
-pip install -r requirements.txt
+# or install all backend deps
+cd src && uv sync
 ```
 
 If you're not using a virtual environment, you may need to use:
@@ -219,9 +219,9 @@ If you're not using a virtual environment, you may need to use:
 pip install --user pip-licenses
 ```
 
-### npm not found
+### pnpm not found
 
-Make sure Node.js (which bundles npm) is installed. See the [Node.js downloads page](https://nodejs.org/en/download) or use a version manager such as `nvm`.
+Make sure pnpm is installed (`npm install -g pnpm@12.11.2`). See the [Node.js downloads page](https://nodejs.org/en/download) or use a version manager such as `nvm`.
 
 ## Output Files
 
@@ -242,7 +242,7 @@ These files are automatically ignored by `.gitignore`.
 ## Files Modified
 
 1. `src/frontend/package.json` - Added `license-checker` and scripts
-2. `src/backend/requirements.txt` - Added `pip-licenses`
+2. `src/pyproject.toml` - `pip-licenses` in the `dev` dependency group
 3. `src/package.json` - Added convenience wrapper scripts
 4. `.gitignore` - Excluded license output files
 5. `README.md` - Added license checking section

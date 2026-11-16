@@ -243,7 +243,7 @@ You can look at the [manifest.yaml](https://github.com/databrickslabs/ontos/blob
 
 Notes: 
 - For testing and light work, leave the instance size as its default value (i.e. "Medium").
-- Leave all the "Resource key" values default, they have to match what is specified in the [app.yaml](https://github.com/databrickslabs/ontos/blob/main/src/app.yaml) file in the repo - which uses the defaults (see `valueFrom` lines). 
+- Leave all the "Resource key" values default, they have to match what is specified in [resources/app.yml](https://github.com/databrickslabs/ontos/blob/main/src/resources/app.yml) in the repo - which uses the defaults (see the `value_from` lines). 
 - Also leave the "Permissions" default BUT for the volume, were you need to pick "Can read and write" (see below).
   ![](images/setup/a129bfd2570e4cab0b3ec34314518b72.png)
 
@@ -397,7 +397,7 @@ For example (note that you MUST select the proper database in the SQL editor fir
 
 ![](images/setup/bb5e1b322fa4cb4122fa8210fd76e0b7.png)
 
-The `app_ontos` schema (which is the default configured in [app.yaml](https://github.com/databrickslabs/ontos/blob/48167bd2ddb2a9f56971f67bd1ec0e7aa9d275bc/src/app.yaml#L24)) is owned by the UUID representing the apps Service Principal. Since you have NOT been granted access, you CANNOT access this database, even when you map the database into Unity Catalog. For example:
+The `app_ontos` schema (which is the default configured in [resources/app.yml](https://github.com/databrickslabs/ontos/blob/main/src/resources/app.yml)) is owned by the UUID representing the apps Service Principal. Since you have NOT been granted access, you CANNOT access this database, even when you map the database into Unity Catalog. For example:
 
 ![](images/setup/492a8b891258860386dd12f12564d7e0.png)
 
@@ -444,7 +444,7 @@ This is OK for subsequent users, but not for the initial setup and first admin. 
 ```sql
 -- This assumes you are connected to the app's database. Use \c <db_name> if not.
 -- Then set the search path to the configured schema, default is `app_ontos`
--- (set in the `app.yaml`).
+-- (set in `src/resources/app.yml`).
 app_ontos=> SET search_path TO app_ontos;
 
 -- Get the UUID of the `Admin` app role

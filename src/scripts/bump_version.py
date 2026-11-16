@@ -12,8 +12,7 @@ Usage:
 The script updates:
     - src/pyproject.toml (Python/Hatch build config)
     - src/backend/src/__init__.py (Python runtime import)
-    - src/frontend/package.json (Node/npm frontend)
-    - src/frontend/package-lock.json (npm lockfile: root `version` + `packages[""].version`)
+    - src/frontend/package.json (Node/pnpm frontend)
     - src/package.json (Root build helper)
 """
 
@@ -25,7 +24,6 @@ from pathlib import Path
 # Version file configurations
 # Format: (relative_path, kind, pattern_to_find, replacement_template)
 # kind: "text" (regex replace), "json" (top-level "version"),
-#       "npm-lock" (package-lock.json: top-level "version" + packages[""].version)
 VERSION_FILES = [
     # Python/Hatch build config.
     # Anchor to line start (?m) so we only match the top-level `version = "..."`
@@ -43,11 +41,9 @@ VERSION_FILES = [
         r'(__version__\s*=\s*")[^"]+(")',
         r'\g<1>{version}\g<2>',
     ),
-    # Frontend package.json
+    # Frontend package.json (pnpm-lock.yaml does not store the package version,
+    # so there is no lockfile entry here)
     ("frontend/package.json", "json", None, None),
-    # Frontend lockfile mirrors the package version; npm rewrites it on the next
-    # install anyway, but leaving it stale shows up as a release diff.
-    ("frontend/package-lock.json", "npm-lock", None, None),
     # Root package.json (build helper)
     ("package.json", "json", None, None),
 ]
@@ -69,27 +65,6 @@ def update_json_version(filepath: Path, new_version: str) -> str | None:
         filepath.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         return old_version
     except (json.JSONDecodeError, IOError) as e:
-        print(f"  ✗ Error updating {filepath}: {e}")
-        return None
-
-
-def update_npm_lock_version(filepath: Path, new_version: str) -> str | None:
-    """Update the root package version in an npm package-lock.json (v2/v3).
-
-    The project's own version appears twice: top-level ``version`` and
-    ``packages[""].version``. Dependency entries are left untouched.
-    """
-    try:
-        content = filepath.read_text(encoding="utf-8")
-        data = json.loads(content)
-        old_version = data.get("version", "unknown")
-        data["version"] = new_version
-        root_pkg = data.get("packages", {}).get("")
-        if root_pkg is not None:
-            root_pkg["version"] = new_version
-        filepath.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return old_version
-    except (OSError, json.JSONDecodeError) as e:
         print(f"  ✗ Error updating {filepath}: {e}")
         return None
 
@@ -145,8 +120,6 @@ def bump_version(new_version: str, dry_run: bool = False) -> bool:
 
         if kind == "json":
             old_version = update_json_version(filepath, new_version)
-        elif kind == "npm-lock":
-            old_version = update_npm_lock_version(filepath, new_version)
         else:
             old_version = update_text_version(filepath, pattern, replacement, new_version)
 
@@ -199,12 +172,6 @@ def show_current_versions(src_root: Path) -> None:
             if kind == "json":
                 data = json.loads(content)
                 version = data.get("version", "unknown")
-            elif kind == "npm-lock":
-                data = json.loads(content)
-                version = data.get("version", "unknown")
-                root_version = data.get("packages", {}).get("", {}).get("version")
-                if root_version and root_version != version:
-                    version = f"{version} (packages[\"\"]: {root_version})"
             else:
                 match = re.search(pattern, content)
                 if match:

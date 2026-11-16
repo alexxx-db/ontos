@@ -106,7 +106,7 @@
   },
   "scripts": {
     "dev:frontend": "vite",
-    "dev:backend": "hatch -e dev run dev-backend",
+    "dev:backend": "cd .. && uv run uvicorn --app-dir backend src.app:app --reload --host=0.0.0.0 --port=8000",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
@@ -117,7 +117,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
-    "test:all": "npm run test:run && npm run test:e2e",
+    "test:all": "pnpm run test:run && pnpm run test:e2e",
     "type-check": "tsc --noEmit",
     "license-check": "license-checker --summary",
     "license-check:full": "license-checker --json --out licenses.json && license-checker --csv --out licenses.csv",

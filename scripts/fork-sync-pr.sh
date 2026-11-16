@@ -40,9 +40,9 @@ SENSITIVE_PATHS=(
   "pyproject.toml" "*/pyproject.toml"
   "hatch.toml" "*/hatch.toml"
   "setup.py" "*/setup.py" "setup.cfg" "*/setup.cfg"
-  "requirements*" "*/requirements*"
+  "uv.lock" "*/uv.lock"
   "package.json" "*/package.json"
-  "package-lock.json" "*/package-lock.json"
+  "pnpm-lock.yaml" "*/pnpm-lock.yaml" "pnpm-workspace.yaml" "*/pnpm-workspace.yaml"
   ".npmrc" "*/.npmrc"
   "*.lock" "pnpm-lock.yaml" "*/pnpm-lock.yaml"
 )

@@ -1,18 +1,26 @@
 name: "Set up Node with JFrog npm"
 description: >
   Fetches a JFrog OIDC token, writes ~/.npmrc to authenticate against
-  databricks.jfrog.io npm, then sets up Node with npm caching. npm rewrites
-  the registry host of resolved URLs at install time (replace-registry-host
-  defaults to "npmjs"), so package-lock.json needs no rewriting.
+  databricks.jfrog.io npm, then sets up Node with package-manager caching.
+  pnpm reads the same ~/.npmrc for registry and auth, so both npm and pnpm
+  installs go through the mirror.
 
 inputs:
   node-version:
     description: "Node version (e.g., '24')"
     required: true
   lock-path:
-    description: "Path to the package-lock.json that npm caching should target"
+    description: "Path to the lockfile that the dependency cache should key on"
     required: false
-    default: ./src/frontend/package-lock.json
+    default: ./src/frontend/pnpm-lock.yaml
+  cache:
+    description: "Package manager cache for setup-node (pnpm or npm)"
+    required: false
+    default: pnpm
+  pnpm-version:
+    description: "pnpm version to install (Hello Abacus standard)"
+    required: false
+    default: "12.11.2"
 
 runs:
   using: composite
@@ -30,9 +38,19 @@ runs:
         EOF
         echo "npm configured to use JFrog registry"
 
+    # pnpm must be on PATH before setup-node resolves `pnpm store path` for its
+    # cache. action-setup installs it standalone, so it survives the node-version
+    # switch setup-node performs below.
+    - name: Install pnpm
+      if: inputs.cache == 'pnpm'
+      uses: pnpm/action-setup@a15d269cd4658e1107c09f1fabf4cbd7bd1f308a # v4.4.0
+      with:
+        version: ${{ inputs.pnpm-version }}
+        run_install: false
+
     - name: Set up Node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       with:
         node-version: ${{ inputs.node-version }}
-        cache: npm
+        cache: ${{ inputs.cache }}
         cache-dependency-path: ${{ inputs.lock-path }}

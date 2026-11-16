@@ -55,6 +55,12 @@ src/e2e/config.local.yaml
 licenses.json
 licenses.csv
 
+# Deploy artifacts (built by scripts/build_artifact.sh and fetch_databricks_cli.sh;
+# only .gitkeep is tracked, matching Hello Abacus)
+src/app_artifact/*
+!src/app_artifact/.gitkeep
+src/cli/
+
 .cursor/plans/
 docs/research/
 .isaac/

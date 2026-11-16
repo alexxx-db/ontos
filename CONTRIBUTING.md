@@ -27,12 +27,10 @@ Please be respectful and professional in all interactions. We're building a coll
 
 ### Prerequisites
 
-- **Python 3.10 - 3.12** (as defined in `pyproject.toml`)
-- **Node.js 18+** (includes npm, the frontend package manager)
-- **Hatch** (Python build tool):
-  ```bash
-  pip install hatch
-  ```
+- **Python 3.11** (as defined in `pyproject.toml`)
+- **Node.js 18+**
+- **uv** (Python package manager): `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- **pnpm** (frontend package manager): `npm install -g pnpm@12.11.2`
 
 ### Fork and Clone
 
@@ -54,35 +52,36 @@ Please be respectful and professional in all interactions. We're building a coll
 ### 1. Install Dependencies
 
 ```bash
+# Backend dependencies (uv creates .venv and installs from uv.lock)
+cd src
+uv sync
+
 # Frontend dependencies
 cd src/frontend
-npm install
-
-# Backend dependencies are managed by Hatch and installed automatically
+pnpm install --frozen-lockfile
 ```
 
-#### Working Behind a Private npm Mirror (optional)
+#### Working Behind a Private Package Mirror (optional)
 
-Some corporate environments block the public npm registry and require all
+Some corporate environments block public package registries and require all
 package traffic to flow through an internal mirror (e.g., Nexus, Artifactory,
-Verdaccio, or an HTTPS pass-through proxy). npm handles this cleanly: point the
-registry at your mirror and npm rewrites the host of each `resolved` URL at
-install time. Because npm's `replace-registry-host` defaults to `"npmjs"`, the
-committed `package-lock.json` keeps its canonical `https://registry.npmjs.org/`
-URLs, and `npm ci` does **not** persist the rewrite back to the lockfile — so
-there is no diff to worry about and no git filter needed.
+Verdaccio, or an HTTPS pass-through proxy).
 
-Set the registry per-clone without committing anything:
+For Python, point uv at the mirror for the duration of the command:
 
 ```bash
-# In the frontend project (or globally via ~/.npmrc)
-npm config set registry https://<your-mirror-host>/
+UV_DEFAULT_INDEX=https://<your-mirror-host>/pypi/simple uv sync
 ```
 
-`npm install`, `npm ci`, and `npm install <pkg>` all work normally, and any
-commits you make contain only real dependency changes against the public
-registry URLs. Integrity hashes (`integrity sha512-...`) are independent of the
-URL, so package verification is unaffected.
+For pnpm, set the registry per-clone without committing anything:
+
+```bash
+# In src/frontend/ (or globally via ~/.npmrc)
+pnpm config set registry https://<your-mirror-host>/
+```
+
+`pnpm install --frozen-lockfile` then works normally; integrity hashes are
+independent of the URL, so package verification is unaffected.
 
 ### 2. Configure Environment
 
@@ -104,13 +103,13 @@ See **[CONFIGURING.md](CONFIGURING.md)** for complete documentation on:
 **Frontend** (Terminal 1):
 ```bash
 cd src/frontend
-npm run dev:frontend
+pnpm run dev:frontend
 ```
 
 **Backend** (Terminal 2):
 ```bash
 cd src
-npm run dev:backend
+uv run uvicorn --app-dir backend src.app:app --reload
 ```
 
 - Frontend: http://localhost:3000
@@ -139,10 +138,10 @@ targets the matching port. Example — a second worktree on backend `8100` /
 frontend `3100`:
 
 **Backend** (from `src/`): invoke `uvicorn` directly with the port you want.
-The `yarn dev:backend` / `hatch -e dev run dev-backend` shortcut is hard-coded to
+The `uv run uvicorn --app-dir backend src.app:app --reload` shortcut is hard-coded to
 `8000`, so a secondary worktree runs the underlying command instead:
 ```bash
-hatch -e dev run uvicorn --app-dir backend src.app:app --reload --host=0.0.0.0 --port=8100
+uv run uvicorn --app-dir backend src.app:app --reload --host=0.0.0.0 --port=8100
 ```
 
 **Frontend** (from `src/frontend/`):
@@ -234,19 +233,19 @@ Before committing, ensure:
 1. **Tests pass**:
    ```bash
    # Backend tests
-   cd src && hatch -e dev run test
+   cd src && uv run pytest backend/src/tests
    
    # Frontend tests
-   cd src/frontend && npm run test:run
+   cd src/frontend && pnpm run test:run
    ```
 
 2. **Linting passes**:
    ```bash
    # Backend
-   cd src && hatch -e dev run lint:all
+   cd src && uv run ruff check .
    
    # Frontend
-   cd src/frontend && npm run type-check
+   cd src/frontend && pnpm run type-check
    ```
 
 3. **Commit message follows convention**
@@ -269,7 +268,7 @@ The project tracks version in multiple files:
 |------|---------|
 | `src/pyproject.toml` | Python/Hatch build config (source of truth) |
 | `src/backend/src/__init__.py` | Python runtime `__version__` |
-| `src/frontend/package.json` | Node/npm frontend |
+| `src/frontend/package.json` | Node/pnpm frontend |
 | `src/package.json` | Root build helper |
 
 ### Bump Version Script
@@ -368,13 +367,13 @@ databricks bundle run ontos -t dev
 
 2. **Run tests**:
    ```bash
-   cd src && hatch -e dev run test
-   cd src/frontend && npm run test:run
+   cd src && uv run pytest backend/src/tests
+   cd src/frontend && pnpm run test:run
    ```
 
 3. **Check types and lint**:
    ```bash
-   cd src/frontend && npm run type-check
+   cd src/frontend && pnpm run type-check
    ```
 
 ### PR Guidelines
@@ -457,13 +456,13 @@ export const DataProductCard: React.FC<DataProductCardProps> = ({
 cd src
 
 # Run all tests
-hatch -e dev run test
+uv run pytest backend/src/tests
 
 # Run with coverage
-hatch -e dev run test-cov
+uv run pytest --cov=backend/src --cov-report=term
 
 # Run specific test file
-hatch -e dev run pytest backend/src/tests/unit/test_data_products.py
+uv run pytest backend/src/tests/unit/test_data_products.py
 ```
 
 ### Frontend Tests
@@ -472,16 +471,16 @@ hatch -e dev run pytest backend/src/tests/unit/test_data_products.py
 cd src/frontend
 
 # Run tests
-npm run test:run
+pnpm run test:run
 
 # Run with coverage
-npm run test:coverage
+pnpm run test:coverage
 
 # Run in watch mode
-npm run test:watch
+pnpm run test:watch
 
 # Run E2E tests
-npm run test:e2e
+pnpm run test:e2e
 ```
 
 ### Writing Tests
@@ -586,7 +585,7 @@ Pick the setup that matches how you run Ontos:
 
 | | Option A: local development | Option B: deployed app |
 |---|---|---|
-| You run Ontos from | a clone of this repo (`npm run dev` + `hatch`) | a Databricks App deployed with a bundle that references the Ontos repo |
+| You run Ontos from | a clone of this repo (`pnpm run dev` + `uv`) | a Databricks App deployed with a bundle that references the Ontos repo |
 | Token configured in | `src/backend/.env` | a secret scope, wired in **your** bundle |
 | UI picker token | `VITE_TEST_USER_TOKEN` in `src/frontend/.env` | `localStorage["ucapp.testToken"]` in the browser |
 | Edit personas by | editing the repo-bundled YAML (or the volume file) | uploading the YAML to the app's volume |
@@ -862,18 +861,21 @@ Dependabot (`.github/dependabot.yml`) will automatically open PRs when new actio
 
 ### Python Dependency Pinning
 
-Python dependencies use a two-file pattern:
+Python dependencies follow the Hello Abacus standard:
 
-- `requirements.in` - Source constraint files with version ranges (what you edit)
-- `requirements.txt` - Locked files with exact versions and hashes (what CI installs)
+- `src/pyproject.toml` - Direct dependencies pinned exact (`==`), plus `dependency-groups` for dev and e2e extras (what you edit)
+- `src/uv.lock` - The full locked resolution (what CI installs via `uv sync --locked`)
 
-To regenerate locked files after updating `.in` files:
+After editing `pyproject.toml` dependencies, regenerate and commit the lockfile:
 
 ```bash
-./scripts/lock-requirements.sh
+cd src && uv lock
 ```
 
-This requires [uv](https://github.com/astral-sh/uv) and PyPI access. The script runs `uv pip compile --generate-hashes` for all three requirement sets (`src/`, `src/backend/`, `src/e2e/`).
+This requires [uv](https://github.com/astral.sh/uv) and PyPI (or mirror) access.
+A pre-commit hook and CI both fail if `pyproject.toml` changes without a matching
+`uv.lock`. Frontend changes require `pnpm install --lockfile-only` in
+`src/frontend/` so `pnpm-lock.yaml` stays in sync.
 
 ### Alembic Migration Heads
 
@@ -938,8 +940,8 @@ To run CI for a fork PR, a maintainer with push access:
    that commit to `fork-test/pr-<N>` and opens a `do-not-merge` mirror PR where CI runs normally.
    It refuses to run if the fork PR has new commits since the review.
 3. If the PR changes CI or dependency files (`.github/`, `scripts/`, `src/scripts/`,
-   `.pre-commit-config.yaml`, `pyproject.toml`, `requirements*`, `package.json`,
-   `package-lock.json`, `.npmrc`, lockfiles), the script lists them and stops. Those files decide
+   `.pre-commit-config.yaml`, `pyproject.toml`, `uv.lock`, `package.json`,
+   `pnpm-lock.yaml`, `pnpm-workspace.yaml`, lockfiles), the script lists them and stops. Those files decide
    what runs with the credentials, so review them line by line, then run the script again with
    `--allow-sensitive-paths`.
 4. Re-runs the script with the new SHA after each update to the fork PR, and closes the mirror PR

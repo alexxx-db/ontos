@@ -1,0 +1,10 @@
+# pnpm settings for the ontos frontend (Hello Abacus dependency standard:
+# pnpm, frozen lockfile, postinstall builds limited to esbuild, and a minimum
+# release age so brand-new package versions are not picked up on resolve).
+allowBuilds:
+  esbuild: true
+# Seven days in minutes. Newly published versions younger than this are skipped
+# during resolution unless excluded below.
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - "@playwright/test"

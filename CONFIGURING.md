@@ -223,16 +223,19 @@ Deploy with the bundle (see [Deploying with the bundle](#deploying-with-the-bund
 
 ```bash
 cd src
-databricks bundle deploy -t dev --var="sql_warehouse_id=<warehouse-id>"
-databricks bundle run ontos -t dev
+./scripts/build_artifact.sh
+databricks bundle deploy -t dev
+databricks bundle run migrate -t dev   # runs Alembic migrations
+databricks bundle run ontos -t dev     # starts the app
 ```
 
-On first startup, the app will:
+The bundle creates the Lakebase project, branch, database, endpoint, and role,
+so the `PUBLIC` grant step above is only needed when pointing the bundle at a
+Lakebase project it did not create. On first startup, the app will:
+
 1. Authenticate as its service principal using OAuth
 2. Connect to the `app_ontos` database
-3. Create the `app_ontos` schema (becomes schema owner automatically)
-4. Set default privileges for future tables/sequences
-5. Create all application tables
+3. Create all application tables (schema and revisions already applied by the migrate job)
 
 #### 4. Tighten Permissions (Optional)
 
@@ -243,40 +246,57 @@ REVOKE CREATE ON DATABASE "app_ontos" FROM PUBLIC;
 GRANT CREATE ON DATABASE "app_ontos" TO "<service_principal_uuid>";
 ```
 
-### App Configuration (app.yaml)
+### App Configuration
 
-Reference the Lakebase instance in your `app.yaml`:
+Runtime env values live in `src/resources/app.yml` under `config:` (there is no
+`app.yaml`). Reference the Lakebase instance like this:
 
 ```yaml
-- name: "POSTGRES_HOST"
-  valueFrom: "database"  # References your Lakebase instance resource
-- name: "POSTGRES_PORT"
-  value: "5432"
-# POSTGRES_USER is auto-detected from service principal - do not set
-- name: "POSTGRES_DB"
-  value: "app_ontos"
-- name: "POSTGRES_DB_SCHEMA"
-  value: "app_ontos"
-- name: "ENV"
-  value: "PROD"  # Triggers OAuth mode (not LOCAL)
+config:
+  command: ["bash", "backend/run.sh"]
+  env:
+    - name: POSTGRES_HOST
+      valueFrom: postgres        # resource key bound in resources:
+    - name: POSTGRES_PORT
+      value: "5432"
+    # POSTGRES_USER is auto-detected from the service principal - do not set
+    - name: POSTGRES_DB
+      value: app_ontos
+    - name: PGSCHEMA
+      value: app_ontos
+    - name: ENV
+      value: PROD                # triggers OAuth mode (not LOCAL)
 ```
 
 ### Deploying with the bundle
 
-`src/databricks.yaml` creates the app and binds the four resources that `src/app.yaml` reads (`postgres`, `sql-warehouse`, `serving-endpoint`, `volume` — the same names as `src/manifest.yaml`). Runtime settings stay in `app.yaml`. The Apps runtime builds the frontend itself (`npm run build` from `src/package.json`).
+`src/databricks.yml` (with `include: resources/*.yml`) creates the app plus its
+supporting resources: the Lakebase project/branch/database/endpoint/role
+(`resources/lakebase.yml`), a SQL warehouse (`resources/warehouse.yml`), the UC
+schema and volume (`resources/unity_catalog.yml`), a `migrate` job that runs
+Alembic before the app (`resources/migrate.yml`), and the app itself
+(`resources/app.yml`), which binds `postgres`, `sql-warehouse`,
+`serving-endpoint`, and `volume` as app resources.
 
-The bundle does not create these; they must exist first:
+The app deploys `app_artifact/` — backend source, the pre-built frontend in
+`backend/static/`, vendored Python wheels, and a `--no-index` requirements.txt —
+built by `scripts/build_artifact.sh`. The Apps runtime does not build or
+download anything, so deployment works in workspaces without PyPI access.
 
-| Variable | What it points at | Default |
-|----------|-------------------|---------|
-| `sql_warehouse_id` | SQL warehouse ID | *(required)* |
-| `lakebase_branch` | Lakebase branch, `projects/<project>/branches/<branch>` | `projects/ontos-db/branches/production` |
-| `lakebase_database` | Lakebase database resource name on that branch — not the Postgres name (Postgres `app_ontos` is listed as `…/databases/app-ontos`); find it with `databricks postgres list-databases <branch>` | `projects/ontos-db/branches/production/databases/app-ontos` |
+Deployment order is always deploy → migrate → run.
+
+Variables (defaults in `src/databricks.yml`):
+
+| Variable | What it controls | Default |
+|----------|------------------|---------|
 | `serving_endpoint_name` | Serving endpoint for Ask Ontos | `databricks-claude-sonnet-4-5` |
-| `catalog_name` / `schema_name` / `volume_name` | UC volume for app files | `app_data_dev.app_ontos_dev.app_files_dev` (dev), `app_data_prod.app_ontos_prod.app_files_prod` (prod) |
-| `app_name` | App name (max 30 chars) | `ontos-<your-user>` (dev), `ontos` (prod) |
+| `catalog` / `app_schema` | UC catalog and schema for the app volume | `app_data` / `app_ontos` |
+| `app_name` / resource names | Suffix and naming of bundle resources | suffixed per dev user on `dev` |
 
-Set them with `--var="name=value"`, or persist per-target values in `src/.databricks/bundle/<target>/variable-overrides.json` (not committed).
+Set them with `--var="name=value"`, or persist per-target values in
+`src/.databricks/bundle/<target>/variable-overrides.json` (not committed).
+Customer deployments go through Seiji: `src/seiji-packaging.yaml` plus the hooks
+in `src/deploy/`.
 
 ### Security Notes
 

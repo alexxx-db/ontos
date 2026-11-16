@@ -2,11 +2,13 @@
 name: Package Management
 priority: 60
 scope:
-  globs: ["src/**", "package.json", "package-lock.json"]
-  languages: ["typescript"]
+  globs: ["src/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]
+  languages: ["typescript", "python"]
 ---
 
 ### Package Management
 
-- This project uses **npm** for frontend package management. Use `npm install`, `npm ci`, `npm install <pkg>`, `npm uninstall <pkg>`, and `npm run <script>`. Do not use yarn or pnpm.
-- Upon deploying, Databricks Apps detects if `package.json` is present and calls `npm install`, `npm install -r requirements.txt` (if present), and `npm run build` in that case. This should build the static JavaScript content dynamically and there is no need to ship that explicitly.
+- Frontend: **pnpm** (Hello Abacus standard). Use `pnpm install --frozen-lockfile`, `pnpm add <pkg>`, `pnpm remove <pkg>`, and `pnpm run <script>` from `src/frontend/`. Do not use npm or yarn; the lockfile is `pnpm-lock.yaml`. `src/frontend/pnpm-workspace.yaml` holds the supply-chain settings (`allowBuilds`, `minimumReleaseAge`).
+- Backend: **uv** (Hello Abacus standard). Direct dependencies are pinned exact (`==`) in `src/pyproject.toml`; transitive versions live in `src/uv.lock`. After editing dependencies run `uv lock` in `src/` and commit `uv.lock` — CI fails on drift. Use `uv run <cmd>` to execute inside the environment; do not use pip, hatch, or poetry.
+- The docs website (`website/`) is separate and still uses npm.
+- Deployed artifacts install from vendored wheels (`app_artifact/requirements.txt` with `--no-index`); the Apps runtime builds nothing. See `src/scripts/build_artifact.sh`.

@@ -52,9 +52,11 @@ Ontos is designed to run as a **Databricks App**:
 
 ### Prerequisites
 
-- Python 3.10 - 3.12
-- Node.js 18+ (includes npm)
-- Hatch (Python build tool)
+- Python 3.11
+- Node.js 18+
+- uv (Python package manager)
+- pnpm 12 (frontend package manager)
+- Databricks CLI v1.7.0 or later (for deployment)
 - PostgreSQL (for local development)
 
 ### Installation
@@ -64,11 +66,16 @@ Ontos is designed to run as a **Databricks App**:
 git clone https://github.com/databrickslabs/ontos.git
 cd ontos
 
+# Install backend dependencies (uv creates .venv from uv.lock)
+cd src
+uv sync
+
 # Install frontend dependencies
-cd src/frontend
-npm install
+cd frontend
+pnpm install --frozen-lockfile
 
 # Copy and configure backend environment
+cd ../backend
 cd ../../src/backend
 cp .env.example .env
 # Edit .env with your configuration
@@ -79,14 +86,14 @@ cp .env.example .env
 **Terminal 1 - Frontend:**
 ```bash
 cd src/frontend
-npm run dev:frontend
+pnpm run dev:frontend
 ```
 
 **Terminal 2 - Backend:**
 ```bash
 cd src
-mkdir backend/static
-hatch -e dev run dev-backend
+mkdir -p backend/static
+uv run uvicorn --app-dir backend src.app:app --reload
 ```
 
 - Frontend: http://localhost:3000
@@ -95,15 +102,17 @@ hatch -e dev run dev-backend
 
 ### Deploying to Databricks
 
-The bundle lives in `src/` (`src/databricks.yaml`). Run it from there:
+The bundle lives in `src/` (`src/databricks.yml` plus `src/resources/*.yml`) and creates the Lakebase database, SQL warehouse, UC schema and volume, the app, and a `migrate` job. Deployment is offline: build the artifact first, then deploy, migrate, and run the app:
 
 ```bash
 cd src
-databricks bundle deploy -t dev --var="sql_warehouse_id=<warehouse-id>"
-databricks bundle run ontos -t dev
+./scripts/build_artifact.sh
+databricks bundle deploy -t dev
+databricks bundle run migrate -t dev   # Alembic migrations
+databricks bundle run ontos -t dev     # start the app
 ```
 
-`dev` (the default target) deploys an app named `ontos-<your-user>`; `-t prod` deploys the shared `ontos` app. The Lakebase database, the Unity Catalog volume, the SQL warehouse and the serving endpoint must already exist — see [Configuring](CONFIGURING.md#deploying-with-the-bundle) for the variables that point at them.
+`dev` (the default target) deploys resources suffixed with your username; `prd` is used by Seiji for customer deployments. See [Configuring](CONFIGURING.md#deploying-with-the-bundle) for the variables and `src/deploy/` for the Seiji hooks.
 
 ## Documentation
 

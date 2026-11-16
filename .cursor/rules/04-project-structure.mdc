@@ -9,14 +9,18 @@ scope:
 
 Top-level layout (`src/`):
 
-- `src/app.yaml` — Databricks App configuration (Asset Bundle format).
-- `src/databricks.yaml` — Asset Bundle root.
+- `src/databricks.yml` — Asset Bundle root; includes `src/resources/*.yml`.
+- `src/resources/` — Bundle resources: app, lakebase, warehouse, unity_catalog, migrate job.
+- `src/jobs/` — Bundle job scripts (`migrate.py` runs Alembic).
+- `src/app_artifact/` — Offline deploy artifact (built, not committed).
 - `src/backend/` — Python/FastAPI backend.
 - `src/frontend/` — TypeScript/React frontend.
+- `src/deploy/` — Seiji deploy hooks and Luna descriptors.
+- `src/seiji-packaging.yaml` — Seiji deployable-package manifest.
 
 #### Backend (`src/backend/src/`)
 
-- **Language**: Python · **Framework**: FastAPI · **ORM**: SQLAlchemy · **Build**: hatch (`pyproject.toml`).
+- **Language**: Python · **Framework**: FastAPI · **ORM**: SQLAlchemy · **Build**: uv (`pyproject.toml` + `uv.lock`).
 - `app.py` — FastAPI application entry point.
 - `routes/` — FastAPI routers (e.g., `data_product_routes.py`).
 - `controller/` — Manager classes implementing business logic (e.g., `data_products_manager.py`).

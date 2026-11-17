@@ -142,6 +142,8 @@ targets:
       catalog: genie_agents
       app_viewers_group: demo-build-implementation
       name_suffix: -v2-${workspace.current_user.domain_friendly_name}
+      # demo-build's admins are its implementation group, not an admins group.
+      app_admin_groups: '["admins", "demo-build-implementation"]'
       # numpy, pandas and pyarrow wheels exceed the 10 MB Apps file limit, so this
       # artifact ships them split; bootstrap.sh reassembles and installs them offline,
       # then runs backend/src/app.py.

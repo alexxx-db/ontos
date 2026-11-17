@@ -1,8 +1,10 @@
 # abacus-ontos: deployment blockers, bugs and open issues
 
-Status as of 2026-11-16. Covers deploying this repo's bundle (`src/databricks.yml`, bundle name `ontos`) to the `demo-build` workspace (`dbc-fb7dab4f-d795.cloud.databricks.com`) as a separate copy next to the existing `ontos-alex-baretto` app.
+Status as of 2026-11-17. Covers deploying this repo's bundle (`src/databricks.yml`, bundle name `ontos`) to the `demo-build` workspace (`dbc-fb7dab4f-d795.cloud.databricks.com`) as a separate copy next to the existing `ontos-alex-baretto` app.
 
-Intended deploy settings: target `dev-abacus`, `customer=demo`, `workspace=build`, `catalog=genie_agents`.
+Active deploy target: **`dev-v2`**, which bakes in `customer=demo`, `workspace=build` and `catalog=genie_agents`, so it needs no `--var` flags. Its resources are named `ontos-v2-alex-baretto`. `dev-abacus` (from 2026-11-16) is still in the bundle and validates, but it hasn't been deployed.
+
+The summary table and "Progress on 2026-11-17" are current. The per-issue sections further down are the original 2026-11-16 write-up. Where they disagree with the summary, the summary wins.
 
 Every item is marked with how it was established:
 
@@ -14,27 +16,79 @@ Every item is marked with how it was established:
 
 ## Summary
 
-| # | Issue | Severity | Status |
+| # | Issue | Severity | Status (2026-11-17) |
 | --- | --- | --- | --- |
-| 1 | `app_artifact/` is empty: the app has never been built | Blocker | Open |
-| 2 | No `uv.lock`: `build_artifact.sh` can't run | Blocker | Open |
-| 3 | The workspace can't reach PyPI or npm, so the build can't run here | Blocker | Open (by design) |
-| 4 | `pnpm` isn't installed in the workspace, and the `dev`/`dev-abacus` build hook needs it | Blocker (for deploying from the workspace) | Open |
-| 5 | The app's groups have no `USE CATALOG` on `genie_agents` | Blocker (app unusable after deploy) | Open |
-| 6 | Package installation fails on the existing app (`ontos-alex-baretto`) | Likely blocker | Open, root cause not confirmed |
-| 7 | In-app admins default to the `admins` group | High | Open |
-| 8 | The migrate job's serverless environment may not install packages without egress | Risk | Untested |
-| 9 | Permission to create a Lakebase project and SQL warehouse is unconfirmed | Risk | Untested |
+| **W** | **You can't create SQL warehouses (403), so the app can't be created** | **Blocker** | **Open, waiting on an admin** ([admin_request_sql_warehouse.md](admin_request_sql_warehouse.md)) |
+| 1 | `app_artifact/` is empty: the app has never been built | Blocker | **Worked around**: built offline in the workspace; build steps not yet in the repo (N4) |
+| 2 | No `uv.lock`: `build_artifact.sh` can't run | Medium (was Blocker) | Open: worked around by resolving from the volume wheel cache |
+| 3 | The workspace can't reach PyPI or npm | Blocker | **Worked around**: dependency caches in volumes |
+| 4 | `pnpm` isn't installed in the workspace | Blocker | **Worked around**: `dev-v2` and `dev-abacus` build hooks only check for a prebuilt artifact |
+| 5 | The app's groups have no `USE CATALOG` on `genie_agents` | Blocker (app unusable after deploy) | Open: you run the grants yourself; the assistant isn't allowed to run them |
+| 6 | Package installation fails on the existing app (`ontos-alex-baretto`) | Likely blocker | Open: can't test the new copy until W is fixed |
+| 7 | In-app admins default to the `admins` group | High | **Fixed**: `app_admin_groups` variable, overridden in `dev-v2` and `dev-abacus` |
+| 8 | The migrate job's serverless environment may not install packages without egress | Risk | **Fixed and verified**: migration succeeded |
+| 9 | Permission to create a Lakebase project and SQL warehouse is unconfirmed | Risk | Lakebase: **works**. Warehouse: **fails** (see W) |
 | 10 | The `prd` target can't be validated or deployed by this user | Medium | Open (out of scope for dev) |
-| 11 | The UC schema name isn't suffixed, so it collides with other dev deploys of the same bundle | Low | Open |
-| 12 | Indirect PyPI dependencies are unknown | Low | Open (follows from #2) |
+| 11 | The UC schema name isn't suffixed | Low | **Fixed upstream**: `uc_schema` variable; `dev-abacus` uses `app_ontos_abacus` |
+| 12 | Indirect PyPI dependencies are unknown | Low | Partly resolved: offline resolution gives 98 packages (without mlflow); still no `uv.lock` |
 | 13 | Harmless `bundle validate` warnings (sync patterns) | Cosmetic | Open |
-| F1 | `app_source_code_path` resolved to `resources/app_artifact` | Bug | **Fixed** (commit on `feat/hello-abacus`) |
-| F2 | A `dev` deploy would take over `ontos-alex-baretto` | Bug for this use | **Fixed** (new `dev-abacus` target) |
-| F3 | The `demo-build-ontos-viewer` group doesn't exist | Blocker | **Worked around** in `dev-abacus` |
+| N1 | All 120 Lakebase tables are owned by you, not by the app's service principal | High | Open: needs grants once the app's service principal exists |
+| N2 | The migrate job's offline wheels are x86_64 only | Risk | Open: an aarch64 serverless run would fail to install |
+| N3 | The app's 10 MB file limit is worked around by splitting wheels and dropping source maps | Note | By design for `dev-v2`; check on first app start |
+| N4 | The offline build steps aren't in the repo | Medium | Open: the artifact can't be rebuilt from the repo alone |
+| F1 | `app_source_code_path` resolved to `resources/app_artifact` | Bug | **Fixed** |
+| F2 | A `dev` deploy would take over `ontos-alex-baretto` | Bug for this use | **Fixed** (`dev-abacus`, then `dev-v2`) |
+| F3 | The `demo-build-ontos-viewer` group doesn't exist | Blocker | **Worked around** in `dev-abacus` and `dev-v2` |
 | F4 | The app service principal is missing from the warehouse permissions | Bug | **Fixed** |
+| F5 | `jobs/migrate.py` called `init_db()` before `init_config()` | Bug | **Fixed** |
+| F6 | `database.py` rejected a user email as the Postgres role | Bug | **Fixed** |
+| F7 | The migrate job didn't install `email-validator` (pydantic `EmailStr`) | Bug | **Fixed** |
 
-Minimum path to a working deploy: #2 → #1 (on a laptop or in CI, which covers #3 and #4) → #5 → deploy `-t dev-abacus` → check #6, #7, #8 and #9 on the first run.
+Remaining path to a working app: W (admin) → #5 grants (you) → `bundle deploy -t dev-v2` → start the app and check #6 and N3 → grant the app's service principal access to the tables (N1).
+
+## Progress on 2026-11-17
+
+All changes below are pushed to `feat/hello-abacus`, except the artifact itself: `src/app_artifact/` is gitignored.
+
+### Dependency caches (#3)
+
+* npm: `/Volumes/genie_agents/internal/npm/abacus-ontos/npm/tarballs/` has 957 tarballs (179 MB). Five `*-cjs` alias targets have no tarball; the build doesn't need them.
+* Python: `/Volumes/genie_agents/internal/libraries/abacus-databricks-genie-workbench/abacus-ontos-python/abacus-ontos/python/wheels/` has 134 wheels (213 MB). They're byte-identical to the older copy in `/Volumes/genie_agents/internal/libraries/abacus-ontos/python/wheels/`.
+
+### Offline artifact build (#1, #4)
+
+* **Frontend:** `node_modules` was installed from `frontend/pnpm-lock.yaml` and the npm tarballs, in a hoisted layout (1,177 package instances). A separate Node resolver checked that all 3,219 dependency links resolve to the exact locked versions. `vite build` then succeeded.
+* **Python:** resolved offline for CPython 3.11 / manylinux x86_64 to 98 packages. `mlflow` was dropped: the backend never imports it, and it pulled in 36 packages, including `scipy`. Every third-party import in `backend/src` is shipped, except `pyspark` (job workflows only) and `fuzzywuzzy` (not installed upstream either).
+* **10 MB Apps file limit (N3):**
+  * `numpy`, `pandas` and `pyarrow` ship as 9 MB parts in `big_wheels/`. `bootstrap.sh` joins them back together (checked byte-identical with sha256), installs them offline with `databricks-sql-connector` and `databricks-sqlalchemy`, then runs `backend/src/app.py`.
+  * `dev-v2` sets `app_command: ["bash", "bootstrap.sh"]`; other targets keep `python backend/src/app.py`.
+  * Source maps (`*.map`, including a 15 MB one) are left out.
+* **Result:** `src/app_artifact/` has 1,001 files, 149 MB, and the largest file is 9.0 MB. Simulated offline installs: `requirements.txt` gives 93 packages, and adding the `bootstrap.sh` step gives all 98.
+
+### Migration job (#8, F5–F7)
+
+* `migrate_dependencies` is now a variable. `dev-v2` installs with `--no-index --find-links <volume wheels>` and adds `email-validator==2.4.0`.
+* `jobs/migrate.py` calls `init_config()` before `init_db()`.
+* `backend/src/common/database.py` now checks the Postgres role as a quoted identifier (no `"`, no NUL, at most 63 bytes), so a person's email works as well as a service principal UUID. Every SQL use of the role is double-quoted.
+* Run `974942756111802` succeeded. Checked directly in Lakebase: `app.app_ontos` has 120 tables, and `alembic_version` is `c5_merge_cv2_b8`, the only head in the repo.
+
+### `dev-v2` deploy (partial)
+
+* **Created:**
+  * Lakebase project `ontos-v2-alex-baretto` (`production` branch, `primary` endpoint at 0.5 CU, `app` database)
+  * Unity Catalog schema `genie_agents.dev_alex_baretto_app_ontos`, with its `app_files` volume and grants
+  * Migrate job `796097008501293`
+* **Not created:**
+  * The SQL warehouse: `not authorized to create SQL Endpoint` (403)
+  * As a result, the app and the app and warehouse permissions
+* **Existing warehouses:** you have no CAN MANAGE on `demo-genesis-warehouse`, `Serverless Starter Warehouse` or `replit-warehouse`.
+* **Cost while blocked:** the Lakebase endpoint has a 0.5 CU minimum, so it may cost money while the app waits on W.
+
+### Other changes
+
+* Merged upstream into `feat/hello-abacus`. That brought the `uc_schema` and `app_admin_groups` variables, and kept upstream's `dev-abacus` target.
+* `dev-v2` sets `app_admin_groups: '["admins", "demo-build-implementation"]'` (#7).
+* Drafted [admin_request_sql_warehouse.md](admin_request_sql_warehouse.md) for W. It hasn't been sent. Option A, preferred: an admin creates `ontos-v2-alex-baretto` and gives you CAN MANAGE, then you bind it with `bundle deployment bind`. Whether `bind` supports SQL warehouses hasn't been confirmed; if it doesn't, point `dev-v2` at the warehouse ID.
 
 ---
 
@@ -209,7 +263,18 @@ The variable default `./app_artifact` is resolved relative to `resources/app.yml
 
 ---
 
-## Deploy checklist
+## Deploy checklist (`dev-v2`, from the workspace)
+
+From `src/`, with `src/app_artifact/` already built (see Progress):
+
+1. An admin resolves W (see `admin_request_sql_warehouse.md`). If they create the warehouse for you, run `databricks bundle deployment bind warehouse <id> -t dev-v2`.
+2. Run the three `GRANT USE CATALOG ON CATALOG genie_agents` statements in #5.
+3. `databricks bundle deploy -t dev-v2`
+4. `databricks bundle run -t dev-v2 migrate`. This is already done; re-run only if the migrations changed.
+5. `databricks bundle run -t dev-v2 ontos`. Check that the deployment is `SUCCEEDED`, that the app logs show `bootstrap.sh` finished its install, and that the app opens for a `demo-build-implementation` member. (#6, N3)
+6. Give the app's service principal access to the `app_ontos` tables, or transfer their ownership to it. (N1)
+
+## Original checklist (2026-11-16, `dev-abacus`, laptop or CI)
 
 On a laptop or in CI with PyPI and npm access, from `src/`:
 

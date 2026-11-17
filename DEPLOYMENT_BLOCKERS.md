@@ -19,7 +19,7 @@ Every item is marked with how it was established:
 | # | Issue | Severity | Status (2026-11-17) |
 | --- | --- | --- | --- |
 | **W** | **You can't create SQL warehouses (403), so the app can't be created** | **Blocker** | **Open, waiting on an admin** ([admin_request_sql_warehouse.md](admin_request_sql_warehouse.md)) |
-| 1 | `app_artifact/` is empty: the app has never been built | Blocker | **Worked around**: built offline in the workspace; build steps not yet in the repo (N4) |
+| 1 | `app_artifact/` is empty: the app has never been built | Blocker | **Worked around**: built offline in the workspace with `scripts/build_artifact_offline.py` |
 | 2 | No `uv.lock`: `build_artifact.sh` can't run | Medium (was Blocker) | Open: worked around by resolving from the volume wheel cache |
 | 3 | The workspace can't reach PyPI or npm | Blocker | **Worked around**: dependency caches in volumes |
 | 4 | `pnpm` isn't installed in the workspace | Blocker | **Worked around**: `dev-v2` and `dev-abacus` build hooks only check for a prebuilt artifact |
@@ -35,7 +35,7 @@ Every item is marked with how it was established:
 | N1 | All 120 Lakebase tables are owned by you, not by the app's service principal | High | Open: needs grants once the app's service principal exists |
 | N2 | The migrate job's offline wheels are x86_64 only | Risk | Open: an aarch64 serverless run would fail to install |
 | N3 | The app's 10 MB file limit is worked around by splitting wheels and dropping source maps | Note | By design for `dev-v2`; check on first app start |
-| N4 | The offline build steps aren't in the repo | Medium | Open: the artifact can't be rebuilt from the repo alone |
+| N4 | The offline build steps aren't in the repo | Medium | **Fixed**: `src/scripts/build_artifact_offline.py`; its output is byte-identical to the hand-built artifact |
 | F1 | `app_source_code_path` resolved to `resources/app_artifact` | Bug | **Fixed** |
 | F2 | A `dev` deploy would take over `ontos-alex-baretto` | Bug for this use | **Fixed** (`dev-abacus`, then `dev-v2`) |
 | F3 | The `demo-build-ontos-viewer` group doesn't exist | Blocker | **Worked around** in `dev-abacus` and `dev-v2` |
@@ -55,7 +55,17 @@ All changes below are pushed to `feat/hello-abacus`, except the artifact itself:
 * npm: `/Volumes/genie_agents/internal/npm/abacus-ontos/npm/tarballs/` has 957 tarballs (179 MB). Five `*-cjs` alias targets have no tarball; the build doesn't need them.
 * Python: `/Volumes/genie_agents/internal/libraries/abacus-databricks-genie-workbench/abacus-ontos-python/abacus-ontos/python/wheels/` has 134 wheels (213 MB). They're byte-identical to the older copy in `/Volumes/genie_agents/internal/libraries/abacus-ontos/python/wheels/`.
 
-### Offline artifact build (#1, #4)
+### Offline artifact build (#1, #4, N4)
+
+Reproduce it with `src/scripts/build_artifact_offline.py` (about 2 minutes on serverless), run from `src/`:
+
+```
+python scripts/build_artifact_offline.py \
+  --npm-tarballs /Volumes/genie_agents/internal/npm/abacus-ontos/npm/tarballs \
+  --wheels /Volumes/genie_agents/internal/libraries/abacus-databricks-genie-workbench/abacus-ontos-python/abacus-ontos/python/wheels
+```
+
+It writes `src/app_artifact/` and fails if any check below doesn't hold. A test run into a scratch folder produced the same 1,001 files as the hand-built artifact, byte for byte.
 
 * **Frontend:** `node_modules` was installed from `frontend/pnpm-lock.yaml` and the npm tarballs, in a hoisted layout (1,177 package instances). A separate Node resolver checked that all 3,219 dependency links resolve to the exact locked versions. `vite build` then succeeded.
 * **Python:** resolved offline for CPython 3.11 / manylinux x86_64 to 98 packages. `mlflow` was dropped: the backend never imports it, and it pulled in 36 packages, including `scipy`. Every third-party import in `backend/src` is shipped, except `pyspark` (job workflows only) and `fuzzywuzzy` (not installed upstream either).
@@ -265,7 +275,7 @@ The variable default `./app_artifact` is resolved relative to `resources/app.yml
 
 ## Deploy checklist (`dev-v2`, from the workspace)
 
-From `src/`, with `src/app_artifact/` already built (see Progress):
+From `src/`, with `src/app_artifact/` built by `scripts/build_artifact_offline.py` (see Progress):
 
 1. An admin resolves W (see `admin_request_sql_warehouse.md`). If they create the warehouse for you, run `databricks bundle deployment bind warehouse <id> -t dev-v2`.
 2. Run the three `GRANT USE CATALOG ON CATALOG genie_agents` statements in #5.

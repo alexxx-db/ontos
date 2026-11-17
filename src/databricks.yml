@@ -130,8 +130,9 @@ targets:
         build: test -f app_artifact/requirements.txt || { echo "app_artifact/ is missing; build it on a machine with index access (scripts/build_artifact.sh) and copy it in." >&2; exit 1; }
 
   # A second dev copy beside `dev`, with its own state and resources, deployed from the
-  # workspace. It builds nothing: app_artifact/ is built on a laptop or CI (the workspace
-  # has no package-index egress) and synced in first.
+  # workspace. It builds nothing at deploy time: the workspace has no package-index egress
+  # or pnpm, so app_artifact/ is built first by scripts/build_artifact_offline.py from
+  # dependency caches in UC volumes.
   dev-v2:
     mode: development
     workspace:
@@ -169,7 +170,7 @@ targets:
       lakebase_purge_on_delete: true
     artifacts:
       app_artifact:
-        build: test -f app_artifact/requirements.txt -a -f app_artifact/backend/static/index.html -a -f app_artifact/bootstrap.sh || { echo "app_artifact/ is missing; build it on a laptop or CI and sync it in." >&2; exit 1; }
+        build: test -f app_artifact/requirements.txt -a -f app_artifact/backend/static/index.html -a -f app_artifact/bootstrap.sh || { echo "app_artifact/ is missing; build it with scripts/build_artifact_offline.py." >&2; exit 1; }
 
   prd:
     mode: production

@@ -50,7 +50,7 @@ For example, `demo-genesis-warehouse` (`337986b7fa599984`). I would point `dev-v
 
 The warehouse is one serverless 2X-Small cluster that stops after 10 idle minutes. It runs only when an Ontos user queries a dataset (users query as themselves).
 
-## After this, still pending
+## No admin action needed for these
 
 * **Catalog grants:** USE CATALOG on `genie_agents` for `demo-build-implementation`, `demo-build-admin` and `demo-admin`. I hold MANAGE on the catalog and will run these myself.
-* **App admin group:** the app's admin role (`APP_ADMIN_DEFAULT_GROUPS`) defaults to `admins`, and I'm not a member. Either add me to `admins`, or I'll change the default to a demo-build group.
+* **App admin group (resolved):** `dev-v2` now sets `app_admin_groups` to `["admins", "demo-build-implementation"]`, so the implementation group gets the app's admin role on first start. Nobody needs to be added to `admins`. This is pushed to `feat/hello-abacus`.

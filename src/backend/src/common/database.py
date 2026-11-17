@@ -475,7 +475,11 @@ def ensure_database_and_schema_exist(settings: Settings):
     try:
         target_db = sanitize_postgres_identifier(settings.PGDATABASE)
         target_schema = sanitize_postgres_identifier(settings.PGSCHEMA) if settings.PGSCHEMA else None
-        username = sanitize_postgres_identifier(username)
+        # The role is a service principal UUID or, when a person runs the migrate job,
+        # their email. It only appears double-quoted in SQL (and escaped in the URL), so
+        # check it as a quoted identifier: no double quote or NUL, at most 63 bytes.
+        if '"' in username or "\x00" in username or len(username.encode()) > 63:
+            raise ValueError(f"Invalid PostgreSQL role name '{username}'")
     except ValueError as e:
         raise ValueError(
             f"Invalid PostgreSQL identifier in configuration: {e}. "

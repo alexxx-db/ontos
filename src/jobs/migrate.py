@@ -44,6 +44,9 @@ os.environ.setdefault("APP_AUDIT_LOG_DIR", "/tmp/ontos_audit_logs")
 os.environ.setdefault("DATABRICKS_HOST", w.config.host or "")
 os.environ.setdefault("DATABRICKS_WAREHOUSE_ID", "")
 
+from src.common.config import init_config
 from src.common.database import init_db
 
+# init_db() reads the global Settings, which app.py builds with init_config() at startup.
+init_config()
 init_db()

@@ -6,9 +6,7 @@ resources:
       source_code_path: ${var.app_source_code_path}
       config:
         # The Apps container installs requirements.txt from ./wheels before this runs.
-        command:
-          - python
-          - backend/src/app.py
+        command: ${var.app_command}
         env:
           - name: ENV
             value: "PROD"
